@@ -24,8 +24,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Upgrade packaging tools
-        run: python -m pip install --upgrade pip build hatchling
+      - name: Install dependencies and project
+        run: python -m pip install --upgrade pip build hatchling -e ".[dev]"
 
       - name: Compile sources
         run: python -m compileall src tests examples
