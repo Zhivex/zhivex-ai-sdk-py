@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from .errors import ZhivexAIError
+from .generate_text import generate_text
+from .types import ModelMessage, TokenUsage
+
+GatewayProviderId = Literal[
+    "openai", "anthropic", "gemini", "vertex", "qwen", "kimi", "bedrock", "ollama", "azure-openai", "openrouter"
+]
+GatewayRoutingMode = Literal["speed", "balanced", "quality"]
+GatewayTaskIntent = Literal["chat", "reasoning", "tool-heavy"]
+
+
+@dataclass(slots=True)
+class GatewayImageAttachment:
+    data_url: str
+    mime_type: str
+
+
+@dataclass(slots=True)
+class GatewayMessage:
+    role: Literal["user", "assistant"]
+    content: str
+    images: list[GatewayImageAttachment] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class GatewayModelTarget:
+    provider: GatewayProviderId
+    model_id: str
+
+
+@dataclass(slots=True)
+class GatewayAttempt:
+    provider: GatewayProviderId
+    model_id: str
+    ok: bool
+    latency_ms: int
+    error_message: str | None = None
+
+
+@dataclass(slots=True)
+class GatewayRouteDecision:
+    mode: GatewayRoutingMode
+    intent: GatewayTaskIntent
+    ordered_targets: list[GatewayModelTarget]
+    reason: str
+
+
+@dataclass(slots=True)
+class GatewayResponse:
+    text: str
+    provider_used: GatewayProviderId
+    model_used: str
+    latency_ms: int
+    attempts: list[GatewayAttempt]
+    usage: TokenUsage
+    usage_estimated: bool
+    route_decision: GatewayRouteDecision
+
+
+@dataclass(slots=True)
+class GatewayConfig:
+    adapters: dict[GatewayProviderId, Any]
+    model_catalog: Any = None
+    provider_costs_per_1k_tokens: dict[GatewayProviderId, float] = field(default_factory=dict)
+    latency_bias_ms: dict[GatewayProviderId, int] = field(default_factory=dict)
+    max_retries: int = 2
+    attempt_timeout_ms: int = 20_000
+    attempt_timeouts_ms: dict[GatewayProviderId, int] = field(default_factory=dict)
+    retry_backoff_ms: int = 200
+    on_attempt: Any = None
+
+
+class GatewayError(ZhivexAIError):
+    def __init__(self, message: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def supports_vision_input(provider: GatewayProviderId, model_id: str) -> bool:
+    model = model_id.lower()
+    if provider == "gemini":
+        return "embedding" not in model
+    if provider == "bedrock":
+        return "nova" in model or "claude-3" in model or "claude-4" in model
+    return True
+
+
+def strip_images_for_unsupported_model(messages: list[GatewayMessage], provider: GatewayProviderId, model_id: str) -> list[GatewayMessage]:
+    if supports_vision_input(provider, model_id):
+        return messages
+    return [GatewayMessage(role=message.role, content=message.content, images=[]) for message in messages]
+
+
+def gateway_messages_to_model_messages(messages: list[GatewayMessage], system_prompt: str | None = None) -> list[ModelMessage]:
+    mapped: list[ModelMessage] = []
+    if system_prompt:
+        from .messages import system
+
+        mapped.append(system(system_prompt))
+    from .types import ImagePart, TextPart
+
+    for message in messages:
+        parts = [TextPart(text=message.content)]
+        parts.extend(ImagePart(image=image.data_url, media_type=image.mime_type) for image in message.images)
+        mapped.append(ModelMessage(role=message.role, parts=parts))
+    return mapped
+
+
+def create_route_decision(mode: GatewayRoutingMode, intent: GatewayTaskIntent, ordered_targets: list[GatewayModelTarget]) -> GatewayRouteDecision:
+    return GatewayRouteDecision(mode=mode, intent=intent, ordered_targets=ordered_targets, reason=f"Ordered by {mode} mode with {intent} intent.")
+
+
+def _score_target(mode: GatewayRoutingMode, intent: GatewayTaskIntent, target: GatewayModelTarget, config: GatewayConfig) -> float:
+    model = target.model_id.lower()
+    local_boost = -2 if target.provider == "ollama" else 0
+    quality_boost = 2 if ("pro" in model or "claude" in model) else 0
+    speed_boost = 2 if ("flash" in model or "lite" in model) else 0
+    reasoning_boost = 2 if ("pro" in model or "claude" in model) else 0
+    cost_penalty = config.provider_costs_per_1k_tokens.get(target.provider, 0)
+    latency_penalty = config.latency_bias_ms.get(target.provider, 0) / 100
+    if mode == "speed":
+        return speed_boost + local_boost - latency_penalty
+    if mode == "quality":
+        return quality_boost + (reasoning_boost if intent == "reasoning" else 0) - cost_penalty
+    return speed_boost + quality_boost + local_boost + (1 if intent == "reasoning" else 0) - cost_penalty - latency_penalty
+
+
+def _order_targets(mode: GatewayRoutingMode, intent: GatewayTaskIntent, primary: GatewayModelTarget, fallbacks: list[GatewayModelTarget], config: GatewayConfig) -> list[GatewayModelTarget]:
+    deduped: list[GatewayModelTarget] = []
+    seen: set[tuple[str, str]] = set()
+    for target in [primary, *fallbacks]:
+        key = (target.provider, target.model_id)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(target)
+    return sorted(deduped, key=lambda target: _score_target(mode, intent, target, config), reverse=True)
+
+
+def _supports_required_capabilities(adapter: Any, target: GatewayModelTarget, required: dict[str, bool] | None) -> bool:
+    if not required:
+        return True
+    capabilities = adapter.language_model(target.model_id).capabilities
+    mapping = {"structuredOutput": "structured_output", "jsonMode": "json_mode"}
+    for key, value in required.items():
+        if value is not True:
+            continue
+        if getattr(capabilities, mapping.get(key, key)) is not True:
+            return False
+    return True
+
+
+def _within_cost_budget(config: GatewayConfig, max_cost: float | None, target: GatewayModelTarget) -> bool:
+    if max_cost is None:
+        return True
+    effective_cost = config.provider_costs_per_1k_tokens.get(target.provider)
+    return effective_cost is None or effective_cost <= max_cost
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, (len(text.strip()) + 3) // 4)
+
+
+def _normalize_usage(usage: TokenUsage | None, input_text: str, output_text: str) -> tuple[TokenUsage, bool]:
+    input_tokens = usage.input_tokens if usage and usage.input_tokens is not None else _estimate_tokens(input_text)
+    output_tokens = usage.output_tokens if usage and usage.output_tokens is not None else _estimate_tokens(output_text)
+    total_tokens = usage.total_tokens if usage and usage.total_tokens is not None else input_tokens + output_tokens
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens), (
+        usage is None or usage.input_tokens is None or usage.output_tokens is None or usage.total_tokens is None
+    )
+
+
+def _normalize_error(error: Exception) -> GatewayError:
+    if isinstance(error, GatewayError):
+        return error
+    message = str(error).lower()
+    if any(token in message for token in ("timed out", "429", "rate", "connect", "econnrefused", "503")):
+        return GatewayError(str(error), True)
+    return GatewayError(str(error), False)
+
+
+async def _maybe_await(value: Any) -> Any:
+    if asyncio.iscoroutine(value):
+        return await value
+    return value
+
+
+def _attempt_payload(attempt: GatewayAttempt, retry: int, target_rank: int) -> dict[str, Any]:
+    return {
+        "provider": attempt.provider,
+        "modelId": attempt.model_id,
+        "ok": attempt.ok,
+        "latencyMs": attempt.latency_ms,
+        "errorMessage": attempt.error_message,
+        "retry": retry,
+        "targetRank": target_rank,
+    }
+
+
+def create_gateway(config: GatewayConfig):
+    class Gateway:
+        async def generate(
+            self,
+            *,
+            messages: list[GatewayMessage],
+            primary: GatewayModelTarget,
+            fallbacks: list[GatewayModelTarget] | None = None,
+            system_prompt: str | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            required_capabilities: dict[str, bool] | None = None,
+            max_cost_per_1k_tokens: float | None = None,
+            routing_mode: GatewayRoutingMode = "balanced",
+            task_intent: GatewayTaskIntent = "chat",
+        ) -> GatewayResponse:
+            attempts: list[GatewayAttempt] = []
+            started_at = time.time()
+            ordered_targets = _order_targets(routing_mode, task_intent, primary, fallbacks or [], config)
+            route_decision = create_route_decision(routing_mode, task_intent, ordered_targets)
+            for target_index, target in enumerate(ordered_targets):
+                adapter = config.adapters.get(target.provider)
+                if adapter is None:
+                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message=f'No adapter registered for provider "{target.provider}".'))
+                    continue
+                if not _supports_required_capabilities(adapter, target, required_capabilities):
+                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message="Skipped because model capabilities do not satisfy the request."))
+                    continue
+                if not _within_cost_budget(config, max_cost_per_1k_tokens, target):
+                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message="Skipped because provider cost exceeds the configured budget."))
+                    continue
+                for retry in range(max(0, config.max_retries) + 1):
+                    attempt_started = time.time()
+                    try:
+                        provider_messages = strip_images_for_unsupported_model(messages, target.provider, target.model_id)
+                        if config.on_attempt:
+                            await _maybe_await(
+                                config.on_attempt(
+                                    _attempt_payload(
+                                        GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=True, latency_ms=0),
+                                        retry,
+                                        target_index,
+                                    )
+                                )
+                            )
+                        result = await asyncio.wait_for(
+                            generate_text(
+                                model=adapter.language_model(target.model_id),
+                                messages=gateway_messages_to_model_messages(provider_messages, system_prompt),
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                            ),
+                            timeout=(config.attempt_timeouts_ms.get(target.provider, config.attempt_timeout_ms) / 1000),
+                        )
+                        latency_ms = int((time.time() - attempt_started) * 1000)
+                        attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=True, latency_ms=latency_ms))
+                        input_text = f'{system_prompt or ""}\n' + "\n".join(message.content for message in provider_messages)
+                        usage, estimated = _normalize_usage(result.usage, input_text.strip(), result.text)
+                        return GatewayResponse(
+                            text=result.text,
+                            provider_used=target.provider,
+                            model_used=target.model_id,
+                            latency_ms=int((time.time() - started_at) * 1000),
+                            attempts=attempts,
+                            usage=usage,
+                            usage_estimated=estimated,
+                            route_decision=route_decision,
+                        )
+                    except Exception as error:
+                        normalized = _normalize_error(error)
+                        latency_ms = int((time.time() - attempt_started) * 1000)
+                        attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=latency_ms, error_message=str(normalized)))
+                        if config.on_attempt:
+                            await _maybe_await(config.on_attempt(_attempt_payload(attempts[-1], retry, target_index)))
+                        if retry < max(0, config.max_retries) and normalized.retryable:
+                            await asyncio.sleep(config.retry_backoff_ms * (retry + 1) / 1000)
+                            continue
+                        break
+            raise GatewayError(attempts[-1].error_message if attempts else "All gateway attempts failed.", False)
+
+    return Gateway()

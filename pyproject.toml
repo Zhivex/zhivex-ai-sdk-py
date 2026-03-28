@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zhivex-ai-sdk"
+version = "0.1.0a1"
+description = "Python port of the Zhivex AI SDK"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["ai", "llm", "sdk", "openai", "anthropic", "gemini", "gateway"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+authors = [
+  { name = "Miguel Ortiz" }
+]
+dependencies = [
+  "httpx>=0.27.0",
+  "pydantic>=2.8.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/Zhivex/zhivex-ai-sdk"
+Repository = "https://github.com/Zhivex/zhivex-ai-sdk"
+Issues = "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zhivex_ai"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/examples",
+  "/README.md",
+  "/pyproject.toml"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

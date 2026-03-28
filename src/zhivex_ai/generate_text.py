@@ -1,0 +1,387 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+from collections.abc import AsyncIterable
+from dataclasses import dataclass
+from typing import Any
+
+from .errors import ParseError, UnsupportedFeatureError, ValidationError
+from .messages import (
+    create_text_message,
+    get_text_from_messages,
+    normalize_finish_reason,
+    result_messages,
+    serialize_json_value,
+    tool_call_part,
+    tool_result_part,
+    validate_message_parts,
+)
+from .schema import create_schema_adapter
+from .types import (
+    GenerateResult,
+    GenerateTextOutput,
+    GenerateTextStep,
+    LanguageModel,
+    ModelGenerateInput,
+    ModelMessage,
+    ReasoningConfig,
+    RetryOptions,
+    StreamErrorEvent,
+    StreamEvent,
+    StreamFinishEvent,
+    StreamToolCallEvent,
+    StreamToolResultEvent,
+    StreamTextDeltaEvent,
+    ToolCall,
+    ToolExecutionError,
+    ToolExecutionResult,
+    ToolSet,
+)
+
+
+def _validate_reasoning(model: LanguageModel, reasoning: ReasoningConfig | None) -> None:
+    if reasoning is None:
+        return
+    if not model.capabilities.reasoning:
+        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support reasoning.')
+    if reasoning.effort is None and reasoning.budget_tokens is None:
+        raise ValidationError('The "reasoning" config must include at least one supported field.')
+    if reasoning.budget_tokens is not None and (reasoning.budget_tokens <= 0 or int(reasoning.budget_tokens) != reasoning.budget_tokens):
+        raise ValidationError('The "reasoning.budgetTokens" field must be a positive integer.')
+
+
+def _validate_input_source(prompt: str | None, messages: list[ModelMessage] | None) -> None:
+    if prompt is not None and messages is not None:
+        raise ValidationError('Pass either "prompt" or "messages", but not both.')
+
+
+def normalize_messages(
+    *,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+    system: str | None = None,
+) -> list[ModelMessage]:
+    _validate_input_source(prompt, messages)
+    built = list(messages or [])
+    if system:
+        built.insert(0, create_text_message("system", system))
+    if prompt:
+        built.append(create_text_message("user", prompt))
+    return built
+
+
+def _to_request(
+    *,
+    messages: list[ModelMessage],
+    tools: ToolSet | None,
+    temperature: float | None,
+    max_tokens: int | None,
+    reasoning: ReasoningConfig | None,
+    provider_options: dict[str, Any] | None,
+    structured_output: Any,
+    retry: RetryOptions,
+) -> ModelGenerateInput:
+    return ModelGenerateInput(
+        messages=messages,
+        tools=tools,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        reasoning=reasoning,
+        provider_options=provider_options,
+        structured_output=structured_output,
+        timeout_ms=retry.timeout_ms,
+        max_retries=retry.max_retries,
+        retry_backoff_ms=retry.retry_backoff_ms,
+    )
+
+
+async def _execute_tools(tool_calls: list[ToolCall], tools: ToolSet | None) -> list[ToolExecutionResult]:
+    results: list[ToolExecutionResult] = []
+    for call in tool_calls:
+        tool = tools.get(call.name) if tools else None
+        if tool is None:
+            raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
+        adapter = create_schema_adapter(tool.schema)
+        try:
+            parsed = adapter.validate_python(call.input)
+        except Exception as error:
+            raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
+        try:
+            output = tool.execute(parsed)
+            if inspect.isawaitable(output):
+                output = await output
+            results.append(
+                ToolExecutionResult(
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    output=serialize_json_value(output),
+                    is_error=False,
+                )
+            )
+        except Exception as error:
+            results.append(
+                ToolExecutionResult(
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+                    is_error=True,
+                )
+            )
+    return results
+
+
+def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
+    tool_calls: list[ToolCall] = []
+    for message in messages:
+        for part in message.parts:
+            if part.type == "tool-call":
+                tool_calls.append(part.tool_call)
+    return tool_calls
+
+
+async def generate_text(
+    *,
+    model: LanguageModel,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+    system: str | None = None,
+    tools: ToolSet | None = None,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning: ReasoningConfig | None = None,
+    provider_options: dict[str, Any] | None = None,
+    structured_output: Any = None,
+    timeout_ms: int | None = None,
+    max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+) -> GenerateTextOutput:
+    steps_limit = max(1, max_steps or 1)
+    all_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    validate_message_parts(model, all_messages)
+    _validate_reasoning(model, reasoning)
+    if tools and not model.capabilities.tools:
+        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+
+    retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
+    steps: list[GenerateTextStep] = []
+    tool_results: list[ToolExecutionResult] = []
+    final_result: GenerateResult | None = None
+
+    for _ in range(steps_limit):
+        request = _to_request(
+            messages=all_messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning=reasoning,
+            provider_options=provider_options,
+            structured_output=structured_output,
+            retry=retry,
+        )
+        response = await model.generate(request)
+        steps.append(GenerateTextStep(request=request, response=response))
+        final_result = response
+        response_messages = result_messages(response)
+        if response_messages:
+            all_messages.extend(response_messages)
+        step_tool_calls = _extract_tool_calls(response_messages)
+        if not step_tool_calls:
+            break
+        current_results = await _execute_tools(step_tool_calls, tools)
+        tool_results.extend(current_results)
+        for result in current_results:
+            all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
+
+    if final_result is None:
+        raise ParseError("Model did not return a result.")
+
+    return GenerateTextOutput(
+        text=get_text_from_messages(all_messages),
+        finish_reason=final_result.finish_reason,
+        provider_finish_reason=final_result.provider_finish_reason,
+        usage=final_result.usage,
+        steps=steps,
+        messages=all_messages,
+        tool_results=tool_results,
+    )
+
+
+@dataclass
+class _Broadcast:
+    history: list[StreamEvent]
+    done: bool = False
+    error: Exception | None = None
+    subscribers: list[asyncio.Queue[StreamEvent | None]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.subscribers = []
+
+    async def publish(self, event: StreamEvent) -> None:
+        self.history.append(event)
+        for queue in list(self.subscribers):
+            await queue.put(event)
+
+    async def close(self) -> None:
+        self.done = True
+        for queue in list(self.subscribers):
+            await queue.put(None)
+
+    def stream(self) -> AsyncIterable[StreamEvent]:
+        async def generator() -> AsyncIterable[StreamEvent]:
+            queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
+            cursor = 0
+            self.subscribers.append(queue)
+            try:
+                while True:
+                    while cursor < len(self.history):
+                        event = self.history[cursor]
+                        cursor += 1
+                        yield event
+                    if self.done:
+                        return
+                    item = await queue.get()
+                    if item is None:
+                        return
+            finally:
+                if queue in self.subscribers:
+                    self.subscribers.remove(queue)
+
+        return generator()
+
+
+class _StreamTextResult:
+    def __init__(self, runner: asyncio.Task[GenerateTextOutput], broadcast: _Broadcast) -> None:
+        self._runner = runner
+        self._broadcast = broadcast
+
+    def event_stream(self) -> AsyncIterable[StreamEvent]:
+        return self._broadcast.stream()
+
+    def text_stream(self) -> AsyncIterable[str]:
+        async def generator() -> AsyncIterable[str]:
+            async for event in self._broadcast.stream():
+                if isinstance(event, StreamTextDeltaEvent):
+                    yield event.text_delta
+
+        return generator()
+
+    async def collect(self) -> GenerateTextOutput:
+        return await self._runner
+
+
+def stream_text(
+    *,
+    model: LanguageModel,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+    system: str | None = None,
+    tools: ToolSet | None = None,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning: ReasoningConfig | None = None,
+    provider_options: dict[str, Any] | None = None,
+    structured_output: Any = None,
+    timeout_ms: int | None = None,
+    max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+) -> _StreamTextResult:
+    base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    validate_message_parts(model, base_messages)
+    _validate_reasoning(model, reasoning)
+    if not model.capabilities.streaming:
+        raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')
+    if tools and not model.capabilities.tools:
+        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+
+    steps_limit = max(1, max_steps or 1)
+    retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
+    broadcast = _Broadcast(history=[])
+
+    async def runner() -> GenerateTextOutput:
+        all_messages = list(base_messages)
+        steps: list[GenerateTextStep] = []
+        tool_results: list[ToolExecutionResult] = []
+        final_result: GenerateResult | None = None
+
+        try:
+            for _ in range(steps_limit):
+                request = _to_request(
+                    messages=all_messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                    provider_options=provider_options,
+                    structured_output=structured_output,
+                    retry=retry,
+                )
+                stream = await model.stream(request)
+                step_messages: list[ModelMessage] = []
+                text_buffer = ""
+                finish_reason = normalize_finish_reason("stop")
+                provider_finish_reason: str | None = None
+                usage = None
+
+                async for event in stream:
+                    await broadcast.publish(event)
+                    if isinstance(event, StreamTextDeltaEvent):
+                        text_buffer += event.text_delta
+                    elif isinstance(event, StreamToolCallEvent):
+                        assistant_message = next((m for m in step_messages if m.role == "assistant"), None)
+                        if assistant_message is None:
+                            assistant_message = ModelMessage(role="assistant", parts=[])
+                            step_messages.append(assistant_message)
+                        assistant_message.parts.append(tool_call_part(event.tool_call))
+                    elif isinstance(event, StreamFinishEvent):
+                        finish_reason = event.finish_reason
+                        provider_finish_reason = event.provider_finish_reason
+                        usage = event.usage
+
+                assistant_parts = []
+                if text_buffer:
+                    assistant_parts.append(create_text_message("assistant", text_buffer).parts[0])
+                for item in step_messages:
+                    for part in item.parts:
+                        if getattr(part, "type", None) == "tool-call":
+                            assistant_parts.append(part)
+                response_messages = [ModelMessage(role="assistant", parts=assistant_parts)] if assistant_parts else []
+                response = GenerateResult(
+                    messages=response_messages,
+                    text=text_buffer,
+                    finish_reason=finish_reason,
+                    provider_finish_reason=provider_finish_reason,
+                    usage=usage,
+                )
+                steps.append(GenerateTextStep(request=request, response=response))
+                final_result = response
+                if response_messages:
+                    all_messages.extend(response_messages)
+                step_tool_calls = _extract_tool_calls(response_messages)
+                if not step_tool_calls:
+                    break
+                current_results = await _execute_tools(step_tool_calls, tools)
+                tool_results.extend(current_results)
+                for result in current_results:
+                    all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
+                    await broadcast.publish(StreamToolResultEvent(tool_result=result))
+            if final_result is None:
+                raise ParseError("Model did not return a result.")
+            return GenerateTextOutput(
+                text=get_text_from_messages(all_messages),
+                finish_reason=final_result.finish_reason,
+                provider_finish_reason=final_result.provider_finish_reason,
+                usage=final_result.usage,
+                steps=steps,
+                messages=all_messages,
+                tool_results=tool_results,
+            )
+        except Exception as error:
+            await broadcast.publish(StreamErrorEvent(error=error))
+            raise
+        finally:
+            await broadcast.close()
+
+    return _StreamTextResult(asyncio.create_task(runner()), broadcast)
