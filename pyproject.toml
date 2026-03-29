@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "zhivex-ai-sdk"
 version = "0.1.0a1"
-description = "Python port of the Zhivex AI SDK"
+description = "Unified Python SDK for building LLM applications across multiple AI providers"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
