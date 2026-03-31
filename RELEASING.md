@@ -9,24 +9,19 @@ This repository is set up for Python package publishing with `hatchling`.
 - Run local validation:
 
 ```bash
-python3 -m compileall src tests examples
-python3 -m unittest discover -s tests -v
+make dev
+make check
 ```
 
 ## 2. Build locally
 
-Install the build tooling if needed:
-
-```bash
-python3 -m pip install --upgrade build hatchling twine
-```
-
 Create the distribution files:
 
 ```bash
-python3 -m build
-python3 -m twine check dist/*
+make release-check
 ```
+
+This uses the checked-in `.venv` toolchain and disables build isolation, so it does not need to download build requirements again when the environment is already prepared with `make dev`.
 
 ## 3. Publish to TestPyPI
 
@@ -56,8 +51,8 @@ python3 -m twine upload dist/*
 Or use the GitHub Actions workflow by pushing a version tag:
 
 ```bash
-git tag v0.1.0a1
-git push origin v0.1.0a1
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## 5. Trusted Publishing
@@ -70,5 +65,6 @@ If you want passwordless publishing from GitHub Actions:
 
 ## Notes
 
-- Current recommended first public version: `0.1.0a1`.
+- Current recommended first public version: `0.1.0`.
 - The package name on PyPI must be available. Confirm it before publishing.
+- Repository metadata and badges should point to `zhivex-ai-sdk-py`.

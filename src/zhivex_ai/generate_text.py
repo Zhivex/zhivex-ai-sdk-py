@@ -37,6 +37,7 @@ from .types import (
     ToolExecutionError,
     ToolExecutionResult,
     ToolSet,
+    TokenUsage,
 )
 
 
@@ -96,39 +97,65 @@ def _to_request(
     )
 
 
-async def _execute_tools(tool_calls: list[ToolCall], tools: ToolSet | None) -> list[ToolExecutionResult]:
-    results: list[ToolExecutionResult] = []
-    for call in tool_calls:
-        tool = tools.get(call.name) if tools else None
-        if tool is None:
-            raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
-        adapter = create_schema_adapter(tool.schema)
-        try:
-            parsed = adapter.validate_python(call.input)
-        except Exception as error:
-            raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
-        try:
-            output = tool.execute(parsed)
-            if inspect.isawaitable(output):
-                output = await output
-            results.append(
-                ToolExecutionResult(
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    output=serialize_json_value(output),
-                    is_error=False,
-                )
-            )
-        except Exception as error:
-            results.append(
-                ToolExecutionResult(
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    error=ToolExecutionError(message=str(error) or "Tool execution failed."),
-                    is_error=True,
-                )
-            )
-    return results
+async def _execute_tool(call: ToolCall, tools: ToolSet | None) -> ToolExecutionResult:
+    tool = tools.get(call.name) if tools else None
+    if tool is None:
+        raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
+    adapter = create_schema_adapter(tool.schema)
+    try:
+        parsed = adapter.validate_python(call.input)
+    except Exception as error:
+        raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
+    try:
+        output = tool.execute(parsed)
+        if inspect.isawaitable(output):
+            output = await output
+        return ToolExecutionResult(
+            tool_call_id=call.id,
+            tool_name=call.name,
+            output=serialize_json_value(output),
+            is_error=False,
+        )
+    except Exception as error:
+        return ToolExecutionResult(
+            tool_call_id=call.id,
+            tool_name=call.name,
+            error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+            is_error=True,
+        )
+
+
+async def _execute_tools(
+    tool_calls: list[ToolCall],
+    tools: ToolSet | None,
+    *,
+    parallel: bool = False,
+) -> list[ToolExecutionResult]:
+    if not parallel or len(tool_calls) <= 1:
+        return [await _execute_tool(call, tools) for call in tool_calls]
+    return list(await asyncio.gather(*(_execute_tool(call, tools) for call in tool_calls)))
+
+
+def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
+    present = [usage for usage in usages if usage is not None]
+    if not present:
+        return None
+    input_tokens = (
+        sum(usage.input_tokens for usage in present if usage.input_tokens is not None)
+        if all(usage.input_tokens is not None for usage in present)
+        else None
+    )
+    output_tokens = (
+        sum(usage.output_tokens for usage in present if usage.output_tokens is not None)
+        if all(usage.output_tokens is not None for usage in present)
+        else None
+    )
+    total_tokens = (
+        sum(usage.total_tokens for usage in present if usage.total_tokens is not None)
+        if all(usage.total_tokens is not None for usage in present)
+        else None
+    )
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
 
 
 def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
@@ -189,7 +216,11 @@ async def generate_text(
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
-        current_results = await _execute_tools(step_tool_calls, tools)
+        current_results = await _execute_tools(
+            step_tool_calls,
+            tools,
+            parallel=model.capabilities.parallel_tool_calls,
+        )
         tool_results.extend(current_results)
         for result in current_results:
             all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
@@ -197,11 +228,12 @@ async def generate_text(
     if final_result is None:
         raise ParseError("Model did not return a result.")
 
+    merged_usage = _merge_usage([step.response.usage for step in steps])
     return GenerateTextOutput(
         text=get_text_from_messages(all_messages),
         finish_reason=final_result.finish_reason,
         provider_finish_reason=final_result.provider_finish_reason,
-        usage=final_result.usage,
+        usage=merged_usage,
         steps=steps,
         messages=all_messages,
         tool_results=tool_results,
@@ -362,18 +394,23 @@ def stream_text(
                 step_tool_calls = _extract_tool_calls(response_messages)
                 if not step_tool_calls:
                     break
-                current_results = await _execute_tools(step_tool_calls, tools)
+                current_results = await _execute_tools(
+                    step_tool_calls,
+                    tools,
+                    parallel=model.capabilities.parallel_tool_calls,
+                )
                 tool_results.extend(current_results)
                 for result in current_results:
                     all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
                     await broadcast.publish(StreamToolResultEvent(tool_result=result))
             if final_result is None:
                 raise ParseError("Model did not return a result.")
+            merged_usage = _merge_usage([step.response.usage for step in steps])
             return GenerateTextOutput(
                 text=get_text_from_messages(all_messages),
                 finish_reason=final_result.finish_reason,
                 provider_finish_reason=final_result.provider_finish_reason,
-                usage=final_result.usage,
+                usage=merged_usage,
                 steps=steps,
                 messages=all_messages,
                 tool_results=tool_results,

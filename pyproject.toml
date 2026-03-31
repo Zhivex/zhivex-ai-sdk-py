@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.1.0a1"
+version = "0.1.0"
 description = "Unified Python SDK for building LLM applications across multiple AI providers"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,14 +32,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2.0",
+  "hatchling>=1.27.0",
   "pytest>=8.0.0",
-  "pytest-asyncio>=0.23.0"
+  "pytest-asyncio>=0.23.0",
+  "twine>=5.1.0"
 ]
 
 [project.urls]
-Homepage = "https://github.com/Zhivex/zhivex-ai-sdk"
-Repository = "https://github.com/Zhivex/zhivex-ai-sdk"
-Issues = "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+Homepage = "https://github.com/Zhivex/zhivex-ai-sdk-py"
+Repository = "https://github.com/Zhivex/zhivex-ai-sdk-py"
+Issues = "https://github.com/Zhivex/zhivex-ai-sdk-py/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zhivex_ai"]

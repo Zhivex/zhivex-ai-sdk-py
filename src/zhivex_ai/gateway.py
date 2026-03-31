@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .errors import ZhivexAIError
+from .errors import ProviderHTTPError, ZhivexAIError
 from .generate_text import generate_text
 from .types import ModelMessage, TokenUsage
 
@@ -92,10 +92,13 @@ def supports_vision_input(provider: GatewayProviderId, model_id: str) -> bool:
     return True
 
 
-def strip_images_for_unsupported_model(messages: list[GatewayMessage], provider: GatewayProviderId, model_id: str) -> list[GatewayMessage]:
-    if supports_vision_input(provider, model_id):
-        return messages
-    return [GatewayMessage(role=message.role, content=message.content, images=[]) for message in messages]
+def _messages_require_vision(messages: list[GatewayMessage]) -> bool:
+    return any(message.images for message in messages)
+
+
+def _target_supports_vision(adapter: Any, target: GatewayModelTarget) -> bool:
+    capabilities = adapter.language_model(target.model_id).capabilities
+    return capabilities.vision and supports_vision_input(target.provider, target.model_id)
 
 
 def gateway_messages_to_model_messages(messages: list[GatewayMessage], system_prompt: str | None = None) -> list[ModelMessage]:
@@ -114,7 +117,12 @@ def gateway_messages_to_model_messages(messages: list[GatewayMessage], system_pr
 
 
 def create_route_decision(mode: GatewayRoutingMode, intent: GatewayTaskIntent, ordered_targets: list[GatewayModelTarget]) -> GatewayRouteDecision:
-    return GatewayRouteDecision(mode=mode, intent=intent, ordered_targets=ordered_targets, reason=f"Ordered by {mode} mode with {intent} intent.")
+    return GatewayRouteDecision(
+        mode=mode,
+        intent=intent,
+        ordered_targets=ordered_targets,
+        reason=f"Primary target preserved first; fallbacks ordered by {mode} mode with {intent} intent.",
+    )
 
 
 def _score_target(mode: GatewayRoutingMode, intent: GatewayTaskIntent, target: GatewayModelTarget, config: GatewayConfig) -> float:
@@ -133,14 +141,18 @@ def _score_target(mode: GatewayRoutingMode, intent: GatewayTaskIntent, target: G
 
 
 def _order_targets(mode: GatewayRoutingMode, intent: GatewayTaskIntent, primary: GatewayModelTarget, fallbacks: list[GatewayModelTarget], config: GatewayConfig) -> list[GatewayModelTarget]:
-    deduped: list[GatewayModelTarget] = []
-    seen: set[tuple[str, str]] = set()
-    for target in [primary, *fallbacks]:
+    ordered: list[GatewayModelTarget] = [primary]
+    seen: set[tuple[str, str]] = {(primary.provider, primary.model_id)}
+    ranked_fallbacks: list[GatewayModelTarget] = []
+    for target in fallbacks:
         key = (target.provider, target.model_id)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(target)
-    return sorted(deduped, key=lambda target: _score_target(mode, intent, target, config), reverse=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        ranked_fallbacks.append(target)
+    ranked_fallbacks.sort(key=lambda target: _score_target(mode, intent, target, config), reverse=True)
+    ordered.extend(ranked_fallbacks)
+    return ordered
 
 
 def _supports_required_capabilities(adapter: Any, target: GatewayModelTarget, required: dict[str, bool] | None) -> bool:
@@ -179,10 +191,32 @@ def _normalize_usage(usage: TokenUsage | None, input_text: str, output_text: str
 def _normalize_error(error: Exception) -> GatewayError:
     if isinstance(error, GatewayError):
         return error
+    if isinstance(error, asyncio.TimeoutError):
+        return GatewayError("Gateway attempt timed out.", True)
+    if isinstance(error, ProviderHTTPError):
+        return GatewayError(str(error), error.status in {408, 429} or error.status >= 500)
+    if isinstance(error, OSError):
+        return GatewayError(str(error), True)
     message = str(error).lower()
     if any(token in message for token in ("timed out", "429", "rate", "connect", "econnrefused", "503")):
         return GatewayError(str(error), True)
     return GatewayError(str(error), False)
+
+
+def _final_gateway_error(attempts: list[GatewayAttempt]) -> GatewayError:
+    if not attempts:
+        return GatewayError("All gateway attempts failed.", False)
+    retryable = False
+    for attempt in reversed(attempts):
+        if not attempt.ok and attempt.error_message:
+            retryable = any(token in attempt.error_message.lower() for token in ("timed out", "429", "503", "connect"))
+            break
+    summary = "; ".join(
+        f"{attempt.provider}/{attempt.model_id}: {attempt.error_message or 'unknown error'}"
+        for attempt in attempts
+        if not attempt.ok
+    )
+    return GatewayError(summary or "All gateway attempts failed.", retryable)
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -228,6 +262,17 @@ def create_gateway(config: GatewayConfig):
                 if adapter is None:
                     attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message=f'No adapter registered for provider "{target.provider}".'))
                     continue
+                if _messages_require_vision(messages) and not _target_supports_vision(adapter, target):
+                    attempts.append(
+                        GatewayAttempt(
+                            provider=target.provider,
+                            model_id=target.model_id,
+                            ok=False,
+                            latency_ms=0,
+                            error_message="Skipped because the request contains images and the target does not support vision input.",
+                        )
+                    )
+                    continue
                 if not _supports_required_capabilities(adapter, target, required_capabilities):
                     attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message="Skipped because model capabilities do not satisfy the request."))
                     continue
@@ -237,7 +282,6 @@ def create_gateway(config: GatewayConfig):
                 for retry in range(max(0, config.max_retries) + 1):
                     attempt_started = time.time()
                     try:
-                        provider_messages = strip_images_for_unsupported_model(messages, target.provider, target.model_id)
                         if config.on_attempt:
                             await _maybe_await(
                                 config.on_attempt(
@@ -251,7 +295,7 @@ def create_gateway(config: GatewayConfig):
                         result = await asyncio.wait_for(
                             generate_text(
                                 model=adapter.language_model(target.model_id),
-                                messages=gateway_messages_to_model_messages(provider_messages, system_prompt),
+                                messages=gateway_messages_to_model_messages(messages, system_prompt),
                                 temperature=temperature,
                                 max_tokens=max_tokens,
                             ),
@@ -259,7 +303,7 @@ def create_gateway(config: GatewayConfig):
                         )
                         latency_ms = int((time.time() - attempt_started) * 1000)
                         attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=True, latency_ms=latency_ms))
-                        input_text = f'{system_prompt or ""}\n' + "\n".join(message.content for message in provider_messages)
+                        input_text = f'{system_prompt or ""}\n' + "\n".join(message.content for message in messages)
                         usage, estimated = _normalize_usage(result.usage, input_text.strip(), result.text)
                         return GatewayResponse(
                             text=result.text,
@@ -274,13 +318,22 @@ def create_gateway(config: GatewayConfig):
                     except Exception as error:
                         normalized = _normalize_error(error)
                         latency_ms = int((time.time() - attempt_started) * 1000)
+                        error_message = str(normalized) or (
+                            f'Gateway attempt failed for "{target.provider}/{target.model_id}".'
+                        )
+                        if isinstance(error, asyncio.TimeoutError):
+                            timeout_ms = config.attempt_timeouts_ms.get(target.provider, config.attempt_timeout_ms)
+                            error_message = (
+                                f'Gateway attempt timed out for "{target.provider}/{target.model_id}" after {timeout_ms} ms.'
+                            )
                         attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=latency_ms, error_message=str(normalized)))
+                        attempts[-1].error_message = error_message
                         if config.on_attempt:
                             await _maybe_await(config.on_attempt(_attempt_payload(attempts[-1], retry, target_index)))
                         if retry < max(0, config.max_retries) and normalized.retryable:
                             await asyncio.sleep(config.retry_backoff_ms * (retry + 1) / 1000)
                             continue
                         break
-            raise GatewayError(attempts[-1].error_message if attempts else "All gateway attempts failed.", False)
+            raise _final_gateway_error(attempts)
 
     return Gateway()
