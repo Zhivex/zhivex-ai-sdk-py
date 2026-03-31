@@ -45,6 +45,54 @@ class BufferedResponse:
             yield line
 
 
+class StreamingResponse:
+    def __init__(self, response: httpx.Response, client: httpx.AsyncClient) -> None:
+        self.status_code = response.status_code
+        self._response = response
+        self._client = client
+        self._closed = False
+        self._body_text: str | None = None
+
+    async def _read_body(self) -> str:
+        if self._body_text is not None:
+            return self._body_text
+        try:
+            await self._response.aread()
+            self._body_text = self._response.text
+            return self._body_text
+        finally:
+            await self._close()
+
+    async def _close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._response.aclose()
+        await self._client.aclose()
+
+    async def json(self) -> Any:
+        body_text = await self._read_body()
+        return httpx.Response(200, text=body_text).json()
+
+    async def text(self) -> str:
+        return await self._read_body()
+
+    async def iter_lines(self) -> AsyncIterable[str]:
+        if self._body_text is not None:
+            for line in self._body_text.splitlines():
+                yield line
+            return
+
+        lines: list[str] = []
+        try:
+            async for line in self._response.aiter_lines():
+                lines.append(line)
+                yield line
+        finally:
+            self._body_text = "\n".join(lines)
+            await self._close()
+
+
 async def default_fetch(
     url: str,
     *,
@@ -54,6 +102,14 @@ async def default_fetch(
     stream: bool = False,
 ) -> ResponseLike:
     timeout = None if timeout_ms is None else timeout_ms / 1000
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, headers=headers, json=json_body)
+    client = httpx.AsyncClient(timeout=timeout)
+    request = client.build_request("POST", url, headers=headers, json=json_body)
+    response = await client.send(request, stream=stream)
+    if stream:
+        return StreamingResponse(response=response, client=client)
+    try:
+        await response.aread()
         return BufferedResponse(status_code=response.status_code, body_text=response.text)
+    finally:
+        await response.aclose()
+        await client.aclose()

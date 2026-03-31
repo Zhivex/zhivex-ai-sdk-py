@@ -52,10 +52,18 @@ Zhivex AI SDK gives you a common language model contract so your application cod
 
 ## Installation
 
-For local development:
+For local development with `uv`:
 
 ```bash
-pip install -e .
+make dev
+```
+
+If you prefer plain `pip`:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
 ```
 
 When published to PyPI, installation will look like:
@@ -294,9 +302,18 @@ Potential next additions:
 Run local validation with:
 
 ```bash
-python3 -m compileall src tests examples
-python3 -m unittest discover -s tests -v
+make check
 ```
+
+Individual commands:
+
+```bash
+make test
+make build
+make release-check
+```
+
+`make build` uses the local `.venv` without build isolation so it works in restricted environments once `make dev` has installed the dev toolchain.
 
 ## Publishing
 
@@ -310,7 +327,7 @@ The repository already includes:
 Before the first public release, confirm:
 
 - the final package name on PyPI
-- the initial version strategy, for example `0.1.0` vs `0.1.0a1`
+- the `0.1.0` release tag and release notes
 - Trusted Publishing configuration on PyPI and TestPyPI
 
 ## License
