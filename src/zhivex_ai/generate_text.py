@@ -34,7 +34,9 @@ from .types import (
     StreamToolResultEvent,
     StreamTextDeltaEvent,
     ToolCall,
+    ToolChoiceName,
     ToolExecutionError,
+    ToolExecutionOptions,
     ToolExecutionResult,
     ToolSet,
     TokenUsage,
@@ -55,6 +57,21 @@ def _validate_reasoning(model: LanguageModel, reasoning: ReasoningConfig | None)
 def _validate_input_source(prompt: str | None, messages: list[ModelMessage] | None) -> None:
     if prompt is not None and messages is not None:
         raise ValidationError('Pass either "prompt" or "messages", but not both.')
+
+
+def _validate_tool_choice(model: LanguageModel, tools: ToolSet | None, tool_choice: str | ToolChoiceName | None) -> None:
+    if tool_choice is None:
+        return
+    if not model.capabilities.tools:
+        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+    if not model.capabilities.tool_choice:
+        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tool choice.')
+    if not tools:
+        raise ValidationError('The "tool_choice" option requires at least one registered tool.')
+    if isinstance(tool_choice, str) and tool_choice not in {"none", "auto", "required"}:
+        raise ValidationError('The "tool_choice" option must be "none", "auto", "required", or ToolChoiceName(...).')
+    if isinstance(tool_choice, ToolChoiceName) and tool_choice.tool_name not in tools:
+        raise ValidationError(f'The selected tool "{tool_choice.tool_name}" is not registered.')
 
 
 def normalize_messages(
@@ -81,11 +98,13 @@ def _to_request(
     reasoning: ReasoningConfig | None,
     provider_options: dict[str, Any] | None,
     structured_output: Any,
+    tool_choice: str | ToolChoiceName | None,
     retry: RetryOptions,
 ) -> ModelGenerateInput:
     return ModelGenerateInput(
         messages=messages,
         tools=tools,
+        tool_choice=tool_choice,
         temperature=temperature,
         max_tokens=max_tokens,
         reasoning=reasoning,
@@ -97,7 +116,7 @@ def _to_request(
     )
 
 
-async def _execute_tool(call: ToolCall, tools: ToolSet | None) -> ToolExecutionResult:
+async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int | None = None) -> ToolExecutionResult:
     tool = tools.get(call.name) if tools else None
     if tool is None:
         raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
@@ -109,7 +128,7 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None) -> ToolExecutionR
     try:
         output = tool.execute(parsed)
         if inspect.isawaitable(output):
-            output = await output
+            output = await asyncio.wait_for(output, timeout_ms / 1000) if timeout_ms is not None else await output
         return ToolExecutionResult(
             tool_call_id=call.id,
             tool_name=call.name,
@@ -129,11 +148,47 @@ async def _execute_tools(
     tool_calls: list[ToolCall],
     tools: ToolSet | None,
     *,
-    parallel: bool = False,
+    options: ToolExecutionOptions | None = None,
+    default_parallel: bool = False,
 ) -> list[ToolExecutionResult]:
+    parallel = options.parallel if options and options.parallel is not None else default_parallel
+    timeout_ms = options.timeout_ms if options else None
+    stop_on_error = options.stop_on_error if options else False
+    max_concurrency = max(1, options.max_concurrency or len(tool_calls) or 1) if options else max(1, len(tool_calls) or 1)
+
+    async def execute_single(call: ToolCall) -> ToolExecutionResult:
+        return await _execute_tool(call, tools, timeout_ms=timeout_ms)
+
     if not parallel or len(tool_calls) <= 1:
-        return [await _execute_tool(call, tools) for call in tool_calls]
-    return list(await asyncio.gather(*(_execute_tool(call, tools) for call in tool_calls)))
+        results: list[ToolExecutionResult] = []
+        for call in tool_calls:
+            result = await execute_single(call)
+            results.append(result)
+            if stop_on_error and result.is_error:
+                raise RuntimeError(
+                    f'Tool "{result.tool_name}" failed: {(result.error.message if result.error else "Unknown tool error.")}'
+                )
+        return results
+
+    results: list[ToolExecutionResult | None] = [None] * len(tool_calls)
+    cursor = 0
+
+    async def worker() -> None:
+        nonlocal cursor
+        while cursor < len(tool_calls):
+            index = cursor
+            cursor += 1
+            results[index] = await execute_single(tool_calls[index])
+
+    await asyncio.gather(*(worker() for _ in range(min(max_concurrency, len(tool_calls)))))
+    resolved = [result for result in results if result is not None]
+    if stop_on_error:
+        first_error = next((result for result in resolved if result.is_error), None)
+        if first_error is not None:
+            raise RuntimeError(
+                f'Tool "{first_error.tool_name}" failed: {(first_error.error.message if first_error.error else "Unknown tool error.")}'
+            )
+    return resolved
 
 
 def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
@@ -174,6 +229,8 @@ async def generate_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
+    tool_choice: str | ToolChoiceName | None = None,
+    tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
@@ -190,6 +247,7 @@ async def generate_text(
     _validate_reasoning(model, reasoning)
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+    _validate_tool_choice(model, tools, tool_choice)
 
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
     steps: list[GenerateTextStep] = []
@@ -205,6 +263,7 @@ async def generate_text(
             reasoning=reasoning,
             provider_options=provider_options,
             structured_output=structured_output,
+            tool_choice=tool_choice,
             retry=retry,
         )
         response = await model.generate(request)
@@ -219,7 +278,8 @@ async def generate_text(
         current_results = await _execute_tools(
             step_tool_calls,
             tools,
-            parallel=model.capabilities.parallel_tool_calls,
+            options=tool_execution,
+            default_parallel=model.capabilities.parallel_tool_calls,
         )
         tool_results.extend(current_results)
         for result in current_results:
@@ -310,6 +370,8 @@ def stream_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
+    tool_choice: str | ToolChoiceName | None = None,
+    tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
@@ -327,6 +389,7 @@ def stream_text(
         raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+    _validate_tool_choice(model, tools, tool_choice)
 
     steps_limit = max(1, max_steps or 1)
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
@@ -348,6 +411,7 @@ def stream_text(
                     reasoning=reasoning,
                     provider_options=provider_options,
                     structured_output=structured_output,
+                    tool_choice=tool_choice,
                     retry=retry,
                 )
                 stream = await model.stream(request)
@@ -397,7 +461,8 @@ def stream_text(
                 current_results = await _execute_tools(
                     step_tool_calls,
                     tools,
-                    parallel=model.capabilities.parallel_tool_calls,
+                    options=tool_execution,
+                    default_parallel=model.capabilities.parallel_tool_calls,
                 )
                 tool_results.extend(current_results)
                 for result in current_results:

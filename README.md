@@ -9,7 +9,7 @@ Zhivex AI SDK for Python is an async-first SDK for building LLM applications aga
 
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
-- one normalized interface for text generation, streaming, tools, structured output, embeddings, and routing
+- one normalized interface for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
 - thin provider adapters instead of provider-specific app logic everywhere
 - portable application code that can switch models and vendors with minimal changes
 
@@ -27,28 +27,31 @@ Zhivex AI SDK gives you a common language model contract so your application cod
 ## Highlights
 
 - Unified `generate_text()` and `stream_text()` primitives
-- Structured output with `generate_object()`
+- Structured output with `generate_object()` and `stream_object()`
 - Tool execution across multiple model steps
+- Grounded text for providers with web search support
+- Audio transcription and speech generation where the provider supports it
 - Embeddings support where the provider supports it
 - Provider factories for hosted and local models
 - Gateway routing with fallback support
+- HTTP/UI helpers for SSE, plain text streams, and UI message transport
 - Middleware for telemetry, caching, and circuit breaking
 - Model catalog helpers for cost and recommendation metadata
 
 ## Supported Providers
 
-| Provider | Text | Streaming | Tools | Structured Output | Embeddings |
-| --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes |
-| Azure OpenAI | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | Yes | Yes | Prompted fallback | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes |
-| Vertex AI | Yes | Yes | Yes | Yes | Yes |
-| Bedrock | Yes | No | No | No | No |
-| OpenRouter | Yes | Yes | Yes | Yes | Yes |
-| Qwen | Yes | Yes | Yes | Yes | Yes |
-| Kimi | Yes | Yes | Yes | Yes | Yes |
-| Ollama | Yes | Yes | Yes | Yes | Yes |
+| Provider | Text | Streaming | Tools | Structured Output | Embeddings | Audio In | Audio Out | Grounded Text |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Anthropic | Yes | Yes | Yes | Prompted fallback | No | No | No | No |
+| Gemini | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Bedrock | Yes | No | No | No | No | No | No | No |
+| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Qwen | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No |
 
 ## Installation
 
@@ -175,6 +178,91 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+### Structured output streaming
+
+```python
+import asyncio
+
+from pydantic import BaseModel
+
+from zhivex_ai import create_openai, stream_object
+
+
+class Recipe(BaseModel):
+    title: str
+    servings: int
+
+
+async def main() -> None:
+    openai = create_openai()
+    result = stream_object(
+        model=openai("gpt-4o-mini"),
+        prompt="Return a compact JSON recipe.",
+        schema=Recipe,
+    )
+
+    async for partial in result.partial_object_stream():
+        print(partial)
+
+    final = await result.collect()
+    print(final.object.model_dump())
+
+
+asyncio.run(main())
+```
+
+### Grounded text
+
+```python
+import asyncio
+
+from zhivex_ai import create_openai, generate_grounded_text
+
+
+async def main() -> None:
+    openai = create_openai()
+
+    result = await generate_grounded_text(
+        model=openai.grounded_language_model("gpt-4o-search-preview"),
+        prompt="Find one recent fact about AI infrastructure.",
+    )
+
+    print(result.text)
+    for source in result.sources:
+        print(source.title, source.url)
+
+
+asyncio.run(main())
+```
+
+### Audio
+
+```python
+import asyncio
+from pathlib import Path
+
+from zhivex_ai import AudioInput, create_openai, transcribe_audio
+
+
+async def main() -> None:
+    openai = create_openai()
+    audio = AudioInput(
+        data=Path("sample.wav").read_bytes(),
+        media_type="audio/wav",
+        filename="sample.wav",
+    )
+
+    result = await transcribe_audio(
+        model=openai.transcription_model("gpt-4o-mini-transcribe"),
+        audio=audio,
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
 ### Gateway fallback routing
 
 ```python
@@ -230,6 +318,13 @@ The package currently exposes:
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama reuse the same normalized adapter model.
 
+Adapters may also expose optional factories such as:
+
+- `provider.embedding_model("text-embedding-3-small")`
+- `provider.transcription_model("gpt-4o-mini-transcribe")`
+- `provider.speech_model("gpt-4o-mini-tts")`
+- `provider.grounded_language_model("gpt-4o-search-preview")`
+
 ## Why not use provider SDKs directly?
 
 Using provider SDKs directly is totally reasonable when:
@@ -258,27 +353,56 @@ Zhivex AI SDK includes middleware helpers similar to the TypeScript SDK:
 
 These let you keep cross-cutting concerns outside provider adapters and application prompts.
 
+## UI And Transport
+
+The Python SDK now includes helpers for UI and transport-oriented flows:
+
+- `to_ui_message(...)`, `to_ui_messages(...)`
+- `from_ui_message(...)`, `from_ui_messages(...)`
+- `serialize_ui_message(...)`, `deserialize_ui_message(...)`
+- `parse_ui_message_request(...)`
+- `create_ui_message_json_response(...)`
+- `create_ui_message_lines_response(...)`
+- `to_sse_stream(...)`, `to_sse_response(...)`
+- `to_text_stream_response(...)`
+- `to_ui_message_stream_response(...)`
+
+These are useful when wiring the SDK into web servers, SSE endpoints, or custom chat frontends.
+
 ## Examples
 
+See [examples/README.md](./examples/README.md) for the full list. Highlights:
+
 - [openai_text.py](./examples/openai_text.py)
-- [structured_output.py](./examples/structured_output.py)
+- [stream_text.py](./examples/stream_text.py)
+- [stream_object.py](./examples/stream_object.py)
+- [messages_and_tools.py](./examples/messages_and_tools.py)
+- [embeddings.py](./examples/embeddings.py)
+- [grounded_text.py](./examples/grounded_text.py)
+- [transcribe_audio.py](./examples/transcribe_audio.py)
+- [generate_speech.py](./examples/generate_speech.py)
+- [ui_messages.py](./examples/ui_messages.py)
+- [http_responses.py](./examples/http_responses.py)
+- [middleware.py](./examples/middleware.py)
+- [model_catalog.py](./examples/model_catalog.py)
 - [gateway_fallback.py](./examples/gateway_fallback.py)
 
 ## Project Status
 
-This project is usable today, but still early.
+This project is usable today and now covers most of the public SDK surfaces that exist in the TypeScript repo.
 
 Current status:
 
 - core generation and streaming primitives are implemented
+- object streaming, UI helpers, transport helpers, grounded text, and audio helpers are included
 - major provider adapters are in place
 - gateway, catalog, and middleware helpers are included
-- test coverage exists for the shared contract and key adapters
+- test coverage exists for the shared contract, gateway, transport helpers, and key adapters
 
 What to expect:
 
 - API polish may continue as the Python port matures
-- provider-specific behavior may still expand over time
+- provider-specific coverage may still expand over time, especially for Gemini and Vertex audio/grounding
 - GitHub Copilot SDK integration is not included yet
 
 ## Roadmap
@@ -287,14 +411,14 @@ Near-term release goals:
 
 - first TestPyPI release
 - first public PyPI release
-- more adapter coverage tests for Gemini, Vertex, and Bedrock
+- more adapter coverage tests for Gemini, Vertex, and Bedrock advanced features
 - API polish and docs cleanup
 
 Potential next additions:
 
 - GitHub Copilot SDK integration
 - richer provider capability metadata
-- more middleware and transport helpers
+- more provider-specific audio and grounding support
 - higher-level chat/session utilities
 
 ## Development

@@ -4,6 +4,7 @@ import asyncio
 import sys
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
+from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -14,7 +15,7 @@ from zhivex_ai import GatewayConfig, GatewayError, GatewayImageAttachment, Gatew
 from zhivex_ai.errors import ProviderHTTPError
 from zhivex_ai.messages import create_text_message
 from zhivex_ai.providers.base import ProviderAdapter
-from zhivex_ai.types import GenerateResult, ModelCapabilities, ModelGenerateInput
+from zhivex_ai.types import GenerateResult, ModelCapabilities, ModelGenerateInput, StreamFinishEvent, StreamTextDeltaEvent, TokenUsage
 
 
 class FailingModel:
@@ -81,6 +82,27 @@ class TimeoutModel(WorkingModel):
 class RateLimitedModel(WorkingModel):
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         raise ProviderHTTPError("OpenAI request failed with status 429.", 429)
+
+
+class StreamingModel(WorkingModel):
+    async def stream(self, input: ModelGenerateInput):
+        async def generator():
+            yield StreamTextDeltaEvent(text_delta='{"status":"ok"}')
+            yield StreamFinishEvent(
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=2, output_tokens=2, total_tokens=4),
+            )
+
+        return generator()
+
+
+class ObjectModel(WorkingModel):
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(messages=[create_text_message("assistant", '{"status":"ok"}')], text='{"status":"ok"}')
+
+
+class Payload(BaseModel):
+    status: str
 
 
 class GatewayTests(IsolatedAsyncioTestCase):
@@ -184,3 +206,37 @@ class GatewayTests(IsolatedAsyncioTestCase):
             )
         self.assertTrue(context.exception.retryable)
         self.assertIn("429", str(context.exception))
+
+    async def test_gateway_stream_text_collects_result(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: StreamingModel()),
+                },
+                max_retries=0,
+            )
+        )
+        result = gateway.stream_text(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+        )
+        final = await result.collect()
+        self.assertEqual(final.text, '{"status":"ok"}')
+        self.assertEqual(final.provider_used, "openai")
+
+    async def test_gateway_generate_object_enriches_gateway_metadata(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: ObjectModel()),
+                },
+                max_retries=0,
+            )
+        )
+        result = await gateway.generate_object(
+            schema=Payload,
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+        )
+        self.assertEqual(result.object.status, "ok")
+        self.assertEqual(result.provider_used, "openai")

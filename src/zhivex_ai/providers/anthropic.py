@@ -25,6 +25,7 @@ from ..types import (
     TextPart,
     TokenUsage,
     ToolCall,
+    ToolChoiceName,
     ToolCallPart,
 )
 from .base import ProviderAdapter
@@ -107,6 +108,16 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     ]
 
 
+def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> dict[str, Any] | None:
+    if tool_choice is None or tool_choice == "auto":
+        return None
+    if tool_choice == "none":
+        return {"type": "none"}
+    if tool_choice == "required":
+        return {"type": "any"}
+    return {"type": "tool", "name": tool_choice.tool_name}
+
+
 def _map_reasoning(input: ModelGenerateInput) -> dict[str, Any] | None:
     if input.reasoning is None:
         return None
@@ -154,6 +165,7 @@ class AnthropicLanguageModel(LanguageModel):
             "system": _system_prompt_from_messages(input.messages),
             "messages": _map_messages(input.messages),
             "tools": _map_tools(input.tools),
+            "tool_choice": _map_tool_choice(input.tool_choice),
             "temperature": input.temperature,
             "max_tokens": input.max_tokens or 1024,
             **(input.provider_options or {}),
@@ -201,6 +213,7 @@ class AnthropicLanguageModel(LanguageModel):
                     "system": _system_prompt_from_messages(input.messages),
                     "messages": _map_messages(input.messages),
                     "tools": _map_tools(input.tools),
+                    "tool_choice": _map_tool_choice(input.tool_choice),
                     "temperature": input.temperature,
                     "max_tokens": input.max_tokens or 1024,
                     "stream": True,

@@ -16,7 +16,10 @@ from zhivex_ai import (
     ModelCapabilities,
     ModelMessage,
     ReasoningConfig,
+    ToolChoiceName,
+    ToolExecutionOptions,
     create_text_message,
+    generate_grounded_text,
     generate_object,
     generate_text,
     stream_text,
@@ -31,6 +34,9 @@ from zhivex_ai.types import (
     TokenUsage,
     ToolCall,
     ToolCallPart,
+    GroundedGenerateResult,
+    GroundingSource,
+    GroundedModelGenerateInput,
 )
 
 
@@ -149,6 +155,33 @@ class Forecast(BaseModel):
     forecast: str
 
 
+class FakeGroundedModel:
+    provider = "test"
+    model_id = "grounded-model"
+    capabilities = ModelCapabilities(
+        streaming=False,
+        tools=False,
+        structured_output=False,
+        json_mode=False,
+        tool_choice=False,
+        parallel_tool_calls=False,
+        vision=False,
+        files=False,
+        audio_input=False,
+        audio_output=False,
+        embeddings=False,
+        reasoning=True,
+        web_search=True,
+    )
+
+    async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
+        return GroundedGenerateResult(
+            text="grounded",
+            usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+            sources=[GroundingSource(url="https://example.com", title="Example")],
+        )
+
+
 class CoreTests(IsolatedAsyncioTestCase):
     async def test_generate_text_executes_tools(self) -> None:
         model = FakeLanguageModel()
@@ -237,3 +270,42 @@ class CoreTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "done")
         self.assertEqual(state["max_in_flight"], 2)
         self.assertEqual([tool_result.tool_name for tool_result in result.tool_results], ["weather", "timezone"])
+
+    async def test_generate_text_accepts_named_tool_choice(self) -> None:
+        model = FakeLanguageModel()
+        await generate_text(
+            model=model,
+            prompt="Weather?",
+            tools={
+                "weather": tool(
+                    name="weather",
+                    schema=dict[str, str],
+                    execute=lambda input: {"city": input["city"], "forecast": "sunny"},
+                )
+            },
+            tool_choice=ToolChoiceName(tool_name="weather"),
+        )
+        self.assertEqual(model.calls, 1)
+
+    async def test_generate_text_stops_on_tool_error_when_requested(self) -> None:
+        model = FakeLanguageModel()
+
+        with self.assertRaises(RuntimeError):
+            await generate_text(
+                model=model,
+                prompt="Weather?",
+                max_steps=2,
+                tools={
+                    "weather": tool(
+                        name="weather",
+                        schema=dict[str, str],
+                        execute=lambda input: (_ for _ in ()).throw(RuntimeError("boom")),
+                    )
+                },
+                tool_execution=ToolExecutionOptions(stop_on_error=True),
+            )
+
+    async def test_generate_grounded_text_returns_sources(self) -> None:
+        result = await generate_grounded_text(model=FakeGroundedModel(), prompt="search")
+        self.assertEqual(result.text, "grounded")
+        self.assertEqual(result.sources[0].url, "https://example.com")

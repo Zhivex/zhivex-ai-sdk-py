@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .errors import ProviderHTTPError, ZhivexAIError
-from .generate_text import generate_text
+from .generate_object import generate_object, stream_object
+from .generate_text import generate_text, stream_text
 from .types import ModelMessage, TokenUsage
 
 GatewayProviderId = Literal[
@@ -62,6 +63,12 @@ class GatewayResponse:
     usage: TokenUsage
     usage_estimated: bool
     route_decision: GatewayRouteDecision
+
+
+@dataclass(slots=True)
+class GatewayObjectResponse(GatewayResponse):
+    object: Any = None
+    object_mode: Literal["native", "prompted"] = "prompted"
 
 
 @dataclass(slots=True)
@@ -239,20 +246,21 @@ def _attempt_payload(attempt: GatewayAttempt, retry: int, target_rank: int) -> d
 
 def create_gateway(config: GatewayConfig):
     class Gateway:
-        async def generate(
+        async def _run_generate(
             self,
             *,
             messages: list[GatewayMessage],
             primary: GatewayModelTarget,
-            fallbacks: list[GatewayModelTarget] | None = None,
-            system_prompt: str | None = None,
-            temperature: float | None = None,
-            max_tokens: int | None = None,
-            required_capabilities: dict[str, bool] | None = None,
-            max_cost_per_1k_tokens: float | None = None,
-            routing_mode: GatewayRoutingMode = "balanced",
-            task_intent: GatewayTaskIntent = "chat",
-        ) -> GatewayResponse:
+            fallbacks: list[GatewayModelTarget] | None,
+            system_prompt: str | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            required_capabilities: dict[str, bool] | None,
+            max_cost_per_1k_tokens: float | None,
+            routing_mode: GatewayRoutingMode,
+            task_intent: GatewayTaskIntent,
+            run: Any,
+        ) -> tuple[Any, GatewayProviderId, str, list[GatewayAttempt], GatewayRouteDecision, float]:
             attempts: list[GatewayAttempt] = []
             started_at = time.time()
             ordered_targets = _order_targets(routing_mode, task_intent, primary, fallbacks or [], config)
@@ -292,29 +300,16 @@ def create_gateway(config: GatewayConfig):
                                     )
                                 )
                             )
+                        async def invoke() -> Any:
+                            return await _maybe_await(run(adapter, target, messages, system_prompt, temperature, max_tokens))
+
                         result = await asyncio.wait_for(
-                            generate_text(
-                                model=adapter.language_model(target.model_id),
-                                messages=gateway_messages_to_model_messages(messages, system_prompt),
-                                temperature=temperature,
-                                max_tokens=max_tokens,
-                            ),
+                            invoke(),
                             timeout=(config.attempt_timeouts_ms.get(target.provider, config.attempt_timeout_ms) / 1000),
                         )
                         latency_ms = int((time.time() - attempt_started) * 1000)
                         attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=True, latency_ms=latency_ms))
-                        input_text = f'{system_prompt or ""}\n' + "\n".join(message.content for message in messages)
-                        usage, estimated = _normalize_usage(result.usage, input_text.strip(), result.text)
-                        return GatewayResponse(
-                            text=result.text,
-                            provider_used=target.provider,
-                            model_used=target.model_id,
-                            latency_ms=int((time.time() - started_at) * 1000),
-                            attempts=attempts,
-                            usage=usage,
-                            usage_estimated=estimated,
-                            route_decision=route_decision,
-                        )
+                        return result, target.provider, target.model_id, attempts, route_decision, started_at
                     except Exception as error:
                         normalized = _normalize_error(error)
                         latency_ms = int((time.time() - attempt_started) * 1000)
@@ -335,5 +330,289 @@ def create_gateway(config: GatewayConfig):
                             continue
                         break
             raise _final_gateway_error(attempts)
+
+        def _build_response(
+            self,
+            *,
+            result: Any,
+            provider_used: GatewayProviderId,
+            model_used: str,
+            attempts: list[GatewayAttempt],
+            route_decision: GatewayRouteDecision,
+            started_at: float,
+            messages: list[GatewayMessage],
+            system_prompt: str | None,
+        ) -> GatewayResponse:
+            input_text = f'{system_prompt or ""}\n' + "\n".join(message.content for message in messages)
+            usage, estimated = _normalize_usage(getattr(result, "usage", None), input_text.strip(), result.text)
+            return GatewayResponse(
+                text=result.text,
+                provider_used=provider_used,
+                model_used=model_used,
+                latency_ms=int((time.time() - started_at) * 1000),
+                attempts=attempts,
+                usage=usage,
+                usage_estimated=estimated,
+                route_decision=route_decision,
+            )
+
+        async def generate(
+            self,
+            *,
+            messages: list[GatewayMessage],
+            primary: GatewayModelTarget,
+            fallbacks: list[GatewayModelTarget] | None = None,
+            system_prompt: str | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            required_capabilities: dict[str, bool] | None = None,
+            max_cost_per_1k_tokens: float | None = None,
+            routing_mode: GatewayRoutingMode = "balanced",
+            task_intent: GatewayTaskIntent = "chat",
+        ) -> GatewayResponse:
+            result, provider_used, model_used, attempts, route_decision, started_at = await self._run_generate(
+                messages=messages,
+                primary=primary,
+                fallbacks=fallbacks,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                required_capabilities=required_capabilities,
+                max_cost_per_1k_tokens=max_cost_per_1k_tokens,
+                routing_mode=routing_mode,
+                task_intent=task_intent,
+                run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_text(
+                    model=adapter.language_model(target.model_id),
+                    messages=gateway_messages_to_model_messages(messages, system_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ),
+            )
+            return self._build_response(
+                result=result,
+                provider_used=provider_used,
+                model_used=model_used,
+                attempts=attempts,
+                route_decision=route_decision,
+                started_at=started_at,
+                messages=messages,
+                system_prompt=system_prompt,
+            )
+
+        def stream_text(
+            self,
+            *,
+            messages: list[GatewayMessage],
+            primary: GatewayModelTarget,
+            fallbacks: list[GatewayModelTarget] | None = None,
+            system_prompt: str | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            required_capabilities: dict[str, bool] | None = None,
+            max_cost_per_1k_tokens: float | None = None,
+            routing_mode: GatewayRoutingMode = "balanced",
+            task_intent: GatewayTaskIntent = "chat",
+        ):
+            async def start():
+                return await self._run_generate(
+                    messages=messages,
+                    primary=primary,
+                    fallbacks=fallbacks,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    required_capabilities=required_capabilities,
+                    max_cost_per_1k_tokens=max_cost_per_1k_tokens,
+                    routing_mode=routing_mode,
+                    task_intent=task_intent,
+                    run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_text(
+                        model=adapter.language_model(target.model_id),
+                        messages=gateway_messages_to_model_messages(messages, system_prompt),
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                )
+
+            selected = asyncio.create_task(start())
+
+            class GatewayStreamTextResult:
+                async def event_stream(self):
+                    result, *_ = await selected
+                    async for event in result.event_stream():
+                        yield event
+
+                async def text_stream(self):
+                    result, *_ = await selected
+                    async for chunk in result.text_stream():
+                        yield chunk
+
+                async def collect(self):
+                    result, provider_used, model_used, attempts, route_decision, started_at = await selected
+                    final = await result.collect()
+                    return self_outer._build_response(
+                        result=final,
+                        provider_used=provider_used,
+                        model_used=model_used,
+                        attempts=attempts,
+                        route_decision=route_decision,
+                        started_at=started_at,
+                        messages=messages,
+                        system_prompt=system_prompt,
+                    )
+
+            self_outer = self
+            return GatewayStreamTextResult()
+
+        async def generate_object(
+            self,
+            *,
+            schema: Any,
+            messages: list[GatewayMessage],
+            primary: GatewayModelTarget,
+            fallbacks: list[GatewayModelTarget] | None = None,
+            system_prompt: str | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            mode: str = "auto",
+            schema_name: str | None = None,
+            schema_description: str | None = None,
+            required_capabilities: dict[str, bool] | None = None,
+            max_cost_per_1k_tokens: float | None = None,
+            routing_mode: GatewayRoutingMode = "balanced",
+            task_intent: GatewayTaskIntent = "chat",
+        ) -> GatewayObjectResponse:
+            result, provider_used, model_used, attempts, route_decision, started_at = await self._run_generate(
+                messages=messages,
+                primary=primary,
+                fallbacks=fallbacks,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                required_capabilities=required_capabilities,
+                max_cost_per_1k_tokens=max_cost_per_1k_tokens,
+                routing_mode=routing_mode,
+                task_intent=task_intent,
+                run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_object(
+                    model=adapter.language_model(target.model_id),
+                    messages=gateway_messages_to_model_messages(messages, system_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    schema=schema,
+                    mode=mode,
+                    schema_name=schema_name,
+                    schema_description=schema_description,
+                ),
+            )
+            text_response = self._build_response(
+                result=result,
+                provider_used=provider_used,
+                model_used=model_used,
+                attempts=attempts,
+                route_decision=route_decision,
+                started_at=started_at,
+                messages=messages,
+                system_prompt=system_prompt,
+            )
+            return GatewayObjectResponse(
+                text=text_response.text,
+                provider_used=text_response.provider_used,
+                model_used=text_response.model_used,
+                latency_ms=text_response.latency_ms,
+                attempts=text_response.attempts,
+                usage=text_response.usage,
+                usage_estimated=text_response.usage_estimated,
+                route_decision=text_response.route_decision,
+                object=result.object,
+                object_mode=result.object_mode,
+            )
+
+        def stream_object(
+            self,
+            *,
+            schema: Any,
+            messages: list[GatewayMessage],
+            primary: GatewayModelTarget,
+            fallbacks: list[GatewayModelTarget] | None = None,
+            system_prompt: str | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            mode: str = "auto",
+            schema_name: str | None = None,
+            schema_description: str | None = None,
+            required_capabilities: dict[str, bool] | None = None,
+            max_cost_per_1k_tokens: float | None = None,
+            routing_mode: GatewayRoutingMode = "balanced",
+            task_intent: GatewayTaskIntent = "chat",
+        ):
+            async def start():
+                return await self._run_generate(
+                    messages=messages,
+                    primary=primary,
+                    fallbacks=fallbacks,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    required_capabilities=required_capabilities,
+                    max_cost_per_1k_tokens=max_cost_per_1k_tokens,
+                    routing_mode=routing_mode,
+                    task_intent=task_intent,
+                    run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_object(
+                        model=adapter.language_model(target.model_id),
+                        messages=gateway_messages_to_model_messages(messages, system_prompt),
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        schema=schema,
+                        mode=mode,
+                        schema_name=schema_name,
+                        schema_description=schema_description,
+                    ),
+                )
+
+            selected = asyncio.create_task(start())
+
+            class GatewayStreamObjectResult:
+                async def event_stream(self):
+                    result, *_ = await selected
+                    async for event in result.event_stream():
+                        yield event
+
+                async def text_stream(self):
+                    result, *_ = await selected
+                    async for chunk in result.text_stream():
+                        yield chunk
+
+                async def partial_object_stream(self):
+                    result, *_ = await selected
+                    async for item in result.partial_object_stream():
+                        yield item
+
+                async def collect(self):
+                    result, provider_used, model_used, attempts, route_decision, started_at = await selected
+                    final = await result.collect()
+                    text_response = self_outer._build_response(
+                        result=final,
+                        provider_used=provider_used,
+                        model_used=model_used,
+                        attempts=attempts,
+                        route_decision=route_decision,
+                        started_at=started_at,
+                        messages=messages,
+                        system_prompt=system_prompt,
+                    )
+                    return GatewayObjectResponse(
+                        text=text_response.text,
+                        provider_used=text_response.provider_used,
+                        model_used=text_response.model_used,
+                        latency_ms=text_response.latency_ms,
+                        attempts=text_response.attempts,
+                        usage=text_response.usage,
+                        usage_estimated=text_response.usage_estimated,
+                        route_decision=text_response.route_decision,
+                        object=final.object,
+                        object_mode=final.object_mode,
+                    )
+
+            self_outer = self
+            return GatewayStreamObjectResult()
 
     return Gateway()
