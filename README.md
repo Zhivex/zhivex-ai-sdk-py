@@ -523,7 +523,7 @@ The repository already includes:
 Before the first public release, confirm:
 
 - the final package name on PyPI
-- the `0.2.0` release tag and release notes
+- the `0.3.0` release tag and release notes
 - Trusted Publishing configuration on PyPI and TestPyPI
 
 ## License

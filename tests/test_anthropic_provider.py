@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import create_anthropic, generate_text, tool
+from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, TextPart
 
 
 @dataclass
@@ -75,3 +76,67 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.text, "result is 4")
         self.assertEqual(result.tool_results[0].tool_name, "math")
+
+    async def test_anthropic_maps_data_url_images_to_base64_source(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "looks good"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider("claude-sonnet-4-20250514")
+        result = await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(
+                        role="user",
+                        parts=[
+                            ImagePart(image="data:image/png;base64,aGVsbG8="),
+                            TextPart(text="describe this image"),
+                        ],
+                    )
+                ]
+            )
+        )
+        self.assertEqual(result.text, "looks good")
+        image_block = requests[0]["messages"][0]["content"][0]
+        self.assertEqual(image_block["source"]["type"], "base64")
+        self.assertEqual(image_block["source"]["media_type"], "image/png")
+        self.assertEqual(image_block["source"]["data"], "aGVsbG8=")
+
+    async def test_anthropic_stream_includes_thinking_without_null_fields(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                body_text='event: message_stop\ndata: {"stop_reason":"end_turn"}\n',
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider("claude-sonnet-4-20250514")
+        events = []
+        async for event in await model.stream(
+            ModelGenerateInput(
+                messages=[ModelMessage(role="user", parts=[TextPart(text="hello")])],
+                reasoning=ReasoningConfig(budget_tokens=2048),
+            )
+        ):
+            events.append(event)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(requests[0]["thinking"], {"type": "enabled", "budget_tokens": 2048})
+        self.assertNotIn("temperature", requests[0])

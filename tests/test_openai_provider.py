@@ -55,7 +55,7 @@ class FakeResponse:
 
 
 class OpenAIProviderTests(IsolatedAsyncioTestCase):
-    async def test_openai_maps_chat_completion(self) -> None:
+    async def test_openai_maps_responses_request(self) -> None:
         requests: list[dict[str, Any]] = []
 
         async def fetch(
@@ -72,8 +72,15 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 payload={
-                    "choices": [{"finish_reason": "stop", "message": {"content": "hello from openai"}}],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7},
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "hello from openai"}],
+                        }
+                    ],
+                    "usage": {"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
                 },
             )
 
@@ -82,6 +89,46 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "hello from openai")
         self.assertEqual(result.usage.total_tokens, 7)
         self.assertEqual(requests[0]["json"]["model"], "gpt-4o-mini")
+        self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/responses")
+        self.assertEqual(requests[0]["json"]["input"][0]["content"][0]["text"], "hello")
+        self.assertNotIn("max_tokens", requests[0]["json"])
+        self.assertNotIn("max_completion_tokens", requests[0]["json"])
+
+    async def test_openai_uses_max_output_tokens(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body, "body": body, "stream": stream})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "hello from gpt-5"}],
+                        }
+                    ],
+                    "usage": {"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        result = await generate_text(model=provider("gpt-5-nano"), prompt="hello", max_tokens=123)
+        self.assertEqual(result.text, "hello from gpt-5")
+        self.assertEqual(requests[0]["json"]["max_output_tokens"], 123)
+        self.assertNotIn("max_tokens", requests[0]["json"])
+        self.assertNotIn("max_completion_tokens", requests[0]["json"])
 
     async def test_openai_stream_collects_text(self) -> None:
         async def fetch(
@@ -97,8 +144,9 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
-                    'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
-                    'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":" world"}\n\n'
+                    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}\n\n'
                     "data: [DONE]\n\n"
                 ),
             )
@@ -124,7 +172,10 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             requests.append({"json": json_body})
             return FakeResponse(
                 status_code=200,
-                payload={"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]},
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
             )
 
         provider = create_openai(api_key="test", fetch=fetch)
@@ -136,7 +187,8 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             },
             tool_choice=ToolChoiceName(tool_name="weather"),
         )
-        self.assertEqual(requests[0]["json"]["tool_choice"]["function"]["name"], "weather")
+        self.assertEqual(requests[0]["json"]["tool_choice"]["name"], "weather")
+        self.assertEqual(requests[0]["json"]["tools"][0]["name"], "weather")
 
     async def test_openai_transcribes_audio(self) -> None:
         requests: list[dict[str, Any]] = []

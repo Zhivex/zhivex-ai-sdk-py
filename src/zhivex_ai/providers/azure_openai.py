@@ -20,12 +20,13 @@ def create_azure_openai(
         raise ConfigurationError("Missing Azure OpenAI API key.")
     if not resolved_endpoint:
         raise ConfigurationError("Missing Azure OpenAI endpoint.")
+    # Azure OpenAI v1 uses versionless /openai/v1 endpoints and rejects api-version query params.
     base_url = f"{resolved_endpoint.rstrip('/')}/openai/v1"
     return create_openai_compatible_provider(
         provider_name="azure-openai",
         env_var="AZURE_OPENAI_API_KEY",
         api_key=resolved_key,
-        base_url=f"{base_url}?api-version={api_version}" if False else base_url,
+        base_url=base_url,
         fetch=fetch,
         auth_header="api-key",
         auth_prefix="",
