@@ -29,4 +29,6 @@ def create_azure_openai(
         fetch=fetch,
         auth_header="api-key",
         auth_prefix="",
+        supports_audio=True,
+        supports_grounding=True,
     )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar
 
 JsonPrimitive = str | int | float | bool | None
 JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
@@ -11,6 +11,7 @@ PartialJsonValue = JsonPrimitive | list["PartialJsonValue"] | dict[str, "Partial
 MessageRole = Literal["system", "user", "assistant", "tool"]
 FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "error", "unknown"]
 StructuredOutputMode = Literal["auto", "native", "prompted"]
+ToolChoiceMode = Literal["none", "auto", "required"]
 
 
 @dataclass(slots=True)
@@ -18,6 +19,13 @@ class TokenUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+
+
+@dataclass(slots=True)
+class AudioInput:
+    data: bytes | bytearray | memoryview | str
+    media_type: str
+    filename: str | None = None
 
 
 @dataclass(slots=True)
@@ -76,13 +84,71 @@ class ToolResultPart:
     )
 
 
-ContentPart = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart
+ContentPart: TypeAlias = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart
 
 
 @dataclass(slots=True)
 class ModelMessage:
     role: MessageRole
     parts: list[ContentPart]
+
+
+@dataclass(slots=True)
+class UIMessage:
+    id: str
+    role: MessageRole
+    parts: list[ContentPart]
+
+
+@dataclass(slots=True)
+class UIMessageTextChunk:
+    type: Literal["text-delta"] = "text-delta"
+    message_id: str = ""
+    role: Literal["assistant"] = "assistant"
+    text_delta: str = ""
+
+
+@dataclass(slots=True)
+class UIMessageToolCallChunk:
+    type: Literal["tool-call"] = "tool-call"
+    message_id: str = ""
+    role: Literal["assistant"] = "assistant"
+    tool_call: ToolCall = field(default_factory=lambda: ToolCall(id="", name="", input={}))
+
+
+@dataclass(slots=True)
+class UIMessageToolResultChunk:
+    type: Literal["tool-result"] = "tool-result"
+    message_id: str = ""
+    role: Literal["tool"] = "tool"
+    tool_result: ToolExecutionResult = field(
+        default_factory=lambda: ToolExecutionResult(tool_call_id="", tool_name="", is_error=False)
+    )
+
+
+@dataclass(slots=True)
+class UIMessageFinishChunk:
+    type: Literal["finish"] = "finish"
+    message_id: str = ""
+    finish_reason: FinishReason | None = None
+    provider_finish_reason: str | None = None
+    usage: TokenUsage | None = None
+
+
+@dataclass(slots=True)
+class UIMessageErrorChunk:
+    type: Literal["error"] = "error"
+    message_id: str = ""
+    error: ToolExecutionError = field(default_factory=lambda: ToolExecutionError(message=""))
+
+
+UIMessageChunk: TypeAlias = (
+    UIMessageTextChunk
+    | UIMessageToolCallChunk
+    | UIMessageToolResultChunk
+    | UIMessageFinishChunk
+    | UIMessageErrorChunk
+)
 
 
 @dataclass(slots=True)
@@ -124,6 +190,37 @@ class ReasoningConfig:
 
 
 @dataclass(slots=True)
+class ToolChoiceName:
+    tool_name: str
+
+
+ToolChoice: TypeAlias = ToolChoiceMode | ToolChoiceName
+ToolSource: TypeAlias = Literal["local", "remote", "mcp"]
+
+
+@dataclass(slots=True)
+class ToolExecutionOptions:
+    parallel: bool | None = None
+    max_concurrency: int | None = None
+    timeout_ms: int | None = None
+    stop_on_error: bool = False
+
+
+@dataclass(slots=True)
+class ToolExecutionContext:
+    tool_name: str
+    tool_call_id: str = ""
+    run_id: str | None = None
+    session_id: str | None = None
+    agent_name: str | None = None
+    memory_summary: str | None = None
+    permissions: list[str] = field(default_factory=list)
+    source: ToolSource = "local"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    handoff_path: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class StreamTextDeltaEvent:
     type: Literal["text-delta"] = "text-delta"
     text_delta: str = ""
@@ -157,7 +254,9 @@ class StreamErrorEvent:
     error: Exception | None = None
 
 
-StreamEvent = StreamTextDeltaEvent | StreamToolCallEvent | StreamToolResultEvent | StreamFinishEvent | StreamErrorEvent
+StreamEvent: TypeAlias = (
+    StreamTextDeltaEvent | StreamToolCallEvent | StreamToolResultEvent | StreamFinishEvent | StreamErrorEvent
+)
 
 
 @dataclass(slots=True)
@@ -179,7 +278,7 @@ class StreamObjectCompleteEvent:
     object: Any = None
 
 
-ObjectStreamEvent = (
+ObjectStreamEvent: TypeAlias = (
     StreamEvent | StreamObjectDeltaEvent | StreamObjectPartialEvent | StreamObjectCompleteEvent
 )
 
@@ -196,9 +295,37 @@ class GenerateResult:
 
 
 @dataclass(slots=True)
+class GroundingSource:
+    url: str
+    title: str | None = None
+    snippet: str | None = None
+    provider_metadata: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class GroundedGenerateResult(GenerateResult):
+    sources: list[GroundingSource] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class EmbedResult:
     embeddings: list[list[float]]
     usage: TokenUsage | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class TranscriptionOutput:
+    text: str
+    audio: AudioInput | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class SpeechOutput:
+    audio: bytes
+    media_type: str
+    input: str | None = None
     raw_response: Any = None
 
 
@@ -209,11 +336,21 @@ ProviderOptions = dict[str, Any]
 class ModelGenerateInput(RetryOptions):
     messages: list[ModelMessage] = field(default_factory=list)
     tools: dict[str, "ToolDefinition[Any]"] | None = None
+    tool_choice: ToolChoice | None = None
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning: ReasoningConfig | None = None
     provider_options: ProviderOptions | None = None
     structured_output: StructuredOutputConfig | None = None
+
+
+@dataclass(slots=True)
+class GroundedModelGenerateInput(RetryOptions):
+    messages: list[ModelMessage] = field(default_factory=list)
+    temperature: float | None = None
+    max_tokens: int | None = None
+    reasoning: ReasoningConfig | None = None
+    provider_options: ProviderOptions | None = None
 
 
 class LanguageModel(Protocol):
@@ -226,12 +363,51 @@ class LanguageModel(Protocol):
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]: ...
 
 
+class GroundedLanguageModel(Protocol):
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+
+    async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult: ...
+
+
 class EmbeddingModel(Protocol):
     provider: str
     model_id: str
     capabilities: ModelCapabilities
 
     async def embed(self, values: list[str], options: RetryOptions | None = None) -> EmbedResult: ...
+
+
+class TranscriptionModel(Protocol):
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+
+    async def transcribe(
+        self,
+        *,
+        audio: AudioInput,
+        prompt: str | None = None,
+        language: str | None = None,
+        provider_options: ProviderOptions | None = None,
+        options: RetryOptions | None = None,
+    ) -> TranscriptionOutput: ...
+
+
+class SpeechModel(Protocol):
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+
+    async def generate_speech(
+        self,
+        *,
+        input: str,
+        voice: str | None = None,
+        provider_options: ProviderOptions | None = None,
+        options: RetryOptions | None = None,
+    ) -> SpeechOutput: ...
 
 
 TSchema = TypeVar("TSchema")
@@ -242,7 +418,13 @@ class ToolDefinition:
     name: str
     description: str | None
     schema: Any
-    execute: Callable[[Any], Awaitable[JsonValue] | JsonValue]
+    execute: Callable[..., Awaitable[JsonValue] | JsonValue] | None = None
+    tags: list[str] = field(default_factory=list)
+    requires_approval: bool | None = None
+    permissions: list[str] = field(default_factory=list)
+    source: ToolSource = "local"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    supports_streaming: bool = False
 
 
 ToolSet = dict[str, ToolDefinition]
@@ -269,6 +451,17 @@ class GenerateTextOutput:
 class GenerateObjectOutput(GenerateTextOutput):
     object: Any = None
     object_mode: Literal["native", "prompted"] = "prompted"
+
+
+@dataclass(slots=True)
+class GenerateGroundedTextOutput:
+    text: str
+    sources: list[GroundingSource] = field(default_factory=list)
+    finish_reason: FinishReason | None = None
+    provider_finish_reason: str | None = None
+    usage: TokenUsage | None = None
+    messages: list[ModelMessage] = field(default_factory=list)
+    raw_response: Any = None
 
 
 class StreamTextResult(Protocol):

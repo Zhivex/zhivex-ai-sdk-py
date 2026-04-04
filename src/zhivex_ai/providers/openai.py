@@ -11,4 +11,6 @@ def create_openai(*, api_key: str | None = None, base_url: str = "https://api.op
         api_key=api_key,
         base_url=base_url,
         fetch=fetch,
+        supports_audio=True,
+        supports_grounding=True,
     )
