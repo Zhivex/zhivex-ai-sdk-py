@@ -10,6 +10,7 @@ from ..messages import normalize_finish_reason
 from ..runtime import with_retry
 from ..types import GenerateResult, LanguageModel, ModelCapabilities, ModelGenerateInput, ModelMessage, TextPart, TokenUsage
 from .base import ProviderAdapter
+from ._payload import drop_none
 
 BEDROCK_CAPABILITIES = ModelCapabilities(
     streaming=False,
@@ -79,13 +80,14 @@ class BedrockLanguageModel(LanguageModel):
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         if input.reasoning is not None:
             raise UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".')
-        payload = {
+        inference_config = drop_none({"temperature": input.temperature, "maxTokens": input.max_tokens}) or None
+        payload = drop_none({
             "modelId": self.model_id,
             "messages": _map_messages(input.messages),
             "system": _system_blocks(input.messages),
-            "inferenceConfig": {"temperature": input.temperature, "maxTokens": input.max_tokens},
+            "inferenceConfig": inference_config,
             **(input.provider_options or {}),
-        }
+        })
         response = await with_retry(
             lambda: self.client.converse(payload),
             max_retries=input.max_retries or 0,

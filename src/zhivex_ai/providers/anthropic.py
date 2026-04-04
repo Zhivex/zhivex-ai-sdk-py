@@ -29,6 +29,7 @@ from ..types import (
     ToolCallPart,
 )
 from .base import ProviderAdapter
+from ._payload import drop_none
 
 ANTHROPIC_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -53,7 +54,20 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
         if part.type == "text":
             blocks.append({"type": "text", "text": part.text})
         elif part.type == "image":
-            blocks.append({"type": "image", "source": {"type": "url", "url": part.image}})
+            if part.image.startswith("data:") and ";base64," in part.image:
+                header, body = part.image[len("data:"):].split(";base64,", 1)
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": part.media_type or header.lower(),
+                            "data": body,
+                        },
+                    }
+                )
+            else:
+                blocks.append({"type": "image", "source": {"type": "url", "url": part.image}})
         elif part.type == "tool-call":
             blocks.append(
                 {
@@ -160,7 +174,7 @@ class AnthropicLanguageModel(LanguageModel):
         }
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
-        body = {
+        body = drop_none({
             "model": self.model_id,
             "system": _system_prompt_from_messages(input.messages),
             "messages": _map_messages(input.messages),
@@ -170,7 +184,7 @@ class AnthropicLanguageModel(LanguageModel):
             "max_tokens": input.max_tokens or 1024,
             **(input.provider_options or {}),
             "thinking": _map_reasoning(input),
-        }
+        })
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -208,7 +222,7 @@ class AnthropicLanguageModel(LanguageModel):
             lambda: self.fetch(
                 f"{self.base_url}/messages",
                 headers=self._headers(),
-                json_body={
+                json_body=drop_none({
                     "model": self.model_id,
                     "system": _system_prompt_from_messages(input.messages),
                     "messages": _map_messages(input.messages),
@@ -218,7 +232,8 @@ class AnthropicLanguageModel(LanguageModel):
                     "max_tokens": input.max_tokens or 1024,
                     "stream": True,
                     **(input.provider_options or {}),
-                },
+                    "thinking": _map_reasoning(input),
+                }),
                 timeout_ms=input.timeout_ms,
                 stream=True,
             ),

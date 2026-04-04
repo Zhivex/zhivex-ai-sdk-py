@@ -25,17 +25,20 @@ from ..types import (
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     TextPart,
+    TokenUsage,
     ToolCall,
+    ToolChoiceName,
     ToolCallPart,
 )
 from .base import ProviderAdapter
+from ._payload import drop_none
 
 GEMINI_CAPABILITIES = ModelCapabilities(
     streaming=True,
     tools=True,
     structured_output=True,
     json_mode=True,
-    tool_choice=False,
+    tool_choice=True,
     parallel_tool_calls=False,
     vision=True,
     files=False,
@@ -58,7 +61,13 @@ def _map_part(part: Any) -> dict[str, Any]:
     if part.type == "text":
         return {"text": part.text}
     if part.type == "image":
-        return {"inlineData": {"mimeType": part.media_type or "image/jpeg", "data": part.image}}
+        data = part.image
+        media_type = part.media_type or "image/jpeg"
+        if data.startswith("data:") and ";base64," in data:
+            header, body = data[len("data:"):].split(";base64,", 1)
+            media_type = part.media_type or header.lower()
+            data = body
+        return {"inlineData": {"mimeType": media_type, "data": data}}
     if part.type == "tool-call":
         return {"functionCall": {"name": part.tool_call.name, "args": part.tool_call.input}}
     if part.type == "tool-result":
@@ -102,6 +111,21 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     ]
 
 
+def _map_tool_config(tools: dict[str, Any] | None, tool_choice: str | ToolChoiceName | None) -> dict[str, Any] | None:
+    if not tools or tool_choice is None or tool_choice == "auto":
+        return None
+    if tool_choice == "none":
+        return {"functionCallingConfig": {"mode": "NONE"}}
+    if tool_choice == "required":
+        return {"functionCallingConfig": {"mode": "ANY"}}
+    return {
+        "functionCallingConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": [tool_choice.tool_name],
+        }
+    }
+
+
 def _is_gemini_3_model(model_id: str) -> bool:
     return model_id.startswith("gemini-3")
 
@@ -140,8 +164,8 @@ def _generation_config(model_id: str, input: ModelGenerateInput) -> dict[str, An
         config["thinkingConfig"] = _map_reasoning(model_id, input)
     if input.structured_output is not None and input.structured_output.mode == "native":
         config["responseMimeType"] = "application/json"
-        config["responseSchema"] = create_schema_adapter(input.structured_output.schema).json_schema()
-    return config
+        config["responseJsonSchema"] = create_schema_adapter(input.structured_output.schema).json_schema()
+    return drop_none(config)
 
 
 def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
@@ -169,17 +193,19 @@ class GeminiLanguageModel(LanguageModel):
         return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
                 self._url("generateContent"),
                 headers={"content-type": "application/json"},
-                json_body={
+                json_body=drop_none({
                     "contents": _map_messages(input.messages),
                     "systemInstruction": _system_instruction(input.messages),
                     "tools": _map_tools(input.tools),
+                    "toolConfig": _map_tool_config(input.tools, input.tool_choice),
                     **(input.provider_options or {}),
-                    "generationConfig": _generation_config(self.model_id, input),
-                },
+                    "generationConfig": generation_config,
+                }),
                 timeout_ms=input.timeout_ms,
             ),
             max_retries=input.max_retries or 0,
@@ -190,26 +216,37 @@ class GeminiLanguageModel(LanguageModel):
         payload = await response.json()
         candidate = (payload.get("candidates") or [None])[0]
         assistant_message = _parse_assistant_message(candidate)
+        usage = payload.get("usageMetadata") or {}
         return GenerateResult(
             messages=[assistant_message],
             text="".join(part.text for part in assistant_message.parts if part.type == "text"),
             finish_reason=normalize_finish_reason(candidate.get("finishReason") if candidate else None),
             provider_finish_reason=candidate.get("finishReason") if candidate else None,
+            usage=TokenUsage(
+                input_tokens=usage.get("promptTokenCount"),
+                output_tokens=usage.get("candidatesTokenCount"),
+                total_tokens=usage.get("totalTokenCount")
+                or ((usage.get("promptTokenCount") or 0) + (usage.get("candidatesTokenCount") or 0)),
+            )
+            if usage
+            else None,
             raw_response=payload,
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
+        generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
                 self._url("streamGenerateContent?alt=sse"),
                 headers={"content-type": "application/json"},
-                json_body={
+                json_body=drop_none({
                     "contents": _map_messages(input.messages),
                     "systemInstruction": _system_instruction(input.messages),
                     "tools": _map_tools(input.tools),
+                    "toolConfig": _map_tool_config(input.tools, input.tool_choice),
                     **(input.provider_options or {}),
-                    "generationConfig": _generation_config(self.model_id, input),
-                },
+                    "generationConfig": generation_config,
+                }),
                 timeout_ms=input.timeout_ms,
                 stream=True,
             ),

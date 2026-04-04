@@ -36,10 +36,15 @@ from ..types import (
     TokenUsage,
     ToolCall,
     ToolChoiceName,
+    ToolCallPart,
+    ToolExecutionResult,
+    ToolResultPart,
+    TextPart,
     TranscriptionModel,
     TranscriptionOutput,
 )
 from .base import ProviderAdapter
+from ._payload import drop_none
 
 OPENAI_COMPAT_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -89,51 +94,67 @@ def _parse_json_error(provider_name: str, status_code: int, body: str) -> Provid
     return ProviderHTTPError(f"{provider_name} request failed with status {status_code}.", status_code, response_body=body)
 
 
-def _map_content_parts(message: ModelMessage) -> str | list[dict[str, Any]]:
-    text_parts = [part for part in message.parts if part.type == "text"]
-    image_parts = [part for part in message.parts if part.type == "image"]
-    if not image_parts:
-        return "".join(part.text for part in text_parts)
-    return [
-        *({"type": "text", "text": part.text} for part in text_parts),
-        *({"type": "image_url", "image_url": {"url": part.image}} for part in image_parts),
-    ]
+def _system_instructions(messages: list[ModelMessage]) -> str | None:
+    text = "\n".join(
+        part.text for message in messages if message.role == "system" for part in message.parts if part.type == "text"
+    )
+    return text or None
 
 
-def _map_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
-    payload: list[dict[str, Any]] = []
+def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    for part in message.parts:
+        if part.type == "text":
+            content.append({"type": "input_text", "text": part.text})
+        elif part.type == "image":
+            content.append({"type": "input_image", "image_url": part.image})
+    return content
+
+
+def _serialize_tool_output(tool_result: ToolExecutionResult) -> str:
+    value = tool_result.error.__dict__ if tool_result.is_error and tool_result.error is not None else tool_result.output
+    return json.dumps(value)
+
+
+def _to_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for message in messages:
+        if message.role == "system":
+            continue
         if message.role == "tool":
-            tool_result = next((part.tool_result for part in message.parts if part.type == "tool-result"), None)
-            payload.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_result.tool_call_id if tool_result else None,
-                    "content": json.dumps(tool_result.error.__dict__ if tool_result and tool_result.is_error else tool_result.output),
-                }
-            )
+            for part in message.parts:
+                if isinstance(part, ToolResultPart):
+                    items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": part.tool_result.tool_call_id,
+                            "output": _serialize_tool_output(part.tool_result),
+                        }
+                    )
             continue
 
-        tool_calls = [
-            {
-                "id": part.tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": part.tool_call.name,
-                    "arguments": json.dumps(part.tool_call.input),
-                },
-            }
-            for part in message.parts
-            if part.type == "tool-call"
-        ]
-        item: dict[str, Any] = {
-            "role": message.role,
-            "content": _map_content_parts(message),
-        }
-        if tool_calls:
-            item["tool_calls"] = tool_calls
-        payload.append(item)
-    return payload
+        content = _map_message_content(message)
+        if content:
+            items.append(
+                {
+                    "type": "message",
+                    "role": "assistant" if message.role == "assistant" else "user",
+                    "content": content,
+                }
+            )
+
+        if message.role == "assistant":
+            for part in message.parts:
+                if isinstance(part, ToolCallPart):
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": part.tool_call.id,
+                            "name": part.tool_call.name,
+                            "arguments": json.dumps(part.tool_call.input),
+                        }
+                    )
+    return items
 
 
 def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
@@ -144,11 +165,10 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
         mapped.append(
             {
                 "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": create_schema_adapter(tool.schema).json_schema(),
-                },
+                "name": tool.name,
+                "description": tool.description,
+                "strict": True,
+                "parameters": create_schema_adapter(tool.schema).json_schema(),
             }
         )
     return mapped
@@ -161,9 +181,7 @@ def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> str | dict[str
         return tool_choice
     return {
         "type": "function",
-        "function": {
-            "name": tool_choice.tool_name,
-        },
+        "name": tool_choice.tool_name,
     }
 
 
@@ -171,58 +189,88 @@ def _map_structured_output(input: ModelGenerateInput) -> dict[str, Any] | None:
     if input.structured_output is None or input.structured_output.mode != "native":
         return None
     return {
-        "type": "json_schema",
-        "json_schema": {
+        "format": {
+            "type": "json_schema",
             "name": input.structured_output.name or "response",
             "strict": True,
             "schema": create_schema_adapter(input.structured_output.schema).json_schema(),
-        },
+        }
     }
 
 
-def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, Any]:
+def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, Any] | None:
     if input.reasoning is None:
-        return {}
+        return None
     if input.reasoning.budget_tokens is not None:
         raise UnsupportedFeatureError(f'Provider "{provider_name}" does not support "reasoning.budgetTokens".')
-    return {
-        "reasoning_effort": input.reasoning.effort,
-        "max_completion_tokens": input.max_tokens,
-    }
+    return {"effort": input.reasoning.effort}
 
 
-def _parse_assistant_message(message: dict[str, Any]) -> ModelMessage:
-    parts = []
-    content = message.get("content")
-    if isinstance(content, str) and content:
-        from ..types import TextPart, ToolCallPart
+def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
+    usage = payload.get("usage") or {}
+    if not usage:
+        return None
+    return TokenUsage(
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        total_tokens=usage.get("total_tokens"),
+    )
 
-        parts.append(TextPart(text=content))
-    for call in message.get("tool_calls", []) or []:
-        from ..types import ToolCallPart
 
+def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    status = payload.get("status")
+    if status == "completed":
+        return "stop", status
+    if status == "failed":
+        return "error", status
+    if status == "incomplete":
+        reason = (payload.get("incomplete_details") or {}).get("reason")
+        return normalize_finish_reason(reason or status), reason or status
+    return normalize_finish_reason(status), status
+
+
+def _parse_output_item(item: dict[str, Any]) -> list[Any]:
+    parts: list[Any] = []
+    if item.get("type") == "message" and item.get("role") == "assistant":
+        for content in item.get("content") or []:
+            if content.get("type") in {"output_text", "text"} and content.get("text"):
+                parts.append(TextPart(text=content["text"]))
+    elif item.get("type") == "function_call":
         parts.append(
             ToolCallPart(
                 tool_call=ToolCall(
-                    id=call["id"],
-                    name=call["function"]["name"],
-                    input=json.loads(call["function"].get("arguments") or "{}"),
+                    id=item.get("call_id") or item.get("id", ""),
+                    name=item.get("name", ""),
+                    input=json.loads(item.get("arguments") or "{}"),
                 )
             )
         )
+    return parts
+
+
+def _parse_responses_message(payload: dict[str, Any]) -> ModelMessage:
+    parts: list[Any] = []
+    for item in payload.get("output") or []:
+        parts.extend(_parse_output_item(item))
     return ModelMessage(role="assistant", parts=parts)
 
 
-def _to_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for message in messages:
-        content = [
-            {"type": "input_text", "text": part.text}
-            for part in message.parts
-            if part.type == "text"
-        ]
-        items.append({"role": message.role, "content": content})
-    return items
+def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
+    body = {
+        "model": model_id,
+        "instructions": _system_instructions(input.messages),
+        "input": _to_responses_input(input.messages),
+        "tools": _map_tools(input.tools),
+        "tool_choice": _map_tool_choice(input.tool_choice),
+        "text": _map_structured_output(input),
+        "temperature": input.temperature,
+        "max_output_tokens": input.max_tokens,
+        "reasoning": _map_reasoning(input, provider_name),
+        "parallel_tool_calls": True if input.tools else None,
+        **(input.provider_options or {}),
+        "stream": True if stream else None,
+    }
+    return drop_none(body)
 
 
 def _extract_sources(value: Any) -> list[GroundingSource]:
@@ -300,23 +348,10 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
-        body: dict[str, Any] = {
-            "model": self.model_id,
-            "messages": _map_messages(input.messages),
-            "tools": _map_tools(input.tools),
-            "tool_choice": _map_tool_choice(input.tool_choice),
-            "response_format": _map_structured_output(input),
-            "temperature": input.temperature,
-            **(input.provider_options or {}),
-            **_map_reasoning(input, self.provider),
-            "stream": False,
-        }
-        if input.reasoning is None:
-            body["max_tokens"] = input.max_tokens
-
+        body = _responses_body(self.model_id, self.provider, input, stream=False)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/chat/completions",
+                f"{self.base_url}/responses",
                 headers=self._headers(),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
@@ -327,40 +362,22 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
-        choice = (payload.get("choices") or [{}])[0]
-        assistant_message = _parse_assistant_message(choice.get("message") or {})
+        assistant_message = _parse_responses_message(payload)
+        finish_reason, provider_finish_reason = _parse_response_finish_reason(payload)
         return GenerateResult(
             messages=[assistant_message],
             text="".join(part.text for part in assistant_message.parts if part.type == "text"),
-            finish_reason=normalize_finish_reason(choice.get("finish_reason")),
-            provider_finish_reason=choice.get("finish_reason"),
-            usage=TokenUsage(
-                input_tokens=payload.get("usage", {}).get("prompt_tokens"),
-                output_tokens=payload.get("usage", {}).get("completion_tokens"),
-                total_tokens=payload.get("usage", {}).get("total_tokens"),
-            ),
+            finish_reason=finish_reason,
+            provider_finish_reason=provider_finish_reason,
+            usage=_parse_responses_usage(payload),
             raw_response=payload,
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
-        body: dict[str, Any] = {
-            "model": self.model_id,
-            "messages": _map_messages(input.messages),
-            "tools": _map_tools(input.tools),
-            "tool_choice": _map_tool_choice(input.tool_choice),
-            "response_format": _map_structured_output(input),
-            "temperature": input.temperature,
-            **(input.provider_options or {}),
-            **_map_reasoning(input, self.provider),
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if input.reasoning is None:
-            body["max_tokens"] = input.max_tokens
-
+        body = _responses_body(self.model_id, self.provider, input, stream=True)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/chat/completions",
+                f"{self.base_url}/responses",
                 headers=self._headers(),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
@@ -373,40 +390,31 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
             raise _parse_json_error(self.provider, response.status_code, await response.text())
 
         async def generator() -> AsyncIterable[StreamEvent]:
-            tool_buffers: dict[str, dict[str, str]] = {}
             async for event in parse_sse(response.iter_lines()):
                 if event.data == "[DONE]":
                     return
                 payload = json.loads(event.data)
-                choice = (payload.get("choices") or [{}])[0]
-                delta = choice.get("delta") or {}
-                if delta.get("content"):
-                    yield StreamTextDeltaEvent(text_delta=delta["content"])
-                for tool_call in delta.get("tool_calls") or []:
-                    tool_id = tool_call.get("id") or str(tool_call.get("index"))
-                    existing = tool_buffers.setdefault(tool_id, {"name": "", "args": ""})
-                    existing["name"] = existing["name"] or tool_call.get("function", {}).get("name", "")
-                    existing["args"] += tool_call.get("function", {}).get("arguments", "")
-                    if choice.get("finish_reason") == "tool_calls":
+                if payload.get("type") == "response.output_text.delta":
+                    yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
+                    continue
+                if payload.get("type") == "response.output_item.done":
+                    item = payload.get("item") or {}
+                    if item.get("type") == "function_call":
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
-                                id=tool_id,
-                                name=existing["name"],
-                                input=json.loads(existing["args"] or "{}"),
+                                id=item.get("call_id") or item.get("id", ""),
+                                name=item.get("name", ""),
+                                input=json.loads(item.get("arguments") or "{}"),
                             )
                         )
-                if choice.get("finish_reason"):
-                    usage = payload.get("usage") or {}
+                    continue
+                if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
+                    response_payload = payload.get("response") or {}
+                    finish_reason, provider_finish_reason = _parse_response_finish_reason(response_payload)
                     yield StreamFinishEvent(
-                        finish_reason=normalize_finish_reason(choice.get("finish_reason")),
-                        provider_finish_reason=choice.get("finish_reason"),
-                        usage=TokenUsage(
-                            input_tokens=usage.get("prompt_tokens"),
-                            output_tokens=usage.get("completion_tokens"),
-                            total_tokens=usage.get("total_tokens"),
-                        )
-                        if usage
-                        else None,
+                        finish_reason=finish_reason,
+                        provider_finish_reason=provider_finish_reason,
+                        usage=_parse_responses_usage(response_payload),
                     )
 
         return generator()
