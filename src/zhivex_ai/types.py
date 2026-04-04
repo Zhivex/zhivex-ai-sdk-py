@@ -195,6 +195,7 @@ class ToolChoiceName:
 
 
 ToolChoice: TypeAlias = ToolChoiceMode | ToolChoiceName
+ToolSource: TypeAlias = Literal["local", "remote", "mcp"]
 
 
 @dataclass(slots=True)
@@ -203,6 +204,20 @@ class ToolExecutionOptions:
     max_concurrency: int | None = None
     timeout_ms: int | None = None
     stop_on_error: bool = False
+
+
+@dataclass(slots=True)
+class ToolExecutionContext:
+    tool_name: str
+    tool_call_id: str = ""
+    run_id: str | None = None
+    session_id: str | None = None
+    agent_name: str | None = None
+    memory_summary: str | None = None
+    permissions: list[str] = field(default_factory=list)
+    source: ToolSource = "local"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    handoff_path: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -403,7 +418,13 @@ class ToolDefinition:
     name: str
     description: str | None
     schema: Any
-    execute: Callable[[Any], Awaitable[JsonValue] | JsonValue]
+    execute: Callable[..., Awaitable[JsonValue] | JsonValue] | None = None
+    tags: list[str] = field(default_factory=list)
+    requires_approval: bool | None = None
+    permissions: list[str] = field(default_factory=list)
+    source: ToolSource = "local"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    supports_streaming: bool = False
 
 
 ToolSet = dict[str, ToolDefinition]

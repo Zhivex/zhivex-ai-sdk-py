@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "zhivex-ai-sdk"
 version = "0.1.0"
-description = "Unified Python SDK for building LLM applications across multiple AI providers"
+description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-keywords = ["ai", "llm", "sdk", "openai", "anthropic", "gemini", "gateway"]
+keywords = ["ai", "agent", "agents", "llm", "sdk", "multi-agent", "tools", "orchestration"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

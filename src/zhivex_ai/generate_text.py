@@ -36,6 +36,7 @@ from .types import (
     ToolCall,
     ToolChoiceName,
     ToolExecutionError,
+    ToolExecutionContext,
     ToolExecutionOptions,
     ToolExecutionResult,
     ToolSet,
@@ -120,13 +121,22 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     tool = tools.get(call.name) if tools else None
     if tool is None:
         raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
+    if tool.execute is None:
+        raise ValidationError(f'Tool "{call.name}" is registered but does not have a local executor.')
     adapter = create_schema_adapter(tool.schema)
     try:
         parsed = adapter.validate_python(call.input)
     except Exception as error:
         raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
     try:
-        output = tool.execute(parsed)
+        context = ToolExecutionContext(
+            tool_name=call.name,
+            tool_call_id=call.id,
+            permissions=list(tool.permissions),
+            source=tool.source,
+            metadata=dict(tool.metadata),
+        )
+        output = _invoke_tool_callable(tool.execute, parsed, context)
         if inspect.isawaitable(output):
             output = await asyncio.wait_for(output, timeout_ms / 1000) if timeout_ms is not None else await output
         return ToolExecutionResult(
@@ -142,6 +152,27 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             error=ToolExecutionError(message=str(error) or "Tool execution failed."),
             is_error=True,
         )
+
+
+def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
+    try:
+        signature = inspect.signature(execute)
+    except (TypeError, ValueError):
+        return execute(parsed)
+
+    parameters = list(signature.parameters.values())
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return execute(parsed, context=context)
+    if any(parameter.name == "context" for parameter in parameters):
+        return execute(parsed, context=context)
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) >= 2:
+        return execute(parsed, context)
+    return execute(parsed)
 
 
 async def _execute_tools(

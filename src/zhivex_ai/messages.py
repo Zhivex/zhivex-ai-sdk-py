@@ -17,6 +17,7 @@ from .types import (
     ToolCall,
     ToolCallPart,
     ToolDefinition,
+    ToolSource,
     ToolExecutionResult,
     ToolResultPart,
 )
@@ -83,12 +84,31 @@ def tool(
     description: str | None = None,
     schema: Any = None,
     execute: Any = None,
+    tags: list[str] | None = None,
+    requires_approval: bool | None = None,
+    permissions: list[str] | None = None,
+    source: ToolSource = "local",
+    metadata: dict[str, Any] | None = None,
+    supports_streaming: bool = False,
 ) -> ToolDefinition:
     if definition is not None:
         return definition
-    if not name or execute is None:
-        raise ValueError('Pass either an existing ToolDefinition or "name" plus "execute".')
-    return ToolDefinition(name=name, description=description, schema=schema, execute=execute)
+    if not name:
+        raise ValueError('Pass either an existing ToolDefinition or at least a "name".')
+    if source == "local" and execute is None:
+        raise ValueError('Local tools require an "execute" callable.')
+    return ToolDefinition(
+        name=name,
+        description=description,
+        schema=schema,
+        execute=execute,
+        tags=list(tags or []),
+        requires_approval=requires_approval,
+        permissions=list(permissions or []),
+        source=source,
+        metadata=dict(metadata or {}),
+        supports_streaming=supports_streaming,
+    )
 
 
 def normalize_finish_reason(reason: str | None) -> FinishReason | None:

@@ -16,6 +16,7 @@ Useful starting points:
 
 ```bash
 .venv/bin/python examples/openai_text.py
+.venv/bin/python examples/agent_basic.py
 .venv/bin/python examples/stream_text.py
 .venv/bin/python examples/stream_object.py
 .venv/bin/python examples/messages_and_tools.py
@@ -31,5 +32,6 @@ Useful starting points:
 ## Notes
 
 - OpenAI and Azure OpenAI currently expose the richest Python feature surface for audio and grounded text.
+- The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - Structured output examples use `pydantic`.

@@ -5,11 +5,12 @@
 [![Python](https://img.shields.io/pypi/pyversions/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)
 [![License](https://img.shields.io/pypi/l/zhivex-ai-sdk)](./LICENSE)
 
-Zhivex AI SDK for Python is an async-first SDK for building LLM applications against multiple providers with one shared contract.
+Zhivex AI SDK for Python is an async-first, agent-first SDK for building orchestrated AI systems across multiple providers.
 
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
-- one normalized interface for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
+- one agent runtime with executable handoffs, shared sessions, memory summaries, approval policies, tool registries, and traces
+- one normalized foundation layer for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
 - thin provider adapters instead of provider-specific app logic everywhere
 - portable application code that can switch models and vendors with minimal changes
 
@@ -22,13 +23,14 @@ Modern AI apps usually start simple and then drift into provider lock-in:
 - Gemini and Vertex differ again
 - local and routed setups add yet another layer
 
-Zhivex AI SDK gives you a common language model contract so your application code can stay stable while providers change underneath.
+Zhivex AI SDK gives you a common agent runtime and model contract so your application code can stay stable while providers change underneath.
 
 ## Highlights
 
-- Unified `generate_text()` and `stream_text()` primitives
+- Agent runtime with executable handoffs, registry-based orchestration, transcript + summary memory, permission-aware tool execution, and traces
+- `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
+- Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
-- Tool execution across multiple model steps
 - Grounded text for providers with web search support
 - Audio transcription and speech generation where the provider supports it
 - Embeddings support where the provider supports it
@@ -80,25 +82,28 @@ pip install zhivex-ai-sdk
 ```python
 import asyncio
 
-from zhivex_ai import create_openai, generate_text
+from zhivex_ai import Agent, create_in_memory_agent_memory_store, create_openai, run_agent
 
 
 async def main() -> None:
     openai = create_openai()
-
-    result = await generate_text(
+    agent = Agent(
+        name="assistant",
+        instructions="Be concise and remember prior turns.",
         model=openai("gpt-4o-mini"),
-        prompt="Describe Zhivex AI SDK in one sentence.",
+        memory=create_in_memory_agent_memory_store(),
     )
 
-    print(result.text)
-    print(result.usage)
+    first = await run_agent(agent=agent, prompt="Remember that project Apollo is important.")
+    second = await run_agent(agent=agent, session=first.session, prompt="What project did I mention?")
+
+    print(second.text)
 
 
 asyncio.run(main())
 ```
 
-## Core API
+## Foundation APIs
 
 ### Text generation
 
@@ -263,6 +268,50 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+### Agent runtime
+
+```python
+import asyncio
+
+from zhivex_ai import (
+    Agent,
+    create_openai,
+    handoff_to,
+    run_agent,
+    tool,
+)
+
+
+async def main() -> None:
+    openai = create_openai()
+    researcher = Agent(
+        name="researcher",
+        instructions="Answer delegated research questions directly.",
+        model=openai("gpt-4o-mini"),
+    )
+    triage = Agent(
+        name="triage",
+        instructions="Delegate research work to the researcher agent.",
+        model=openai("gpt-4o-mini"),
+        tools={
+            "delegate": tool(
+                name="delegate",
+                schema=dict[str, str],
+                execute=lambda input: handoff_to("researcher", input=input["task"]),
+            )
+        },
+        subagents={"researcher": researcher},
+    )
+
+    result = await run_agent(agent=triage, prompt="Research the Apollo migration status.")
+
+    print(result.text)
+    print(result.orchestration_path)
+
+
+asyncio.run(main())
+```
+
 ### Gateway fallback routing
 
 ```python
@@ -369,11 +418,33 @@ The Python SDK now includes helpers for UI and transport-oriented flows:
 
 These are useful when wiring the SDK into web servers, SSE endpoints, or custom chat frontends.
 
+## Agents
+
+The Python SDK now exposes an agent-first runtime on top of the core model contract:
+
+- `Agent(...)`
+- `AgentRuntime(...)`
+- `AgentRegistry(...)`
+- `ToolRegistry(...)`
+- `AgentSession`
+- `run_agent(...)`
+- `stream_agent(...)`
+- `create_in_memory_agent_memory_store()`
+- `create_in_memory_checkpoint_store()`
+- `create_otel_agent_observer()`
+- `load_agent_session(...)`
+- `ApprovalDecision`, `ToolApprovalRequest`
+- `permission_allowlist_approval_policy(...)`
+- `handoff_to(...)`
+
+This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, and traces without rewriting the lower-level loop yourself.
+
 ## Examples
 
 See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
 - [openai_text.py](./examples/openai_text.py)
+- [agent_basic.py](./examples/agent_basic.py)
 - [stream_text.py](./examples/stream_text.py)
 - [stream_object.py](./examples/stream_object.py)
 - [messages_and_tools.py](./examples/messages_and_tools.py)
@@ -393,7 +464,8 @@ This project is usable today and now covers most of the public SDK surfaces that
 
 Current status:
 
-- core generation and streaming primitives are implemented
+- agent runtime, executable handoffs, transcript + summary memory, tool registries, and approval policies are implemented
+- core generation and streaming primitives remain available as foundation APIs
 - object streaming, UI helpers, transport helpers, grounded text, and audio helpers are included
 - major provider adapters are in place
 - gateway, catalog, and middleware helpers are included
@@ -419,7 +491,7 @@ Potential next additions:
 - GitHub Copilot SDK integration
 - richer provider capability metadata
 - more provider-specific audio and grounding support
-- higher-level chat/session utilities
+- concurrent planner/worker orchestration utilities on top of the current handoff runtime
 
 ## Development
 
