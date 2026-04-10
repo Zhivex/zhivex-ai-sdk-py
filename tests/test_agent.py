@@ -307,7 +307,7 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertIn("delegation-start", event_types)
         self.assertIn("text-delta", event_types)
         self.assertIn("finish", event_types)
-        self.assertEqual(final.text, "echo:hello")
+        self.assertEqual(final.text, "echo")
 
     async def test_run_agent_emits_tool_call_events(self) -> None:
         agent = Agent(

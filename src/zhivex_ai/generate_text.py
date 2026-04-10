@@ -412,6 +412,7 @@ def stream_text(
     timeout_ms: int | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> _StreamTextResult:
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
     validate_message_parts(model, base_messages)
@@ -453,6 +454,8 @@ def stream_text(
                 usage = None
 
                 async for event in stream:
+                    if on_event is not None:
+                        await on_event(event)
                     await broadcast.publish(event)
                     if isinstance(event, StreamTextDeltaEvent):
                         text_buffer += event.text_delta
@@ -498,7 +501,10 @@ def stream_text(
                 tool_results.extend(current_results)
                 for result in current_results:
                     all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
-                    await broadcast.publish(StreamToolResultEvent(tool_result=result))
+                    tool_result_event = StreamToolResultEvent(tool_result=result)
+                    if on_event is not None:
+                        await on_event(tool_result_event)
+                    await broadcast.publish(tool_result_event)
             if final_result is None:
                 raise ParseError("Model did not return a result.")
             merged_usage = _merge_usage([step.response.usage for step in steps])
@@ -512,7 +518,10 @@ def stream_text(
                 tool_results=tool_results,
             )
         except Exception as error:
-            await broadcast.publish(StreamErrorEvent(error=error))
+            error_event = StreamErrorEvent(error=error)
+            if on_event is not None:
+                await on_event(error_event)
+            await broadcast.publish(error_event)
             raise
         finally:
             await broadcast.close()

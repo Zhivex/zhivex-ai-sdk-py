@@ -199,6 +199,31 @@ ToolSource: TypeAlias = Literal["local", "remote", "mcp"]
 
 
 @dataclass(slots=True)
+class RemoteHTTPToolConfig:
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+    timeout_ms: int | None = None
+
+
+@dataclass(slots=True)
+class MCPServerConfig:
+    transport: Literal["stdio", "streamable-http"]
+    name: str = "default"
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    timeout_ms: int | None = None
+
+
+@dataclass(slots=True)
+class MCPToolConfig:
+    server: MCPServerConfig
+    tool_name: str
+
+
+@dataclass(slots=True)
 class ToolExecutionOptions:
     parallel: bool | None = None
     max_concurrency: int | None = None
@@ -425,6 +450,8 @@ class ToolDefinition:
     source: ToolSource = "local"
     metadata: dict[str, Any] = field(default_factory=dict)
     supports_streaming: bool = False
+    remote_config: RemoteHTTPToolConfig | None = None
+    mcp_config: MCPToolConfig | None = None
 
 
 ToolSet = dict[str, ToolDefinition]

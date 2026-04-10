@@ -11,8 +11,10 @@ from .types import (
     GenerateResult,
     ImagePart,
     LanguageModel,
+    MCPToolConfig,
     MessageRole,
     ModelMessage,
+    RemoteHTTPToolConfig,
     TextPart,
     ToolCall,
     ToolCallPart,
@@ -90,6 +92,8 @@ def tool(
     source: ToolSource = "local",
     metadata: dict[str, Any] | None = None,
     supports_streaming: bool = False,
+    remote_config: RemoteHTTPToolConfig | None = None,
+    mcp_config: MCPToolConfig | None = None,
 ) -> ToolDefinition:
     if definition is not None:
         return definition
@@ -97,6 +101,10 @@ def tool(
         raise ValueError('Pass either an existing ToolDefinition or at least a "name".')
     if source == "local" and execute is None:
         raise ValueError('Local tools require an "execute" callable.')
+    if source == "remote" and remote_config is None:
+        raise ValueError('Remote tools require a "remote_config".')
+    if source == "mcp" and mcp_config is None:
+        raise ValueError('MCP tools require an "mcp_config".')
     return ToolDefinition(
         name=name,
         description=description,
@@ -108,6 +116,39 @@ def tool(
         source=source,
         metadata=dict(metadata or {}),
         supports_streaming=supports_streaming,
+        remote_config=remote_config,
+        mcp_config=mcp_config,
+    )
+
+
+def remote_tool(
+    *,
+    name: str,
+    url: str,
+    schema: Any,
+    description: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout_ms: int | None = None,
+    tags: list[str] | None = None,
+    requires_approval: bool | None = None,
+    permissions: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ToolDefinition:
+    return tool(
+        name=name,
+        description=description,
+        schema=schema,
+        execute=None,
+        tags=tags,
+        requires_approval=requires_approval,
+        permissions=permissions,
+        source="remote",
+        metadata=metadata,
+        remote_config=RemoteHTTPToolConfig(
+            url=url,
+            headers=dict(headers or {}),
+            timeout_ms=timeout_ms,
+        ),
     )
 
 

@@ -77,6 +77,13 @@ When published to PyPI, installation will look like:
 pip install zhivex-ai-sdk
 ```
 
+Optional extras:
+
+```bash
+pip install "zhivex-ai-sdk[postgres]"
+pip install "zhivex-ai-sdk[mcp]"
+```
+
 ## Quick Start
 
 ```python
@@ -428,14 +435,21 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `ToolRegistry(...)`
 - `AgentSession`
 - `run_agent(...)`
+- `resume_agent(...)`
 - `stream_agent(...)`
 - `create_in_memory_agent_memory_store()`
 - `create_in_memory_checkpoint_store()`
+- `create_sqlite_agent_memory_store(...)`
+- `create_sqlite_checkpoint_store(...)`
+- `create_postgres_agent_memory_store(...)`
+- `create_postgres_checkpoint_store(...)`
 - `create_otel_agent_observer()`
 - `load_agent_session(...)`
 - `ApprovalDecision`, `ToolApprovalRequest`
 - `permission_allowlist_approval_policy(...)`
 - `handoff_to(...)`
+- `remote_tool(...)`
+- `discover_mcp_tools(...)`
 
 This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, and traces without rewriting the lower-level loop yourself.
 
@@ -445,6 +459,10 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
 - [openai_text.py](./examples/openai_text.py)
 - [agent_basic.py](./examples/agent_basic.py)
+- [stream_agent.py](./examples/stream_agent.py)
+- [resume_agent.py](./examples/resume_agent.py)
+- [remote_tool.py](./examples/remote_tool.py)
+- [mcp_tools.py](./examples/mcp_tools.py)
 - [stream_text.py](./examples/stream_text.py)
 - [stream_object.py](./examples/stream_object.py)
 - [messages_and_tools.py](./examples/messages_and_tools.py)
@@ -464,7 +482,9 @@ This project is usable today and now covers most of the public SDK surfaces that
 
 Current status:
 
-- agent runtime, executable handoffs, transcript + summary memory, tool registries, and approval policies are implemented
+- agent runtime, executable handoffs, real-time agent streaming, transcript + summary memory, and approval policies are implemented
+- durable agent memory + checkpoint stores are available for in-memory, SQLite, and Postgres backends
+- builtin tool runtimes now cover local execution, remote HTTP JSON tools, and MCP tool discovery/execution
 - core generation and streaming primitives remain available as foundation APIs
 - object streaming, UI helpers, transport helpers, grounded text, and audio helpers are included
 - major provider adapters are in place

@@ -2,13 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Protocol, TypeAlias
 from uuid import uuid4
 
-from .errors import ValidationError
+from ._http import default_fetch
+from ._serde import (
+    deserialize_mcp_server_config,
+    deserialize_generate_result,
+    deserialize_messages,
+    deserialize_model_generate_input,
+    deserialize_tool_execution_result,
+    serialize_mcp_server_config,
+    serialize_generate_result,
+    serialize_messages,
+    serialize_model_generate_input,
+    serialize_tool_execution_context,
+    serialize_tool_execution_result,
+)
+from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, tool_result_part
 from .types import (
@@ -16,9 +32,12 @@ from .types import (
     GenerateTextOutput,
     GenerateTextStep,
     LanguageModel,
+    MCPServerConfig,
+    MCPToolConfig,
     ModelGenerateInput,
     ModelMessage,
     ReasoningConfig,
+    RemoteHTTPToolConfig,
     StreamErrorEvent,
     StreamFinishEvent,
     StreamTextDeltaEvent,
@@ -179,6 +198,13 @@ class AgentMemory(Protocol):
 class AgentCheckpointStore(Protocol):
     async def save(self, checkpoint: "AgentCheckpoint") -> None: ...
 
+    async def get_latest(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> "AgentCheckpoint | None": ...
+
     async def list(
         self,
         *,
@@ -206,6 +232,8 @@ class AgentSession:
 class ToolRuntime(Protocol):
     async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any: ...
 
+    async def aclose(self) -> None: ...
+
 
 class LocalToolRuntime:
     async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
@@ -213,6 +241,9 @@ class LocalToolRuntime:
             raise RuntimeError(f'Tool "{definition.name}" does not define a local executor.')
         result = _invoke_tool_callable(definition.execute, input, context)
         return await _maybe_await(result)
+
+    async def aclose(self) -> None:
+        return None
 
 
 class UnsupportedToolRuntime:
@@ -223,6 +254,169 @@ class UnsupportedToolRuntime:
         raise RuntimeError(
             f'Tool "{definition.name}" uses source "{self._source}", but no runtime is configured for that source.'
         )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class HTTPRemoteToolRuntime:
+    def __init__(self, *, fetch: Any = None) -> None:
+        self._fetch = fetch or default_fetch
+
+    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        config: RemoteHTTPToolConfig | None = definition.remote_config
+        if config is None:
+            raise RuntimeError(f'Tool "{definition.name}" does not define a remote_config.')
+        response = await self._fetch(
+            config.url,
+            method="POST",
+            headers={"content-type": "application/json", **dict(config.headers)},
+            json_body={
+                "tool": definition.name,
+                "input": input,
+                "context": serialize_tool_execution_context(context),
+            },
+            timeout_ms=config.timeout_ms,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Remote tool "{definition.name}" failed with status {response.status_code}.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError(f'Remote tool "{definition.name}" returned a non-object payload.')
+        if isinstance(payload.get("error"), dict):
+            raise RuntimeError(str(payload["error"].get("message") or f'Remote tool "{definition.name}" failed.'))
+        if "output" not in payload:
+            raise RuntimeError(f'Remote tool "{definition.name}" response must include an "output" field.')
+        return payload["output"]
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _normalize_mcp_content_item(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_mcp_content_item(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_mcp_content_item(item) for item in value]
+    if is_dataclass(value):
+        return _normalize_mcp_content_item(asdict(value))
+    return value
+
+
+def _normalize_mcp_result(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        if "structuredContent" in payload:
+            return payload["structuredContent"]
+        if "structured_content" in payload:
+            return payload["structured_content"]
+        if "content" in payload:
+            content = payload["content"]
+        else:
+            content = None
+    else:
+        content = getattr(payload, "content", None)
+        structured = getattr(payload, "structuredContent", None)
+        if structured is None:
+            structured = getattr(payload, "structured_content", None)
+        if structured is not None:
+            return _normalize_mcp_content_item(structured)
+    if content is None:
+        return _normalize_mcp_content_item(payload)
+    normalized: list[Any] = []
+    for item in content or []:
+        item_payload = _normalize_mcp_content_item(item)
+        if isinstance(item_payload, dict) and item_payload.get("type") == "text":
+            normalized.append(item_payload.get("text", ""))
+        else:
+            normalized.append(item_payload)
+    if len(normalized) == 1:
+        return normalized[0]
+    return normalized
+
+
+class MCPToolRuntime:
+    def __init__(self) -> None:
+        self._sessions: dict[str, tuple[Any, Any]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _key(self, server: MCPServerConfig) -> str:
+        return _json_dumps(serialize_mcp_server_config(server))
+
+    async def _load_client_api(self) -> tuple[Any, Any, Any]:
+        try:
+            from mcp import ClientSession
+            from mcp.client.stdio import StdioServerParameters, stdio_client
+            from mcp.client.streamable_http import streamable_http_client
+        except Exception as error:
+            raise RuntimeError('MCP support requires the optional dependency "mcp".') from error
+        return ClientSession, (StdioServerParameters, stdio_client), streamable_http_client
+
+    async def _get_session(self, server: MCPServerConfig) -> Any:
+        key = self._key(server)
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key in self._sessions:
+                return self._sessions[key][1]
+            ClientSession, stdio_bundle, streamable_http_client = await self._load_client_api()
+            if server.transport == "stdio":
+                StdioServerParameters, stdio_client = stdio_bundle
+                if not server.command:
+                    raise ValidationError('MCP stdio servers require "command".')
+                transport_cm = stdio_client(
+                    StdioServerParameters(
+                        command=server.command,
+                        args=list(server.args),
+                        env=dict(server.env) or None,
+                    )
+                )
+            elif server.transport == "streamable-http":
+                if not server.url:
+                    raise ValidationError('MCP streamable-http servers require "url".')
+                transport_cm = streamable_http_client(
+                    server.url,
+                    headers=dict(server.headers) or None,
+                    timeout=server.timeout_ms / 1000 if server.timeout_ms is not None else None,
+                )
+            else:
+                raise ValidationError(f'Unsupported MCP transport "{server.transport}".')
+
+            transport = await transport_cm.__aenter__()
+            if not isinstance(transport, tuple) or len(transport) != 2:
+                raise RuntimeError("MCP transport client did not return the expected read/write streams.")
+            read_stream, write_stream = transport
+            session_cm = ClientSession(read_stream, write_stream)
+            session = await session_cm.__aenter__()
+            await session.initialize()
+            self._sessions[key] = ((transport_cm, session_cm), session)
+            return session
+
+    async def list_tools(self, server: MCPServerConfig) -> list[Any]:
+        session = await self._get_session(server)
+        result = await session.list_tools()
+        tools = getattr(result, "tools", None)
+        if tools is None and isinstance(result, dict):
+            tools = result.get("tools")
+        return list(tools or [])
+
+    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        config: MCPToolConfig | None = definition.mcp_config
+        if config is None:
+            raise RuntimeError(f'Tool "{definition.name}" does not define an mcp_config.')
+        session = await self._get_session(config.server)
+        result = await session.call_tool(config.tool_name, arguments=input)
+        return _normalize_mcp_result(result)
+
+    async def aclose(self) -> None:
+        for managers, _session in list(self._sessions.values()):
+            transport_cm, session_cm = managers
+            await session_cm.__aexit__(None, None, None)
+            await transport_cm.__aexit__(None, None, None)
+        self._sessions.clear()
+        self._locks.clear()
 
 
 class ToolRegistry:
@@ -235,8 +429,8 @@ class ToolRegistry:
         self._tools: ToolSet = dict(tools or {})
         self._runtimes: dict[str, ToolRuntime] = {
             "local": LocalToolRuntime(),
-            "remote": UnsupportedToolRuntime("remote"),
-            "mcp": UnsupportedToolRuntime("mcp"),
+            "remote": HTTPRemoteToolRuntime(),
+            "mcp": MCPToolRuntime(),
         }
         self._runtimes.update(runtimes or {})
 
@@ -264,6 +458,59 @@ class ToolRegistry:
     async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
         runtime = self._runtimes.get(definition.source, UnsupportedToolRuntime(definition.source))
         return await runtime.execute(definition, input, context)
+
+    async def aclose(self) -> None:
+        seen: set[int] = set()
+        for runtime in self._runtimes.values():
+            marker = id(runtime)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            await runtime.aclose()
+
+
+async def discover_mcp_tools(
+    server: MCPServerConfig,
+    *,
+    prefix: str | None = None,
+    include: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+) -> ToolSet:
+    runtime = MCPToolRuntime()
+    try:
+        include_set = set(include or [])
+        exclude_set = set(exclude or [])
+        tools: ToolSet = {}
+        for item in await runtime.list_tools(server):
+            tool_name = getattr(item, "name", None)
+            if tool_name is None and isinstance(item, dict):
+                tool_name = item.get("name")
+            if not tool_name:
+                continue
+            if include_set and tool_name not in include_set:
+                continue
+            if tool_name in exclude_set:
+                continue
+            description = getattr(item, "description", None)
+            if description is None and isinstance(item, dict):
+                description = item.get("description")
+            schema = getattr(item, "inputSchema", None)
+            if schema is None:
+                schema = getattr(item, "input_schema", None)
+            if schema is None and isinstance(item, dict):
+                schema = item.get("inputSchema") or item.get("input_schema") or {}
+            local_name = f"{prefix}{tool_name}" if prefix else str(tool_name)
+            tools[local_name] = ToolDefinition(
+                name=local_name,
+                description=description,
+                schema=schema or {},
+                execute=None,
+                source="mcp",
+                mcp_config=MCPToolConfig(server=server, tool_name=str(tool_name)),
+            )
+        return tools
+    finally:
+        await runtime.aclose()
 
 
 @dataclass(slots=True)
@@ -455,6 +702,7 @@ class AgentRunResult:
     trace: AgentTrace | None = None
     handoff: AgentHandoff | None = None
     orchestration_path: list[str] = field(default_factory=list)
+    resumed_from_checkpoint: AgentCheckpoint | None = None
 
 
 class InMemoryAgentMemory:
@@ -505,6 +753,17 @@ class InMemoryAgentCheckpointStore:
     async def save(self, checkpoint: AgentCheckpoint) -> None:
         self._items.append(checkpoint)
 
+    async def get_latest(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> AgentCheckpoint | None:
+        items = await self.list(session_id=session_id, run_id=run_id)
+        if not items:
+            return None
+        return max(items, key=lambda item: (item.saved_at_ms, item.step_index))
+
     async def list(
         self,
         *,
@@ -540,6 +799,520 @@ def create_in_memory_agent_memory_store(*, summary_config: SummaryConfig | None 
 
 def create_in_memory_checkpoint_store() -> InMemoryAgentCheckpointStore:
     return InMemoryAgentCheckpointStore()
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+def _json_loads(value: str | None) -> Any:
+    if not value:
+        return None
+    return json.loads(value)
+
+
+def _coerce_json_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        decoded = _json_loads(value)
+        return dict(decoded or {})
+    return dict(value or {})
+
+
+def _serialize_agent_memory_state(state: AgentMemoryState) -> dict[str, Any]:
+    return {
+        "messages": serialize_messages(state.messages),
+        "summary": state.summary,
+        "metadata": dict(state.metadata),
+    }
+
+
+def _deserialize_agent_memory_state(payload: dict[str, Any] | None) -> AgentMemoryState:
+    if payload is None:
+        return AgentMemoryState()
+    return AgentMemoryState(
+        messages=deserialize_messages(payload.get("messages")),
+        summary=payload.get("summary"),
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _serialize_agent_checkpoint(checkpoint: AgentCheckpoint) -> dict[str, Any]:
+    return {
+        "run_id": checkpoint.run_id,
+        "session_id": checkpoint.session_id,
+        "agent_name": checkpoint.agent_name,
+        "step_index": checkpoint.step_index,
+        "request": serialize_model_generate_input(checkpoint.request),
+        "response": serialize_generate_result(checkpoint.response),
+        "saved_at_ms": checkpoint.saved_at_ms,
+        "is_final": checkpoint.is_final,
+    }
+
+
+def _deserialize_agent_checkpoint(payload: dict[str, Any]) -> AgentCheckpoint:
+    return AgentCheckpoint(
+        run_id=str(payload.get("run_id", "")),
+        session_id=str(payload.get("session_id", "")),
+        agent_name=str(payload.get("agent_name", "")),
+        step_index=int(payload.get("step_index", 0)),
+        request=deserialize_model_generate_input(dict(payload.get("request") or {})),
+        response=deserialize_generate_result(dict(payload.get("response") or {})),
+        saved_at_ms=int(payload.get("saved_at_ms", 0)),
+        is_final=bool(payload.get("is_final", False)),
+    )
+
+
+class SQLiteAgentMemoryStore:
+    def __init__(self, path: str, *, summary_config: SummaryConfig | None = None, namespace: str = "default") -> None:
+        self.summary_config = summary_config or SummaryConfig()
+        self._path = path
+        self._namespace = namespace
+        self._ready = False
+
+    async def _execute(self, sql: str, params: tuple[Any, ...] = (), *, fetchone: bool = False) -> Any:
+        def runner() -> Any:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS zhivex_agent_memory (
+                        namespace TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        state_json TEXT NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (namespace, session_id)
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS zhivex_agent_memory_updated_idx ON zhivex_agent_memory (updated_at_ms)"
+                )
+                cursor = connection.execute(sql, params)
+                row = cursor.fetchone() if fetchone else None
+                connection.commit()
+                return row
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    async def load(self, session_id: str) -> AgentMemoryState:
+        row = await self._execute(
+            "SELECT state_json FROM zhivex_agent_memory WHERE namespace = ? AND session_id = ?",
+            (self._namespace, session_id),
+            fetchone=True,
+        )
+        if row is None:
+            return AgentMemoryState()
+        return _deserialize_agent_memory_state(_json_loads(row[0]))
+
+    async def save(self, session_id: str, state: AgentMemoryState) -> None:
+        payload = _json_dumps(_serialize_agent_memory_state(state))
+        await self._execute(
+            """
+            INSERT INTO zhivex_agent_memory (namespace, session_id, state_json, updated_at_ms)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(namespace, session_id)
+            DO UPDATE SET state_json = excluded.state_json, updated_at_ms = excluded.updated_at_ms
+            """,
+            (self._namespace, session_id, payload, _now_ms()),
+        )
+
+    async def summarize(
+        self,
+        *,
+        session_id: str,
+        state: AgentMemoryState,
+        agent: "Agent",
+    ) -> str | None:
+        return await InMemoryAgentMemory(summary_config=self.summary_config).summarize(
+            session_id=session_id,
+            state=state,
+            agent=agent,
+        )
+
+
+class SQLiteAgentCheckpointStore:
+    def __init__(self, path: str, *, namespace: str = "default") -> None:
+        self._path = path
+        self._namespace = namespace
+
+    async def _execute(self, sql: str, params: tuple[Any, ...] = (), *, fetchone: bool = False, fetchall: bool = False) -> Any:
+        def runner() -> Any:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS zhivex_agent_checkpoints (
+                        namespace TEXT NOT NULL,
+                        run_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        agent_name TEXT NOT NULL,
+                        step_index INTEGER NOT NULL,
+                        saved_at_ms INTEGER NOT NULL,
+                        is_final INTEGER NOT NULL,
+                        checkpoint_json TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS zhivex_agent_checkpoints_session_idx
+                    ON zhivex_agent_checkpoints (namespace, session_id, saved_at_ms, step_index)
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS zhivex_agent_checkpoints_run_idx
+                    ON zhivex_agent_checkpoints (namespace, run_id, saved_at_ms, step_index)
+                    """
+                )
+                cursor = connection.execute(sql, params)
+                if fetchone:
+                    row = cursor.fetchone()
+                elif fetchall:
+                    row = cursor.fetchall()
+                else:
+                    row = None
+                connection.commit()
+                return row
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    async def save(self, checkpoint: AgentCheckpoint) -> None:
+        payload = _json_dumps(_serialize_agent_checkpoint(checkpoint))
+        await self._execute(
+            """
+            INSERT INTO zhivex_agent_checkpoints (
+                namespace, run_id, session_id, agent_name, step_index, saved_at_ms, is_final, checkpoint_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                self._namespace,
+                checkpoint.run_id,
+                checkpoint.session_id,
+                checkpoint.agent_name,
+                checkpoint.step_index,
+                checkpoint.saved_at_ms,
+                1 if checkpoint.is_final else 0,
+                payload,
+            ),
+        )
+
+    async def get_latest(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> AgentCheckpoint | None:
+        if session_id is None and run_id is None:
+            raise ValidationError('Pass either "session_id" or "run_id" to get_latest().')
+        if session_id is not None:
+            row = await self._execute(
+                """
+                SELECT checkpoint_json
+                FROM zhivex_agent_checkpoints
+                WHERE namespace = ? AND session_id = ?
+                ORDER BY saved_at_ms DESC, step_index DESC
+                LIMIT 1
+                """,
+                (self._namespace, session_id),
+                fetchone=True,
+            )
+        else:
+            row = await self._execute(
+                """
+                SELECT checkpoint_json
+                FROM zhivex_agent_checkpoints
+                WHERE namespace = ? AND run_id = ?
+                ORDER BY saved_at_ms DESC, step_index DESC
+                LIMIT 1
+                """,
+                (self._namespace, run_id),
+                fetchone=True,
+            )
+        if row is None:
+            return None
+        return _deserialize_agent_checkpoint(_json_loads(row[0]))
+
+    async def list(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[AgentCheckpoint]:
+        sql = "SELECT checkpoint_json FROM zhivex_agent_checkpoints WHERE namespace = ?"
+        params: list[Any] = [self._namespace]
+        if session_id is not None:
+            sql += " AND session_id = ?"
+            params.append(session_id)
+        if run_id is not None:
+            sql += " AND run_id = ?"
+            params.append(run_id)
+        sql += " ORDER BY saved_at_ms ASC, step_index ASC"
+        rows = await self._execute(sql, tuple(params), fetchall=True)
+        return [_deserialize_agent_checkpoint(_json_loads(row[0])) for row in rows or []]
+
+
+class PostgresAgentMemoryStore:
+    def __init__(self, dsn: str, *, summary_config: SummaryConfig | None = None, table_prefix: str = "zhivex_ai") -> None:
+        self.summary_config = summary_config or SummaryConfig()
+        self._dsn = dsn
+        self._table_prefix = table_prefix
+
+    def _table(self) -> str:
+        return f"{self._table_prefix}_agent_memory"
+
+    async def _connect(self) -> Any:
+        try:
+            import asyncpg
+        except Exception as error:
+            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
+        return await asyncpg.connect(self._dsn)
+
+    async def _ensure_schema(self, connection: Any) -> None:
+        table = self._table()
+        await connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                session_id TEXT PRIMARY KEY,
+                state_json JSONB NOT NULL,
+                updated_at_ms BIGINT NOT NULL
+            )
+            """
+        )
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS {table}_updated_idx ON {table} (updated_at_ms)"
+        )
+
+    async def load(self, session_id: str) -> AgentMemoryState:
+        connection = await self._connect()
+        try:
+            await self._ensure_schema(connection)
+            row = await connection.fetchrow(
+                f"SELECT state_json FROM {self._table()} WHERE session_id = $1",
+                session_id,
+            )
+        finally:
+            await connection.close()
+        if row is None:
+            return AgentMemoryState()
+        return _deserialize_agent_memory_state(_coerce_json_payload(row["state_json"]))
+
+    async def save(self, session_id: str, state: AgentMemoryState) -> None:
+        connection = await self._connect()
+        try:
+            await self._ensure_schema(connection)
+            await connection.execute(
+                f"""
+                INSERT INTO {self._table()} (session_id, state_json, updated_at_ms)
+                VALUES ($1, $2::jsonb, $3)
+                ON CONFLICT(session_id)
+                DO UPDATE SET state_json = EXCLUDED.state_json, updated_at_ms = EXCLUDED.updated_at_ms
+                """,
+                session_id,
+                _json_dumps(_serialize_agent_memory_state(state)),
+                _now_ms(),
+            )
+        finally:
+            await connection.close()
+
+    async def summarize(
+        self,
+        *,
+        session_id: str,
+        state: AgentMemoryState,
+        agent: "Agent",
+    ) -> str | None:
+        return await InMemoryAgentMemory(summary_config=self.summary_config).summarize(
+            session_id=session_id,
+            state=state,
+            agent=agent,
+        )
+
+
+class PostgresAgentCheckpointStore:
+    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
+        self._dsn = dsn
+        self._table_prefix = table_prefix
+
+    def _table(self) -> str:
+        return f"{self._table_prefix}_agent_checkpoints"
+
+    async def _connect(self) -> Any:
+        try:
+            import asyncpg
+        except Exception as error:
+            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
+        return await asyncpg.connect(self._dsn)
+
+    async def _ensure_schema(self, connection: Any) -> None:
+        table = self._table()
+        await connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                run_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                saved_at_ms BIGINT NOT NULL,
+                is_final BOOLEAN NOT NULL,
+                checkpoint_json JSONB NOT NULL
+            )
+            """
+        )
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS {table}_session_idx ON {table} (session_id, saved_at_ms, step_index)"
+        )
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS {table}_run_idx ON {table} (run_id, saved_at_ms, step_index)"
+        )
+
+    async def save(self, checkpoint: AgentCheckpoint) -> None:
+        connection = await self._connect()
+        try:
+            await self._ensure_schema(connection)
+            await connection.execute(
+                f"""
+                INSERT INTO {self._table()} (
+                    run_id, session_id, agent_name, step_index, saved_at_ms, is_final, checkpoint_json
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                """,
+                checkpoint.run_id,
+                checkpoint.session_id,
+                checkpoint.agent_name,
+                checkpoint.step_index,
+                checkpoint.saved_at_ms,
+                checkpoint.is_final,
+                _json_dumps(_serialize_agent_checkpoint(checkpoint)),
+            )
+        finally:
+            await connection.close()
+
+    async def get_latest(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> AgentCheckpoint | None:
+        if session_id is None and run_id is None:
+            raise ValidationError('Pass either "session_id" or "run_id" to get_latest().')
+        connection = await self._connect()
+        try:
+            await self._ensure_schema(connection)
+            if session_id is not None:
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    WHERE session_id = $1
+                    ORDER BY saved_at_ms DESC, step_index DESC
+                    LIMIT 1
+                    """,
+                    session_id,
+                )
+            else:
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    WHERE run_id = $1
+                    ORDER BY saved_at_ms DESC, step_index DESC
+                    LIMIT 1
+                    """,
+                    run_id,
+                )
+        finally:
+            await connection.close()
+        if row is None:
+            return None
+        return _deserialize_agent_checkpoint(_coerce_json_payload(row["checkpoint_json"]))
+
+    async def list(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[AgentCheckpoint]:
+        connection = await self._connect()
+        try:
+            await self._ensure_schema(connection)
+            if session_id is not None and run_id is not None:
+                rows = await connection.fetch(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    WHERE session_id = $1 AND run_id = $2
+                    ORDER BY saved_at_ms ASC, step_index ASC
+                    """,
+                    session_id,
+                    run_id,
+                )
+            elif session_id is not None:
+                rows = await connection.fetch(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    WHERE session_id = $1
+                    ORDER BY saved_at_ms ASC, step_index ASC
+                    """,
+                    session_id,
+                )
+            elif run_id is not None:
+                rows = await connection.fetch(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    WHERE run_id = $1
+                    ORDER BY saved_at_ms ASC, step_index ASC
+                    """,
+                    run_id,
+                )
+            else:
+                rows = await connection.fetch(
+                    f"""
+                    SELECT checkpoint_json
+                    FROM {self._table()}
+                    ORDER BY saved_at_ms ASC, step_index ASC
+                    """
+                )
+        finally:
+            await connection.close()
+        return [_deserialize_agent_checkpoint(_coerce_json_payload(row["checkpoint_json"])) for row in rows]
+
+
+def create_sqlite_agent_memory_store(
+    path: str,
+    *,
+    summary_config: SummaryConfig | None = None,
+    namespace: str = "default",
+) -> SQLiteAgentMemoryStore:
+    return SQLiteAgentMemoryStore(path, summary_config=summary_config, namespace=namespace)
+
+
+def create_sqlite_checkpoint_store(path: str, *, namespace: str = "default") -> SQLiteAgentCheckpointStore:
+    return SQLiteAgentCheckpointStore(path, namespace=namespace)
+
+
+def create_postgres_agent_memory_store(
+    dsn: str,
+    *,
+    summary_config: SummaryConfig | None = None,
+    table_prefix: str = "zhivex_ai",
+) -> PostgresAgentMemoryStore:
+    return PostgresAgentMemoryStore(dsn, summary_config=summary_config, table_prefix=table_prefix)
+
+
+def create_postgres_checkpoint_store(
+    dsn: str,
+    *,
+    table_prefix: str = "zhivex_ai",
+) -> PostgresAgentCheckpointStore:
+    return PostgresAgentCheckpointStore(dsn, table_prefix=table_prefix)
 
 
 async def allow_all_approval_policy(request: ToolApprovalRequest) -> ApprovalDecision:
@@ -813,6 +1586,8 @@ class AgentRuntime:
         retry_backoff_ms: int | None = None,
         stop_on_handoff: bool = False,
         emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
+        resumed_from_checkpoint: AgentCheckpoint | None = None,
+        live_stream: bool = False,
     ) -> AgentRunResult:
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
@@ -867,6 +1642,7 @@ class AgentRuntime:
                     max_retries=max_retries,
                     retry_backoff_ms=retry_backoff_ms,
                     emit=publish,
+                    live_stream=live_stream,
                 )
                 last_result = segment_result
                 trace.segments[-1].finished_at_ms = _now_ms()
@@ -902,6 +1678,7 @@ class AgentRuntime:
                         trace=trace,
                         handoff=final_handoff,
                         orchestration_path=list(trace.orchestration_path),
+                        resumed_from_checkpoint=resumed_from_checkpoint,
                     )
 
                 handoff = segment_result.handoff
@@ -957,6 +1734,7 @@ class AgentRuntime:
         max_retries: int | None,
         retry_backoff_ms: int | None,
         emit: Callable[[AgentEvent], Awaitable[None]],
+        live_stream: bool,
     ) -> AgentRunResult:
         built_messages = _build_run_messages(
             agent=agent,
@@ -993,35 +1771,69 @@ class AgentRuntime:
             },
         )
         try:
-            result = await generate_text(
-                model=agent.model,
-                messages=built_messages,
-                tools=merged_tools or None,
-                tool_choice=tool_choice,
-                tool_execution=tool_execution,
-                max_steps=_effective_max_steps(agent.run_limits, max_steps),
-                temperature=temperature,
-                max_tokens=max_tokens,
-                reasoning=reasoning,
-                provider_options=provider_options,
-                timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
-                max_retries=max_retries,
-                retry_backoff_ms=retry_backoff_ms,
-            )
+            emitted_live_events = False
+            if live_stream and agent.model.capabilities.streaming:
+                async def handle_stream_event(event: Any) -> None:
+                    nonlocal emitted_live_events
+                    if isinstance(event, StreamTextDeltaEvent):
+                        emitted_live_events = True
+                        await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
+                    elif isinstance(event, StreamToolCallEvent):
+                        emitted_live_events = True
+                        await emit(AgentToolCallEvent(tool_call=event.tool_call))
+                    elif isinstance(event, StreamToolResultEvent):
+                        emitted_live_events = True
+                        await emit(AgentToolResultEvent(tool_result=event.tool_result))
+
+                streamed = stream_text(
+                    model=agent.model,
+                    messages=built_messages,
+                    tools=merged_tools or None,
+                    tool_choice=tool_choice,
+                    tool_execution=tool_execution,
+                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                    provider_options=provider_options,
+                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                    max_retries=max_retries,
+                    retry_backoff_ms=retry_backoff_ms,
+                    on_event=handle_stream_event,
+                )
+                result = await streamed.collect()
+            else:
+                result = await generate_text(
+                    model=agent.model,
+                    messages=built_messages,
+                    tools=merged_tools or None,
+                    tool_choice=tool_choice,
+                    tool_execution=tool_execution,
+                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                    provider_options=provider_options,
+                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                    max_retries=max_retries,
+                    retry_backoff_ms=retry_backoff_ms,
+                )
         except Exception as error:
             self._finish_span(span, error=error)
             raise
         self._finish_span(span, attributes={"finish.reason": result.finish_reason})
 
-        for tool_call in _extract_tool_calls_from_steps(result.steps):
-            await emit(AgentToolCallEvent(tool_call=tool_call))
+        if not emitted_live_events:
+            for tool_call in _extract_tool_calls_from_steps(result.steps):
+                await emit(AgentToolCallEvent(tool_call=tool_call))
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
         segment_provider_finish_reason = _segment_provider_finish_reason(result)
-        if segment_text:
+        if segment_text and not emitted_live_events:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
-        for tool_result in result.tool_results:
-            await emit(AgentToolResultEvent(tool_result=tool_result))
+        if not emitted_live_events:
+            for tool_result in result.tool_results:
+                await emit(AgentToolResultEvent(tool_result=tool_result))
 
         transcript = list(session.messages)
         if messages is not None:
@@ -1104,6 +1916,7 @@ class AgentRuntime:
 
             async def execute(
                 input: Any,
+                call_context: ToolExecutionContext | None = None,
                 *,
                 _tool_name: str = tool_name,
                 _definition: ToolDefinition = definition,
@@ -1147,6 +1960,7 @@ class AgentRuntime:
 
                 tool_context = ToolExecutionContext(
                     tool_name=_tool_name,
+                    tool_call_id=call_context.tool_call_id if call_context is not None else "",
                     run_id=run_id,
                     session_id=session_id,
                     agent_name=agent.name,
@@ -1184,6 +1998,8 @@ class AgentRuntime:
                 source=definition.source,
                 metadata=dict(definition.metadata),
                 supports_streaming=definition.supports_streaming,
+                remote_config=definition.remote_config,
+                mcp_config=definition.mcp_config,
             )
 
         return wrapped
@@ -1262,6 +2078,67 @@ def run_agent(
     )
 
 
+def resume_agent(
+    *,
+    agent: Agent,
+    session_id: str,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+    tools: ToolSet | ToolRegistry | None = None,
+    tool_choice: str | ToolChoiceName | None = None,
+    tool_execution: ToolExecutionOptions | None = None,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning: ReasoningConfig | None = None,
+    provider_options: dict[str, Any] | None = None,
+    timeout_ms: int | None = None,
+    max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+    stop_on_handoff: bool = False,
+    runtime: AgentRuntime | None = None,
+    registry: AgentRegistry | None = None,
+    observer: AgentObserver | None = None,
+) -> Awaitable[AgentRunResult]:
+    resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
+
+    async def runner() -> AgentRunResult:
+        resumed_session = await load_agent_session(agent, session_id)
+        latest_checkpoint: AgentCheckpoint | None = None
+        if agent.checkpoint_store is not None:
+            latest_checkpoint = await agent.checkpoint_store.get_latest(session_id=session_id)
+            if latest_checkpoint is not None:
+                resumed_session.metadata = {
+                    **resumed_session.metadata,
+                    "resumed_from_checkpoint": {
+                        "run_id": latest_checkpoint.run_id,
+                        "step_index": latest_checkpoint.step_index,
+                        "saved_at_ms": latest_checkpoint.saved_at_ms,
+                    },
+                }
+        return await resolved_runtime.run(
+            agent=agent,
+            session=resumed_session,
+            prompt=prompt,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            tool_execution=tool_execution,
+            max_steps=max_steps,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning=reasoning,
+            provider_options=provider_options,
+            timeout_ms=timeout_ms,
+            max_retries=max_retries,
+            retry_backoff_ms=retry_backoff_ms,
+            stop_on_handoff=stop_on_handoff,
+            resumed_from_checkpoint=latest_checkpoint,
+        )
+
+    return runner()
+
+
 def stream_agent(
     *,
     agent: Agent,
@@ -1310,6 +2187,7 @@ def stream_agent(
                 retry_backoff_ms=retry_backoff_ms,
                 stop_on_handoff=stop_on_handoff,
                 emit=emit,
+                live_stream=True,
             )
         finally:
             await broadcast.close()
