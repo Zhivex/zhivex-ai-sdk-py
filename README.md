@@ -57,22 +57,6 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 
 ## Installation
 
-For local development with `uv`:
-
-```bash
-make dev
-```
-
-If you prefer plain `pip`:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e ".[dev]"
-```
-
-When published to PyPI, installation will look like:
-
 ```bash
 pip install zhivex-ai-sdk
 ```
@@ -247,6 +231,30 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Gemini search is explicit and opt-in:
+
+```python
+import asyncio
+
+from zhivex_ai import create_gemini, generate_grounded_text
+
+
+async def main() -> None:
+    gemini = create_gemini()
+
+    result = await generate_grounded_text(
+        model=gemini.grounded_language_model("gemini-2.5-flash"),
+        prompt="Find one recent fact about AI infrastructure.",
+    )
+
+    print(result.text)
+    for source in result.sources:
+        print(source.title, source.url)
+
+
+asyncio.run(main())
+```
+
 ### Audio
 
 ```python
@@ -279,6 +287,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
+from pydantic import BaseModel, ConfigDict
 
 from zhivex_ai import (
     Agent,
@@ -287,6 +296,11 @@ from zhivex_ai import (
     run_agent,
     tool,
 )
+
+
+class DelegateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: str
 
 
 async def main() -> None:
@@ -303,8 +317,8 @@ async def main() -> None:
         tools={
             "delegate": tool(
                 name="delegate",
-                schema=dict[str, str],
-                execute=lambda input: handoff_to("researcher", input=input["task"]),
+                schema=DelegateInput,
+                execute=lambda input: handoff_to("researcher", input=input.task),
             )
         },
         subagents={"researcher": researcher},
@@ -317,6 +331,16 @@ async def main() -> None:
 
 
 asyncio.run(main())
+```
+
+If you want Gemini research with web search in an agent run, opt in explicitly:
+
+```python
+result = await run_agent(
+    agent=triage,
+    prompt="Research the Apollo migration status.",
+    provider_options={"google_search": True},
+)
 ```
 
 ### Gateway fallback routing
@@ -475,76 +499,6 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - [middleware.py](./examples/middleware.py)
 - [model_catalog.py](./examples/model_catalog.py)
 - [gateway_fallback.py](./examples/gateway_fallback.py)
-
-## Project Status
-
-This project is usable today and now covers most of the public SDK surfaces that exist in the TypeScript repo.
-
-Current status:
-
-- agent runtime, executable handoffs, real-time agent streaming, transcript + summary memory, and approval policies are implemented
-- durable agent memory + checkpoint stores are available for in-memory, SQLite, and Postgres backends
-- builtin tool runtimes now cover local execution, remote HTTP JSON tools, and MCP tool discovery/execution
-- core generation and streaming primitives remain available as foundation APIs
-- object streaming, UI helpers, transport helpers, grounded text, and audio helpers are included
-- major provider adapters are in place
-- gateway, catalog, and middleware helpers are included
-- test coverage exists for the shared contract, gateway, transport helpers, and key adapters
-
-What to expect:
-
-- API polish may continue as the Python port matures
-- provider-specific coverage may still expand over time, especially for Gemini and Vertex audio/grounding
-- GitHub Copilot SDK integration is not included yet
-
-## Roadmap
-
-Near-term release goals:
-
-- first TestPyPI release
-- first public PyPI release
-- more adapter coverage tests for Gemini, Vertex, and Bedrock advanced features
-- API polish and docs cleanup
-
-Potential next additions:
-
-- GitHub Copilot SDK integration
-- richer provider capability metadata
-- more provider-specific audio and grounding support
-- concurrent planner/worker orchestration utilities on top of the current handoff runtime
-
-## Development
-
-Run local validation with:
-
-```bash
-make check
-```
-
-Individual commands:
-
-```bash
-make test
-make build
-make release-check
-```
-
-`make build` uses the local `.venv` without build isolation so it works in restricted environments once `make dev` has installed the dev toolchain.
-
-## Publishing
-
-The repository already includes:
-
-- CI workflow: [ci.yml](./.github/workflows/ci.yml)
-- TestPyPI workflow: [publish-testpypi.yml](./.github/workflows/publish-testpypi.yml)
-- PyPI workflow: [publish-pypi.yml](./.github/workflows/publish-pypi.yml)
-- release guide: [RELEASING.md](./RELEASING.md)
-
-Before the first public release, confirm:
-
-- the final package name on PyPI
-- the `0.3.0` release tag and release notes
-- Trusted Publishing configuration on PyPI and TestPyPI
 
 ## License
 

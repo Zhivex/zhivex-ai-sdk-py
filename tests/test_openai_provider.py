@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -16,6 +17,7 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (
     AudioInput,
     ToolChoiceName,
+    ValidationError,
     create_openai,
     generate_grounded_text,
     generate_speech,
@@ -52,6 +54,11 @@ class FakeResponse:
     async def iter_lines(self) -> AsyncIterable[str]:
         for line in self.body_text.splitlines():
             yield line
+
+
+class WeatherToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: str
 
 
 class OpenAIProviderTests(IsolatedAsyncioTestCase):
@@ -183,12 +190,104 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             model=provider("gpt-4o-mini"),
             prompt="hello",
             tools={
-                "weather": tool(name="weather", schema=dict[str, str], execute=lambda input: {"ok": True})
+                "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})
             },
             tool_choice=ToolChoiceName(tool_name="weather"),
         )
         self.assertEqual(requests[0]["json"]["tool_choice"]["name"], "weather")
         self.assertEqual(requests[0]["json"]["tools"][0]["name"], "weather")
+        self.assertFalse(requests[0]["json"]["tools"][0]["parameters"]["additionalProperties"])
+
+    async def test_openai_rejects_non_strict_tool_schema_before_request(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(status_code=200, payload={})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError) as context:
+            await generate_text(
+                model=provider("gpt-4o-mini"),
+                prompt="hello",
+                tools={
+                    "weather": tool(name="weather", schema=dict[str, str], execute=lambda input: {"ok": True})
+                },
+                tool_choice=ToolChoiceName(tool_name="weather"),
+            )
+
+        self.assertIn("strict mode", str(context.exception))
+        self.assertIn("additionalProperties", str(context.exception))
+        self.assertEqual(requests, [])
+
+    async def test_openai_serializes_failed_tool_results_without_slots_error(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            if len(requests) == 1:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "weather",
+                                "arguments": '{"city":"Madrid"}',
+                            }
+                        ],
+                    },
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "tool failed"}],
+                        }
+                    ],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider("gpt-4o-mini"),
+            prompt="hello",
+            max_steps=2,
+            tools={
+                "weather": tool(
+                    name="weather",
+                    schema=WeatherToolInput,
+                    execute=lambda input: (_ for _ in ()).throw(RuntimeError("boom")),
+                )
+            },
+        )
+
+        self.assertEqual(result.text, "tool failed")
+        self.assertEqual(requests[1]["json"]["input"][-1]["output"], '{"message": "boom"}')
 
     async def test_openai_transcribes_audio(self) -> None:
         requests: list[dict[str, Any]] = []

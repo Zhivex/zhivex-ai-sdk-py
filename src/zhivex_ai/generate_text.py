@@ -43,6 +43,8 @@ from .types import (
     TokenUsage,
 )
 
+_GEMINI_BUILTIN_SEARCH_TOOLS = {"search", "google_search", "googleSearch"}
+
 
 def _validate_reasoning(model: LanguageModel, reasoning: ReasoningConfig | None) -> None:
     if reasoning is None:
@@ -222,6 +224,27 @@ async def _execute_tools(
     return resolved
 
 
+def _raise_for_provider_builtin_tool_calls(
+    model: LanguageModel,
+    tool_calls: list[ToolCall],
+    provider_options: dict[str, Any] | None,
+) -> None:
+    if model.provider != "gemini":
+        return
+    builtin_search_calls = [call for call in tool_calls if call.name in _GEMINI_BUILTIN_SEARCH_TOOLS]
+    if not builtin_search_calls:
+        return
+    if provider_options and provider_options.get("google_search"):
+        raise UnsupportedFeatureError(
+            'Gemini returned an unexpected built-in Google Search tool call while `provider_options={"google_search": True}` '
+            "was enabled. Use `create_gemini().grounded_language_model(...)` when you need grounded sources."
+        )
+    raise UnsupportedFeatureError(
+        'Gemini requested its built-in Google Search tool, but Google Search is opt-in in this SDK. '
+        'Retry with `provider_options={"google_search": True}` or use `create_gemini().grounded_language_model(...)`.'
+    )
+
+
 def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
     present = [usage for usage in usages if usage is not None]
     if not present:
@@ -306,6 +329,7 @@ async def generate_text(
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
+        _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
         current_results = await _execute_tools(
             step_tool_calls,
             tools,
@@ -492,6 +516,7 @@ def stream_text(
                 step_tool_calls = _extract_tool_calls(response_messages)
                 if not step_tool_calls:
                     break
+                _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
                 current_results = await _execute_tools(
                     step_tool_calls,
                     tools,

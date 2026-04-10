@@ -140,6 +140,34 @@ class PermissionToolModel:
         return generator()
 
 
+class GeminiSearchOptInModel:
+    provider = "gemini"
+    model_id = "gemini-3-flash-preview"
+    capabilities = BASE_CAPABILITIES
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        if input.provider_options and input.provider_options.get("google_search"):
+            return GenerateResult(messages=[create_text_message("assistant", "grounded:apollo")], text="grounded:apollo")
+        return GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[ToolCallPart(tool_call=ToolCall(id="call_1", name="search", input={"query": "Apollo"}))],
+                )
+            ]
+        )
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            yield StreamTextDeltaEvent(text_delta="grounded:apollo")
+            yield StreamFinishEvent(
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+
+        return generator()
+
+
 class AgentRuntimeTests(IsolatedAsyncioTestCase):
     async def test_run_agent_persists_session_memory_and_summary(self) -> None:
         memory = create_in_memory_agent_memory_store(
@@ -266,6 +294,21 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(approvals), 1)
         self.assertFalse(approvals[0].approved)
         self.assertEqual(observed_contexts, [])
+
+    async def test_run_agent_passes_google_search_provider_option_to_gemini(self) -> None:
+        agent = Agent(
+            name="researcher",
+            instructions="Research with search when enabled.",
+            model=GeminiSearchOptInModel(),
+        )
+
+        result = await run_agent(
+            agent=agent,
+            prompt="Research Apollo migration status.",
+            provider_options={"google_search": True},
+        )
+
+        self.assertEqual(result.text, "grounded:apollo")
 
     async def test_run_agent_saves_checkpoints(self) -> None:
         checkpoints = create_in_memory_checkpoint_store()

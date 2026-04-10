@@ -1,4 +1,5 @@
 import asyncio
+from pydantic import BaseModel, ConfigDict
 
 from zhivex_ai import (
     Agent,
@@ -7,6 +8,11 @@ from zhivex_ai import (
     run_agent,
     tool,
 )
+
+
+class DelegateResearchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: str
 
 
 async def main() -> None:
@@ -24,8 +30,8 @@ async def main() -> None:
             "delegate_research": tool(
                 name="delegate_research",
                 description="Delegates the current task to the researcher agent.",
-                schema=dict[str, str],
-                execute=lambda input: handoff_to("researcher", input=input["task"]),
+                schema=DelegateResearchInput,
+                execute=lambda input: handoff_to("researcher", input=input.task),
             )
         },
         subagents={"researcher": researcher},

@@ -9,7 +9,7 @@ from typing import Any
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
-from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError
+from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
 from ..messages import normalize_finish_reason
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
@@ -112,7 +112,11 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
 
 
 def _serialize_tool_output(tool_result: ToolExecutionResult) -> str:
-    value = tool_result.error.__dict__ if tool_result.is_error and tool_result.error is not None else tool_result.output
+    value = (
+        {"message": tool_result.error.message}
+        if tool_result.is_error and tool_result.error is not None
+        else tool_result.output
+    )
     return json.dumps(value)
 
 
@@ -162,16 +166,104 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
         return None
     mapped = []
     for tool in tools.values():
+        parameters = create_schema_adapter(tool.schema).json_schema()
+        _validate_openai_strict_tool_schema(tool.name, parameters)
         mapped.append(
             {
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
                 "strict": True,
-                "parameters": create_schema_adapter(tool.schema).json_schema(),
+                "parameters": parameters,
             }
         )
     return mapped
+
+
+def _resolve_json_schema_ref(ref: str, root: dict[str, Any]) -> dict[str, Any] | None:
+    if not ref.startswith("#/"):
+        return None
+    current: Any = root
+    for part in ref[2:].split("/"):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current if isinstance(current, dict) else None
+
+
+def _visit_json_schema_nodes(schema: Any, root: dict[str, Any], visit: Any, seen: set[int]) -> None:
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            for item in schema:
+                _visit_json_schema_nodes(item, root, visit, seen)
+        return
+    marker = id(schema)
+    if marker in seen:
+        return
+    seen.add(marker)
+    visit(schema)
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        resolved = _resolve_json_schema_ref(ref, root)
+        if resolved is not None:
+            _visit_json_schema_nodes(resolved, root, visit, seen)
+    for key in ("properties", "$defs", "definitions", "patternProperties"):
+        nested = schema.get(key)
+        if isinstance(nested, dict):
+            for value in nested.values():
+                _visit_json_schema_nodes(value, root, visit, seen)
+    if isinstance(schema.get("additionalProperties"), dict):
+        _visit_json_schema_nodes(schema["additionalProperties"], root, visit, seen)
+    if isinstance(schema.get("items"), dict):
+        _visit_json_schema_nodes(schema["items"], root, visit, seen)
+    elif isinstance(schema.get("items"), list):
+        for item in schema["items"]:
+            _visit_json_schema_nodes(item, root, visit, seen)
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        nested = schema.get(key)
+        if isinstance(nested, list):
+            for item in nested:
+                _visit_json_schema_nodes(item, root, visit, seen)
+    if isinstance(schema.get("not"), dict):
+        _visit_json_schema_nodes(schema["not"], root, visit, seen)
+
+
+def _is_object_schema(schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "object":
+        return True
+    return isinstance(kind, list) and "object" in kind
+
+
+def _validate_openai_strict_tool_schema(tool_name: str, schema: dict[str, Any]) -> None:
+    errors: list[str] = []
+
+    def visit(node: dict[str, Any]) -> None:
+        if not _is_object_schema(node):
+            return
+        if node.get("additionalProperties") is not False:
+            errors.append('set "additionalProperties": false on every object')
+        properties = node.get("properties")
+        if isinstance(properties, dict) and properties:
+            required = node.get("required")
+            required_names = set(required) if isinstance(required, list) else set()
+            missing = sorted(name for name in properties if name not in required_names)
+            if missing:
+                errors.append(f'mark every property as required (missing: {", ".join(missing)})')
+
+    _visit_json_schema_nodes(schema, schema, visit, set())
+    if not errors:
+        return
+    unique_errors: list[str] = []
+    for error in errors:
+        if error not in unique_errors:
+            unique_errors.append(error)
+    details = "; ".join(unique_errors)
+    raise ValidationError(
+        f'OpenAI tool "{tool_name}" uses a schema that is incompatible with strict mode: {details}. '
+        'Use a closed object schema, for example a Pydantic BaseModel with extra="forbid", '
+        "instead of an open-ended mapping like dict[str, str]."
+    )
 
 
 def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> str | dict[str, Any] | None:
