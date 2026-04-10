@@ -31,6 +31,8 @@ Useful starting points:
 .venv/bin/python examples/ui_messages.py
 .venv/bin/python examples/http_responses.py
 .venv/bin/python examples/gateway_fallback.py
+.venv/bin/python examples/dev_gemini_grounded_search.py
+.venv/bin/python examples/dev_agent_gemini_search_tool.py
 ```
 
 ## Notes
@@ -40,3 +42,4 @@ Useful starting points:
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - Structured output examples use `pydantic`.
+- `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.
