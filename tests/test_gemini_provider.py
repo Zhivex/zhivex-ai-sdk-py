@@ -12,9 +12,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import ImagePart, ToolChoiceName, create_gemini, generate_text, tool
+from zhivex_ai import ImagePart, MCPServerConfig, MCPToolConfig, ToolChoiceName, create_gemini, generate_text, tool
 from zhivex_ai import UnsupportedFeatureError, generate_grounded_text
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
+from zhivex_ai.errors import ProviderHTTPError
 
 
 @dataclass
@@ -191,3 +192,116 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             await generate_text(model=provider("gemini-3-flash-preview"), prompt="Research Apollo.")
 
         self.assertIn("google_search", str(context.exception))
+
+    async def test_gemini_normalizes_mcp_tool_schema(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gemini-2.5-flash"),
+            prompt="hello",
+            tools={
+                "fs_read_file": tool(
+                    name="fs_read_file",
+                    schema={
+                        "type": "object",
+                        "title": "Read File Input",
+                        "properties": {
+                            "path": {"type": "string", "title": "Path"},
+                            "head": {"type": "integer", "default": 20},
+                        },
+                        "required": ["path"],
+                        "additionalProperties": False,
+                    },
+                    source="mcp",
+                    mcp_config=MCPToolConfig(
+                        server=MCPServerConfig(transport="stdio", name="fs", command="npx"),
+                        tool_name="read_file",
+                    ),
+                )
+            },
+        )
+
+        parameters = requests[0]["tools"][0]["functionDeclarations"][0]["parameters"]
+        self.assertEqual(parameters["type"], "object")
+        self.assertEqual(parameters["required"], ["path"])
+        self.assertNotIn("title", parameters)
+        self.assertNotIn("additionalProperties", parameters)
+        self.assertNotIn("default", parameters["properties"]["head"])
+        self.assertEqual(parameters["properties"]["head"]["type"], "integer")
+
+    async def test_gemini_http_error_includes_response_body(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(status_code=400, body_text='{"error":{"message":"Bad schema: additionalProperties"}}')
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        with self.assertRaises(ProviderHTTPError) as context:
+            await generate_text(model=provider("gemini-2.5-flash"), prompt="hello")
+
+        self.assertIn("Response body:", str(context.exception))
+        self.assertIn("Bad schema", str(context.exception))
+
+    async def test_gemini_preserves_thought_signature_across_tool_loop(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            if len(requests) == 1:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "functionCall": {"name": "weather", "args": {"city": "Madrid"}},
+                                            "thoughtSignature": "sig-123",
+                                        }
+                                    ]
+                                },
+                                "finishReason": "STOP",
+                            }
+                        ]
+                    },
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "sunny"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider("gemini-2.5-flash"),
+            prompt="weather",
+            max_steps=2,
+            tools={
+                "weather": tool(
+                    name="weather",
+                    schema={"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+                    execute=lambda input: {"forecast": "sunny"},
+                )
+            },
+        )
+
+        self.assertEqual(result.text, "sunny")
+        second_request_parts = requests[1]["contents"][1]["parts"]
+        function_call_part = next(part for part in second_request_parts if "functionCall" in part)
+        self.assertEqual(function_call_part["thought_signature"], "sig-123")

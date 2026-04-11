@@ -4,7 +4,7 @@ import os
 
 load_dotenv()  # Load environment variables from .env file
 
-from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, mcp_stdio_server, run_agent
+from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, create_gemini, mcp_stdio_server, run_agent
 
 
 async def main() -> None:
@@ -17,6 +17,7 @@ async def main() -> None:
     )
     try:
         openai = create_openai(api_key=os.getenv("OPENAI_API_KEY"))
+        gemini = create_gemini(api_key=os.getenv("GOOGLE_API_KEY"))
         agent = Agent(
             name="assistant",
             instructions="Use filesystem tools when needed.",

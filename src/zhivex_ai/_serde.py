@@ -59,6 +59,7 @@ def serialize_tool_call(call: ToolCall) -> dict[str, Any]:
         "id": call.id,
         "name": call.name,
         "input": _json_compatible(call.input),
+        "provider_metadata": _json_compatible(call.provider_metadata),
     }
 
 
@@ -67,6 +68,7 @@ def deserialize_tool_call(payload: dict[str, Any]) -> ToolCall:
         id=str(payload.get("id", "")),
         name=str(payload.get("name", "")),
         input=payload.get("input", {}),
+        provider_metadata=dict(payload.get("provider_metadata") or {}),
     )
 
 

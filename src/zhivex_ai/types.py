@@ -33,6 +33,7 @@ class ToolCall:
     id: str
     name: str
     input: JsonValue
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

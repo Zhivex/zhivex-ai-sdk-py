@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
@@ -91,7 +92,12 @@ def _map_part(part: Any) -> dict[str, Any]:
             data = body
         return {"inlineData": {"mimeType": media_type, "data": data}}
     if part.type == "tool-call":
-        return {"functionCall": {"name": part.tool_call.name, "args": part.tool_call.input}}
+        function_call = {"name": part.tool_call.name, "args": part.tool_call.input}
+        thought_signature = part.tool_call.provider_metadata.get("thought_signature")
+        payload = {"functionCall": function_call}
+        if thought_signature is not None:
+            payload["thought_signature"] = thought_signature
+        return payload
     if part.type == "tool-result":
         return {
             "functionResponse": {
@@ -124,6 +130,47 @@ def _google_search_tool() -> dict[str, Any]:
     return {"googleSearch": {}}
 
 
+_GEMINI_SUPPORTED_SCHEMA_KEYS = {
+    "type",
+    "format",
+    "description",
+    "nullable",
+    "enum",
+    "properties",
+    "required",
+    "items",
+    "anyOf",
+    "oneOf",
+    "minimum",
+    "maximum",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+}
+
+
+def _normalize_gemini_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    def visit(node: Any) -> Any:
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        normalized: dict[str, Any] = {}
+        for key, value in node.items():
+            if key not in _GEMINI_SUPPORTED_SCHEMA_KEYS:
+                continue
+            if key == "properties" and isinstance(value, dict):
+                normalized[key] = {str(name): visit(property_schema) for name, property_schema in value.items()}
+                continue
+            normalized[key] = visit(value)
+        return normalized
+
+    return visit(deepcopy(schema))
+
+
 def _map_tools(tools: dict[str, Any] | None, provider_options: dict[str, Any] | None = None) -> list[dict[str, Any]] | None:
     mapped: list[dict[str, Any]] = []
     if tools:
@@ -133,7 +180,11 @@ def _map_tools(tools: dict[str, Any] | None, provider_options: dict[str, Any] | 
                     {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": create_schema_adapter(tool.schema).json_schema(),
+                        "parameters": (
+                            _normalize_gemini_tool_schema(create_schema_adapter(tool.schema).json_schema())
+                            if getattr(tool, "source", None) == "mcp"
+                            else create_schema_adapter(tool.schema).json_schema()
+                        ),
                     }
                     for tool in tools.values()
                 ]
@@ -215,7 +266,19 @@ def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
             parts.append(TextPart(text=part["text"]))
         elif part.get("functionCall"):
             call = part["functionCall"]
-            parts.append(ToolCallPart(tool_call=ToolCall(id=f'{call["name"]}-0', name=call["name"], input=call.get("args") or {})))
+            provider_metadata: dict[str, Any] = {}
+            if part.get("thoughtSignature") is not None:
+                provider_metadata["thought_signature"] = part["thoughtSignature"]
+            parts.append(
+                ToolCallPart(
+                    tool_call=ToolCall(
+                        id=f'{call["name"]}-0',
+                        name=call["name"],
+                        input=call.get("args") or {},
+                        provider_metadata=provider_metadata,
+                    )
+                )
+            )
     return ModelMessage(role="assistant", parts=parts)
 
 
@@ -330,8 +393,16 @@ class GeminiLanguageModel(LanguageModel):
                         yield StreamTextDeltaEvent(text_delta=part["text"])
                     if part.get("functionCall"):
                         call = part["functionCall"]
+                        provider_metadata: dict[str, Any] = {}
+                        if part.get("thoughtSignature") is not None:
+                            provider_metadata["thought_signature"] = part["thoughtSignature"]
                         yield StreamToolCallEvent(
-                            tool_call=ToolCall(id=f'{call["name"]}-0', name=call["name"], input=call.get("args") or {})
+                            tool_call=ToolCall(
+                                id=f'{call["name"]}-0',
+                                name=call["name"],
+                                input=call.get("args") or {},
+                                provider_metadata=provider_metadata,
+                            )
                         )
                 if candidate and candidate.get("finishReason"):
                     yield StreamFinishEvent(

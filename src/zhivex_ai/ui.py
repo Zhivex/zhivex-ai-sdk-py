@@ -43,7 +43,12 @@ def _to_plain(value: Any) -> Any:
 
 
 def _tool_call_from_dict(value: dict[str, Any]) -> ToolCall:
-    return ToolCall(id=value["id"], name=value["name"], input=value.get("input") or {})
+    return ToolCall(
+        id=value["id"],
+        name=value["name"],
+        input=value.get("input") or {},
+        provider_metadata=value.get("provider_metadata") or {},
+    )
 
 
 def _tool_result_from_dict(value: dict[str, Any]) -> ToolExecutionResult:
