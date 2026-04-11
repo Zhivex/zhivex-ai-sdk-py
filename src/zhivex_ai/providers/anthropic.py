@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import os
 from collections.abc import AsyncIterable
@@ -47,9 +48,17 @@ ANTHROPIC_CAPABILITIES = ModelCapabilities(
     web_search=False,
 )
 
+_ANTHROPIC_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
+
 
 def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
+    for part in message.parts:
+        if part.type == "tool-call":
+            thinking_blocks = part.tool_call.provider_metadata.get("anthropic_thinking_blocks")
+            if isinstance(thinking_blocks, list) and thinking_blocks:
+                blocks.extend(deepcopy(thinking_blocks))
+                break
     for part in message.parts:
         if part.type == "text":
             blocks.append({"type": "text", "text": part.text})
@@ -122,11 +131,19 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     ]
 
 
-def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> dict[str, Any] | None:
+def _map_tool_choice(
+    tool_choice: str | ToolChoiceName | None,
+    *,
+    extended_thinking: bool = False,
+) -> dict[str, Any] | None:
     if tool_choice is None or tool_choice == "auto":
         return None
     if tool_choice == "none":
         return {"type": "none"}
+    if extended_thinking:
+        raise UnsupportedFeatureError(
+            'Provider "anthropic" only supports "tool_choice=auto" or "tool_choice=none" when extended thinking is enabled.'
+        )
     if tool_choice == "required":
         return {"type": "any"}
     return {"type": "tool", "name": tool_choice.tool_name}
@@ -144,13 +161,26 @@ def _map_reasoning(input: ModelGenerateInput) -> dict[str, Any] | None:
 
 def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
     parts = []
+    thinking_blocks: list[dict[str, Any]] = []
+    attached_thinking = False
     for block in payload.get("content") or []:
         if block.get("type") == "text":
             parts.append(TextPart(text=block["text"]))
+        elif block.get("type") in _ANTHROPIC_THINKING_BLOCK_TYPES:
+            thinking_blocks.append(deepcopy(block))
         elif block.get("type") == "tool_use":
+            provider_metadata = {}
+            if thinking_blocks and not attached_thinking:
+                provider_metadata["anthropic_thinking_blocks"] = deepcopy(thinking_blocks)
+                attached_thinking = True
             parts.append(
                 ToolCallPart(
-                    tool_call=ToolCall(id=block["id"], name=block["name"], input=block.get("input") or {})
+                    tool_call=ToolCall(
+                        id=block["id"],
+                        name=block["name"],
+                        input=block.get("input") or {},
+                        provider_metadata=provider_metadata,
+                    )
                 )
             )
     return ModelMessage(role="assistant", parts=parts)
@@ -174,12 +204,13 @@ class AnthropicLanguageModel(LanguageModel):
         }
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         body = drop_none({
             "model": self.model_id,
             "system": _system_prompt_from_messages(input.messages),
             "messages": _map_messages(input.messages),
             "tools": _map_tools(input.tools),
-            "tool_choice": _map_tool_choice(input.tool_choice),
+            "tool_choice": _map_tool_choice(input.tool_choice, extended_thinking=extended_thinking),
             "temperature": input.temperature,
             "max_tokens": input.max_tokens or 1024,
             **(input.provider_options or {}),
@@ -218,6 +249,7 @@ class AnthropicLanguageModel(LanguageModel):
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
+        extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -227,7 +259,7 @@ class AnthropicLanguageModel(LanguageModel):
                     "system": _system_prompt_from_messages(input.messages),
                     "messages": _map_messages(input.messages),
                     "tools": _map_tools(input.tools),
-                    "tool_choice": _map_tool_choice(input.tool_choice),
+                    "tool_choice": _map_tool_choice(input.tool_choice, extended_thinking=extended_thinking),
                     "temperature": input.temperature,
                     "max_tokens": input.max_tokens or 1024,
                     "stream": True,

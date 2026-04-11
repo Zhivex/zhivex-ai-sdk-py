@@ -18,9 +18,12 @@ from zhivex_ai import (
     AudioInput,
     MCPServerConfig,
     MCPToolConfig,
+    UnsupportedFeatureError,
     ToolChoiceName,
     ValidationError,
     create_openai,
+    create_openrouter,
+    create_qwen,
     generate_grounded_text,
     generate_speech,
     generate_text,
@@ -427,3 +430,56 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.text, "fresh answer")
         self.assertEqual(result.sources[0].url, "https://example.com")
+
+    async def test_openrouter_rejects_required_tool_choice(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(status_code=200, payload={})
+
+        provider = create_openrouter(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider("openai/o4-mini"),
+                prompt="hello",
+                tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})},
+                tool_choice="required",
+            )
+
+        self.assertEqual(requests, [])
+
+    async def test_qwen_reports_tools_as_unsupported_for_this_adapter(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(status_code=200, payload={})
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider("qwen-plus"),
+                prompt="hello",
+                tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})},
+            )
+
+        self.assertEqual(requests, [])

@@ -324,10 +324,16 @@ def _validate_openai_strict_tool_schema(tool_name: str, schema: dict[str, Any]) 
     )
 
 
-def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> str | dict[str, Any] | None:
+def _map_tool_choice(
+    tool_choice: str | ToolChoiceName | None,
+    *,
+    provider_name: str,
+) -> str | dict[str, Any] | None:
     if tool_choice is None:
         return None
     if isinstance(tool_choice, str):
+        if provider_name == "openrouter" and tool_choice == "required":
+            raise UnsupportedFeatureError('Provider "openrouter" does not support "tool_choice=\\"required\\"" in Responses API.')
         return tool_choice
     return {
         "type": "function",
@@ -406,12 +412,17 @@ def _parse_responses_message(payload: dict[str, Any]) -> ModelMessage:
 
 
 def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
+    if provider_name == "qwen" and input.tools:
+        raise UnsupportedFeatureError(
+            'Provider "qwen" tool calling is not currently supported through this Responses-compatible adapter. '
+            "Use a Qwen chat-completions-compatible path for tool calling."
+        )
     body = {
         "model": model_id,
         "instructions": _system_instructions(input.messages),
         "input": _to_responses_input(input.messages),
         "tools": _map_tools(input.tools),
-        "tool_choice": _map_tool_choice(input.tool_choice),
+        "tool_choice": _map_tool_choice(input.tool_choice, provider_name=provider_name),
         "text": _map_structured_output(input),
         "temperature": input.temperature,
         "max_output_tokens": input.max_tokens,

@@ -55,6 +55,17 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 | Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No |
 | Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No |
 
+### Tool Calling Notes
+
+Tool support varies in practice even when the high-level SDK API is shared:
+
+- OpenAI and Azure OpenAI currently have the most robust tool-calling path in this SDK, including MCP-oriented schema normalization for strict-mode function tools.
+- Gemini and Vertex AI support tools through the Gemini function-calling path. The SDK preserves Gemini thought signatures across tool loops and normalizes MCP schemas to the subset Gemini accepts.
+- Anthropic supports tools, but when using extended thinking (`reasoning.budget_tokens`) the SDK only allows `tool_choice="auto"` or `"none"` and preserves returned thinking blocks during tool loops.
+- OpenRouter supports the shared Responses-style adapter, but this SDK does not allow `tool_choice="required"` there because the current OpenRouter Responses docs only document `auto`, `none`, or forcing a named function.
+- Qwen is available for text generation through the OpenAI-compatible factory, but tool calling is not currently exposed through this SDK adapter because the implementation path here is Responses-based while the official Qwen docs for tools currently describe a different OpenAI-compatible flow.
+- Kimi and Ollama use the shared OpenAI-compatible adapter in this SDK. Basic compatibility may work, but provider-specific tool behavior can still differ from OpenAI depending on the upstream compatibility layer.
+
 ## Installation
 
 ```bash

@@ -13,8 +13,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import create_anthropic, generate_text, tool
-from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, TextPart
+from zhivex_ai import UnsupportedFeatureError, create_anthropic, generate_text, tool
+from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, TextPart, ToolChoiceName
 
 
 @dataclass
@@ -36,6 +36,7 @@ class FakeResponse:
 
 class AnthropicProviderTests(IsolatedAsyncioTestCase):
     async def test_anthropic_tool_call_roundtrip(self) -> None:
+        requests: list[dict[str, Any]] = []
         calls = 0
 
         async def fetch(
@@ -43,11 +44,15 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         ):
             nonlocal calls
             calls += 1
+            requests.append(json_body)
             if calls == 1:
                 return FakeResponse(
                     status_code=200,
                     payload={
-                        "content": [{"type": "tool_use", "id": "tool-1", "name": "math", "input": {"value": 2}}],
+                        "content": [
+                            {"type": "thinking", "thinking": "Need math", "signature": "sig-1"},
+                            {"type": "tool_use", "id": "tool-1", "name": "math", "input": {"value": 2}},
+                        ],
                         "stop_reason": "tool_use",
                         "usage": {"input_tokens": 1, "output_tokens": 1},
                     },
@@ -76,6 +81,35 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.text, "result is 4")
         self.assertEqual(result.tool_results[0].tool_name, "math")
+        assistant_blocks = requests[1]["messages"][1]["content"]
+        self.assertEqual(assistant_blocks[0]["type"], "thinking")
+        self.assertEqual(assistant_blocks[1]["type"], "tool_use")
+
+    async def test_anthropic_rejects_forced_tool_choice_with_extended_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(status_code=200, payload={})
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider("claude-sonnet-4-20250514"),
+                prompt="double 2",
+                tools={
+                    "math": tool(
+                        name="math",
+                        schema=dict[str, int],
+                        execute=lambda input: {"result": input["value"] * 2},
+                    )
+                },
+                tool_choice=ToolChoiceName(tool_name="math"),
+                reasoning=ReasoningConfig(budget_tokens=1024),
+            )
+        self.assertEqual(requests, [])
 
     async def test_anthropic_maps_data_url_images_to_base64_source(self) -> None:
         requests: list[dict[str, Any]] = []
