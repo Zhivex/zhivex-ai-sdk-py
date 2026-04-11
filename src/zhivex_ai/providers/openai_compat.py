@@ -889,6 +889,84 @@ class OpenAICompatibleSpeechModel(_BaseOpenAICompatible, SpeechModel):
         )
 
 
+def _audio_format_to_media_type(value: str | None, *, default: str = "audio/wav") -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"wav", "wave"}:
+        return "audio/wav"
+    if normalized == "mp3":
+        return "audio/mpeg"
+    if normalized == "flac":
+        return "audio/flac"
+    if normalized in {"opus", "ogg_opus"}:
+        return "audio/ogg"
+    if normalized in {"pcm", "pcm16"}:
+        return "audio/pcm"
+    return default
+
+
+@dataclass(slots=True)
+class OpenAICompatibleChatSpeechModel(_BaseOpenAICompatible, SpeechModel):
+    capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_SPEECH_CAPABILITIES)
+
+    async def generate_speech(
+        self,
+        *,
+        input: str,
+        voice: str | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> SpeechOutput:
+        remaining_options = deepcopy(provider_options or {})
+        audio_config = deepcopy(dict(remaining_options.pop("audio", {}) or {}))
+        audio_config.setdefault("format", "wav")
+        audio_config["voice"] = voice or audio_config.get("voice") or "alloy"
+        modalities = list(remaining_options.pop("modalities", []) or ["text", "audio"])
+        if "audio" not in modalities:
+            modalities.append("audio")
+
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json_body={
+                    "model": self.model_id,
+                    "messages": [{"role": "user", "content": input}],
+                    "modalities": modalities,
+                    "audio": audio_config,
+                    "stream": True,
+                    **remaining_options,
+                },
+                timeout_ms=options.timeout_ms if options else None,
+                stream=True,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+
+        raw_chunks: list[dict[str, Any]] = []
+        audio_chunks: list[str] = []
+        async for event in parse_sse(response.iter_lines()):
+            if event.data == "[DONE]":
+                break
+            payload = json.loads(event.data)
+            raw_chunks.append(payload)
+            delta = ((payload.get("choices") or [{}])[0] or {}).get("delta") or {}
+            audio = delta.get("audio") or {}
+            data = audio.get("data")
+            if isinstance(data, str) and data:
+                audio_chunks.append(data)
+
+        if not audio_chunks:
+            raise ValidationError(f'Provider "{self.provider}" did not return audio data for speech generation.')
+        return SpeechOutput(
+            audio=base64.b64decode("".join(audio_chunks)),
+            media_type=_audio_format_to_media_type(str(audio_config.get("format") or "")),
+            raw_response=raw_chunks,
+        )
+
+
 @dataclass(slots=True)
 class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_GROUNDED_CAPABILITIES)
@@ -1016,8 +1094,11 @@ def create_openai_compatible_provider(
     auth_prefix: str = "Bearer ",
     capabilities: ModelCapabilities | None = None,
     supports_audio: bool = False,
+    supports_transcription: bool | None = None,
+    supports_speech: bool | None = None,
     supports_grounding: bool = False,
     supports_realtime: bool = False,
+    speech_transport: str = "audio_speech",
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
@@ -1028,6 +1109,8 @@ def create_openai_compatible_provider(
     requester = fetch or default_fetch
     base = base_url.rstrip("/")
     shared_capabilities = capabilities or OPENAI_COMPAT_CAPABILITIES
+    resolved_supports_transcription = supports_audio if supports_transcription is None else supports_transcription
+    resolved_supports_speech = supports_audio if supports_speech is None else supports_speech
     return ProviderAdapter(
         name=provider_name,
         language_model_factory=lambda model_id: OpenAICompatibleLanguageModel(
@@ -1060,20 +1143,32 @@ def create_openai_compatible_provider(
                 auth_header=auth_header,
                 auth_prefix=auth_prefix,
             ))
-            if supports_audio
+            if resolved_supports_transcription
             else None
         ),
         speech_model_factory=(
-            (lambda model_id: OpenAICompatibleSpeechModel(
-                provider=provider_name,
-                model_id=model_id,
-                api_key=resolved_key,
-                base_url=base,
-                fetch=requester,
-                auth_header=auth_header,
-                auth_prefix=auth_prefix,
-            ))
-            if supports_audio
+            (
+                (lambda model_id: OpenAICompatibleSpeechModel(
+                    provider=provider_name,
+                    model_id=model_id,
+                    api_key=resolved_key,
+                    base_url=base,
+                    fetch=requester,
+                    auth_header=auth_header,
+                    auth_prefix=auth_prefix,
+                ))
+                if speech_transport == "audio_speech"
+                else (lambda model_id: OpenAICompatibleChatSpeechModel(
+                    provider=provider_name,
+                    model_id=model_id,
+                    api_key=resolved_key,
+                    base_url=base,
+                    fetch=requester,
+                    auth_header=auth_header,
+                    auth_prefix=auth_prefix,
+                ))
+            )
+            if resolved_supports_speech
             else None
         ),
         grounded_language_model_factory=(

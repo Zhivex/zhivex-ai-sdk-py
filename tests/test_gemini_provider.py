@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass
 import sys
@@ -12,8 +13,19 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import ImagePart, MCPServerConfig, MCPToolConfig, ToolChoiceName, create_gemini, generate_text, tool
-from zhivex_ai import UnsupportedFeatureError, generate_grounded_text
+from zhivex_ai import (
+    ImagePart,
+    MCPServerConfig,
+    MCPToolConfig,
+    ToolChoiceName,
+    create_gemini,
+    create_vertex,
+    generate_grounded_text,
+    generate_speech,
+    generate_text,
+    tool,
+)
+from zhivex_ai import UnsupportedFeatureError
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
 from zhivex_ai.errors import ProviderHTTPError
 
@@ -32,13 +44,89 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
-    async def test_gemini_does_not_expose_speech_models(self) -> None:
-        provider = create_gemini(api_key="test")
+    async def test_gemini_generates_speech(self) -> None:
+        requests: list[dict[str, Any]] = []
 
-        with self.assertRaises(AttributeError) as context:
-            provider.speech_model("gemini-2.5-flash-preview-tts")
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "audio/pcm",
+                                            "data": base64.b64encode(b"voice-bytes").decode("ascii"),
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
 
-        self.assertEqual(str(context.exception), 'Provider "gemini" does not expose speech models.')
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await generate_speech(
+            model=provider.speech_model("gemini-2.5-flash-preview-tts"),
+            input="hello",
+        )
+
+        self.assertEqual(result.audio, b"voice-bytes")
+        self.assertEqual(result.media_type, "audio/pcm")
+        self.assertEqual(
+            requests[0]["json"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
+            "Kore",
+        )
+        self.assertEqual(requests[0]["json"]["generationConfig"]["responseModalities"], ["AUDIO"])
+
+    async def test_vertex_generates_speech(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "audio/pcm",
+                                            "data": base64.b64encode(b"vertex-voice").decode("ascii"),
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        result = await generate_speech(
+            model=provider.speech_model("gemini-2.5-flash-tts"),
+            input="hello",
+            voice="Puck",
+        )
+
+        self.assertEqual(result.audio, b"vertex-voice")
+        self.assertEqual(result.media_type, "audio/pcm")
+        self.assertIn("/publishers/google/models/gemini-2.5-flash-tts:generateContent", requests[0]["url"])
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+        self.assertEqual(
+            requests[0]["json"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
+            "Puck",
+        )
 
     async def test_gemini_maps_tool_choice_and_usage(self) -> None:
         requests: list[dict[str, Any]] = []

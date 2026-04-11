@@ -42,7 +42,8 @@ Useful starting points:
 
 ## Notes
 
-- OpenAI and Azure OpenAI currently expose the richest Python feature surface for audio, grounded text, and realtime session bootstrap.
+- OpenAI and Azure OpenAI currently expose the richest Python feature surface for grounded text and realtime session bootstrap.
+- Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The Bedrock realtime example requires an injected AWS-signed websocket connection factory.

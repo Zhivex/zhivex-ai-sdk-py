@@ -295,6 +295,35 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+```python
+import asyncio
+import wave
+from pathlib import Path
+
+from zhivex_ai import create_gemini, generate_speech
+
+
+def save_wave(path: Path, pcm: bytes, *, channels: int = 1, rate: int = 24_000, sample_width: int = 2) -> None:
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(pcm)
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    result = await generate_speech(
+        model=gemini.speech_model("gemini-2.5-flash-preview-tts"),
+        input="Zhivex AI SDK makes provider switching easier.",
+        voice="Kore",
+    )
+    save_wave(Path("speech.wav"), result.audio)
+
+
+asyncio.run(main())
+```
+
 ### Agent runtime
 
 ```python
@@ -417,6 +446,30 @@ Adapters may also expose optional factories such as:
 - `provider.speech_model("gpt-4o-mini-tts")`
 - `provider.grounded_language_model("gpt-4o-search-preview")`
 - `provider.realtime_model("gpt-realtime")`
+
+### Capability Matrix
+
+This table reflects the adapters currently exposed by this repository.
+
+| Provider | Text | Embeddings | Transcription | Speech | Grounded | Realtime |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
+| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
+| Anthropic | Yes | No | No | No | No | No |
+| Gemini | Yes | Yes | No | Yes | Yes | Yes |
+| Vertex | Yes | Yes | No | Yes | No | Yes |
+| Bedrock | Yes | No | No | No | No | Yes |
+| OpenRouter | Yes | Yes | No | Yes | No | No |
+| Qwen | Yes | Yes | No | Yes | No | No |
+| Kimi | Yes | Yes | No | No | No | No |
+| Ollama | Yes | Yes | No | No | No | No |
+
+Notes:
+
+- "Grounded" means the adapter exposes `provider.grounded_language_model(...)`.
+- "Realtime" means the adapter exposes `provider.realtime_model(...)`.
+- Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
+- `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
 ## Why not use provider SDKs directly?
 

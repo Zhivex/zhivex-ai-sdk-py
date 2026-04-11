@@ -16,4 +16,6 @@ def create_openrouter(
         api_key=api_key,
         base_url=base_url,
         fetch=fetch,
+        supports_speech=True,
+        speech_transport="chat_audio",
     )

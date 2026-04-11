@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
@@ -458,6 +459,47 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(requests, [])
 
+    async def test_openrouter_generates_speech_via_chat_audio_stream(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body, "stream": stream})
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'data: {"choices":[{"delta":{"audio":{"data":"'
+                    + base64.b64encode(b"hello ").decode("ascii")
+                    + '"}}}]}\n\n'
+                    'data: {"choices":[{"delta":{"audio":{"data":"'
+                    + base64.b64encode(b"world").decode("ascii")
+                    + '"}}}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+
+        provider = create_openrouter(api_key="test", fetch=fetch)
+        result = await generate_speech(
+            model=provider.speech_model("openai/gpt-4o-mini-tts"),
+            input="hello",
+            voice="alloy",
+        )
+
+        self.assertEqual(result.audio, b"hello world")
+        self.assertEqual(result.media_type, "audio/wav")
+        self.assertEqual(requests[0]["url"], "https://openrouter.ai/api/v1/chat/completions")
+        self.assertTrue(requests[0]["stream"])
+        self.assertEqual(requests[0]["json"]["modalities"], ["text", "audio"])
+        self.assertEqual(requests[0]["json"]["audio"], {"voice": "alloy", "format": "wav"})
+
     async def test_qwen_reports_tools_as_unsupported_for_this_adapter(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -483,3 +525,48 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(requests, [])
+
+    async def test_qwen_generates_speech(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body})
+            if method == "GET":
+                return FakeResponse(
+                    status_code=200,
+                    body_bytes=b"qwen-voice",
+                    headers={"content-type": "audio/wav"},
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "output": {
+                        "finish_reason": "stop",
+                        "audio": {
+                            "url": "https://files.example.com/audio.wav",
+                        },
+                    }
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        result = await generate_speech(
+            model=provider.speech_model("qwen3-tts-flash"),
+            input="hello",
+        )
+
+        self.assertEqual(result.audio, b"qwen-voice")
+        self.assertEqual(result.media_type, "audio/wav")
+        self.assertIn("/api/v1/services/aigc/multimodal-generation/generation", requests[0]["url"])
+        self.assertEqual(requests[0]["json"]["input"]["voice"], "Cherry")
+        self.assertEqual(requests[1]["method"], "GET")
+        self.assertEqual(requests[1]["url"], "https://files.example.com/audio.wav")

@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
-from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError
+from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
 from ..messages import normalize_finish_reason
 from ..realtime import (
     CallbackRealtimeSession,
@@ -47,6 +47,9 @@ from ..types import (
     RealtimeTokenResult,
     RealtimeToolCallEvent,
     RealtimeTranscriptEvent,
+    RetryOptions,
+    SpeechModel,
+    SpeechOutput,
     StreamEvent,
     StreamFinishEvent,
     StreamTextDeltaEvent,
@@ -91,6 +94,22 @@ GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=True,
+)
+
+GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
+    streaming=False,
+    tools=False,
+    structured_output=False,
+    json_mode=False,
+    tool_choice=False,
+    parallel_tool_calls=False,
+    vision=False,
+    files=False,
+    audio_input=False,
+    audio_output=True,
+    embeddings=False,
+    reasoning=False,
+    web_search=False,
 )
 
 GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
@@ -301,6 +320,57 @@ def _generation_config(model_id: str, input: ModelGenerateInput) -> dict[str, An
         config["responseMimeType"] = "application/json"
         config["responseJsonSchema"] = create_schema_adapter(input.structured_output.schema).json_schema()
     return drop_none(config)
+
+
+def _gemini_speech_generation_config(
+    *,
+    provider: str,
+    voice: str | None,
+    provider_options: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    remaining = deepcopy(provider_options or {})
+    generation_config = deepcopy(dict(remaining.pop("generationConfig", {}) or {}))
+
+    speech_config = deepcopy(dict(generation_config.get("speechConfig") or remaining.pop("speechConfig", {}) or {}))
+    if voice:
+        if "multiSpeakerVoiceConfig" in speech_config:
+            raise ValidationError(
+                f'Provider "{provider}" does not support passing both "voice" and provider_options["speechConfig"]["multiSpeakerVoiceConfig"].'
+            )
+        speech_config["voiceConfig"] = {
+            **dict(speech_config.get("voiceConfig") or {}),
+            "prebuiltVoiceConfig": {
+                **dict((speech_config.get("voiceConfig") or {}).get("prebuiltVoiceConfig") or {}),
+                "voiceName": voice,
+            },
+        }
+    if not speech_config:
+        raise ValidationError(
+            f'Provider "{provider}" requires a "voice" argument or provider_options["speechConfig"] for speech generation.'
+        )
+
+    generation_config["responseModalities"] = list(generation_config.get("responseModalities") or ["AUDIO"])
+    if "AUDIO" not in generation_config["responseModalities"]:
+        generation_config["responseModalities"].append("AUDIO")
+    generation_config["speechConfig"] = speech_config
+    return remaining, generation_config
+
+
+def _extract_gemini_audio_part(
+    payload: dict[str, Any],
+    *,
+    provider: str,
+) -> tuple[bytes, str]:
+    candidate = (payload.get("candidates") or [None])[0] or {}
+    for part in ((candidate.get("content") or {}).get("parts") or []):
+        inline = part.get("inlineData") or part.get("inline_data")
+        if not isinstance(inline, dict) or not inline.get("data"):
+            continue
+        return (
+            base64.b64decode(str(inline.get("data"))),
+            str(inline.get("mimeType") or inline.get("mime_type") or "audio/pcm"),
+        )
+    raise ValidationError(f'Provider "{provider}" did not return audio data for speech generation.')
 
 
 def _gemini_realtime_url(base_url: str, api_key: str, provider_options: dict[str, Any] | None = None) -> str:
@@ -613,6 +683,57 @@ class GeminiLanguageModel(LanguageModel):
 
 
 @dataclass(slots=True)
+class GeminiSpeechModel(SpeechModel):
+    provider: str
+    model_id: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_SPEECH_CAPABILITIES)
+
+    def _url(self, action: str) -> str:
+        separator = "&" if "?" in action else "?"
+        return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
+
+    async def generate_speech(
+        self,
+        *,
+        input: str,
+        voice: str | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> SpeechOutput:
+        remaining_options, generation_config = _gemini_speech_generation_config(
+            provider=self.provider,
+            voice=voice or "Kore",
+            provider_options=provider_options,
+        )
+        response = await with_retry(
+            lambda: self.fetch(
+                self._url("generateContent"),
+                headers={"content-type": "application/json"},
+                json_body=drop_none({
+                    "contents": [{"role": "user", "parts": [{"text": input}]}],
+                    "generationConfig": generation_config,
+                    **remaining_options,
+                }),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        audio, media_type = _extract_gemini_audio_part(payload, provider=self.provider)
+        return SpeechOutput(audio=audio, media_type=media_type, raw_response=payload)
+
+
+@dataclass(slots=True)
 class GeminiGroundedLanguageModel(GroundedLanguageModel):
     provider: str
     model_id: str
@@ -773,6 +894,9 @@ def create_gemini(
             provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
         ),
         grounded_language_model_factory=lambda model_id: GeminiGroundedLanguageModel(
+            provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
+        ),
+        speech_model_factory=lambda model_id: GeminiSpeechModel(
             provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
         ),
         realtime_model_factory=lambda model_id: GeminiRealtimeModel(

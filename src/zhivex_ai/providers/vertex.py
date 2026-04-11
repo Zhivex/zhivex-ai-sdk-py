@@ -14,6 +14,7 @@ from .gemini import (
     GEMINI_CAPABILITIES,
     GEMINI_REALTIME_CAPABILITIES,
     GeminiLanguageModel,
+    GeminiSpeechModel,
     _gemini_realtime_build_audio,
     _gemini_realtime_build_text,
     _gemini_realtime_build_tool_result,
@@ -84,6 +85,10 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+    class VertexSpeechModel(GeminiSpeechModel):
+        def _url(self, action: str) -> str:  # type: ignore[override]
+            return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
+
     class VertexRealtimeModel:
         provider = "vertex"
         capabilities = GEMINI_REALTIME_CAPABILITIES
@@ -145,6 +150,13 @@ def create_vertex(
             model_id=model_id,
             base_url=resolved_base.rstrip("/"),
             access_token=resolved_token,
+            fetch=wrapped_fetch,
+        ),
+        speech_model_factory=lambda model_id: VertexSpeechModel(
+            provider="vertex",
+            model_id=model_id,
+            api_key="unused",
+            base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
         ),
         realtime_model_factory=lambda model_id: VertexRealtimeModel(model_id),
