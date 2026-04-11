@@ -20,15 +20,19 @@ from zhivex_ai import (  # noqa: E402
     ToolExecutionContext,
     ToolRegistry,
     create_agent_session,
+    create_mcp_tool_registry,
     create_sqlite_agent_memory_store,
     create_sqlite_checkpoint_store,
     discover_mcp_tools,
+    mcp_http_server,
+    mcp_stdio_server,
     remote_tool,
     resume_agent,
     run_agent,
     stream_agent,
     tool,
 )
+from zhivex_ai.errors import ValidationError  # noqa: E402
 from zhivex_ai.agent import HTTPRemoteToolRuntime, MCPToolRuntime  # noqa: E402
 from zhivex_ai.messages import create_text_message  # noqa: E402
 from zhivex_ai.types import (  # noqa: E402
@@ -381,6 +385,8 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
             server = MCPServerConfig(transport="stdio", name="demo", command="demo-server")
             tools = await discover_mcp_tools(server, prefix="mcp_")
             self.assertIn("mcp_lookup", tools)
+            self.assertEqual(tools["mcp_lookup"].metadata["mcp_server"], "demo")
+            self.assertEqual(tools["mcp_lookup"].metadata["mcp_tool_name"], "lookup")
             runtime = MCPToolRuntime()
             result = await runtime.execute(
                 tools["mcp_lookup"],
@@ -397,6 +403,172 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
                     sys.modules.pop(name, None)
                 else:
                     sys.modules[name] = module
+
+    async def test_create_mcp_tool_registry_uses_server_name_prefix_and_sanitizes_names(self) -> None:
+        class FakeTool:
+            def __init__(self, name: str, description: str) -> None:
+                self.name = name
+                self.description = description
+                self.inputSchema = {"type": "object"}
+
+        class FakeResult:
+            def __init__(self, tools=None, structured=None) -> None:
+                self.tools = tools or []
+                self.structuredContent = structured
+
+        class FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def initialize(self):
+                return None
+
+            async def list_tools(self):
+                return FakeResult(tools=[FakeTool("lookup-value", "Lookup"), FakeTool("read.file", "Read file")])
+
+            async def call_tool(self, name: str, arguments: dict[str, str]):
+                return FakeResult(structured={"tool": name, "arguments": arguments})
+
+        class FakeTransportContext:
+            async def __aenter__(self):
+                return ("read", "write")
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        class FakeParams:
+            def __init__(self, command: str, args: list[str], env=None) -> None:
+                self.command = command
+                self.args = args
+                self.env = env
+
+        fake_mcp = types.ModuleType("mcp")
+        fake_mcp.ClientSession = FakeClientSession
+        fake_mcp_client = types.ModuleType("mcp.client")
+        fake_stdio = types.ModuleType("mcp.client.stdio")
+        fake_stdio.StdioServerParameters = FakeParams
+        fake_stdio.stdio_client = lambda params: FakeTransportContext()
+        fake_http = types.ModuleType("mcp.client.streamable_http")
+        fake_http.streamable_http_client = lambda url, headers=None, timeout=None: FakeTransportContext()
+
+        previous_modules = {
+            name: sys.modules.get(name)
+            for name in ("mcp", "mcp.client", "mcp.client.stdio", "mcp.client.streamable_http")
+        }
+        sys.modules["mcp"] = fake_mcp
+        sys.modules["mcp.client"] = fake_mcp_client
+        sys.modules["mcp.client.stdio"] = fake_stdio
+        sys.modules["mcp.client.streamable_http"] = fake_http
+        try:
+            registry = await create_mcp_tool_registry(
+                mcp_stdio_server(name="file-system", command="demo-server"),
+            )
+            lookup = registry.get("file_system_lookup_value")
+            reader = registry.get("file_system_read_file")
+            self.assertIsNotNone(lookup)
+            self.assertIsNotNone(reader)
+            result = await registry.execute(
+                lookup,
+                {"item": "apollo"},
+                ToolExecutionContext(tool_name="file_system_lookup_value"),
+            )
+            self.assertEqual(result["tool"], "lookup-value")
+            self.assertEqual(result["arguments"]["item"], "apollo")
+            await registry.aclose()
+        finally:
+            for name, module in previous_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+    async def test_create_mcp_tool_registry_raises_on_name_collisions(self) -> None:
+        class FakeTool:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.description = name
+                self.inputSchema = {"type": "object"}
+
+        class FakeResult:
+            def __init__(self, tools=None) -> None:
+                self.tools = tools or []
+
+        class FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def initialize(self):
+                return None
+
+            async def list_tools(self):
+                return FakeResult(tools=[FakeTool("read-file"), FakeTool("read.file")])
+
+        class FakeTransportContext:
+            async def __aenter__(self):
+                return ("read", "write")
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        class FakeParams:
+            def __init__(self, command: str, args: list[str], env=None) -> None:
+                self.command = command
+                self.args = args
+                self.env = env
+
+        fake_mcp = types.ModuleType("mcp")
+        fake_mcp.ClientSession = FakeClientSession
+        fake_mcp_client = types.ModuleType("mcp.client")
+        fake_stdio = types.ModuleType("mcp.client.stdio")
+        fake_stdio.StdioServerParameters = FakeParams
+        fake_stdio.stdio_client = lambda params: FakeTransportContext()
+        fake_http = types.ModuleType("mcp.client.streamable_http")
+        fake_http.streamable_http_client = lambda url, headers=None, timeout=None: FakeTransportContext()
+
+        previous_modules = {
+            name: sys.modules.get(name)
+            for name in ("mcp", "mcp.client", "mcp.client.stdio", "mcp.client.streamable_http")
+        }
+        sys.modules["mcp"] = fake_mcp
+        sys.modules["mcp.client"] = fake_mcp_client
+        sys.modules["mcp.client.stdio"] = fake_stdio
+        sys.modules["mcp.client.streamable_http"] = fake_http
+        try:
+            with self.assertRaises(ValidationError):
+                await create_mcp_tool_registry(
+                    mcp_stdio_server(name="filesystem", command="demo-server"),
+                )
+        finally:
+            for name, module in previous_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+    def test_mcp_server_helpers_build_expected_configs(self) -> None:
+        stdio = mcp_stdio_server(name="filesystem", command="npx", args=["-y", "server"], env={"ROOT": "."}, timeout_ms=500)
+        http = mcp_http_server(name="search", url="https://example.com/mcp", headers={"authorization": "Bearer token"}, timeout_ms=700)
+        self.assertEqual(stdio.transport, "stdio")
+        self.assertEqual(stdio.command, "npx")
+        self.assertEqual(stdio.args, ["-y", "server"])
+        self.assertEqual(stdio.env["ROOT"], ".")
+        self.assertEqual(stdio.timeout_ms, 500)
+        self.assertEqual(http.transport, "streamable-http")
+        self.assertEqual(http.url, "https://example.com/mcp")
+        self.assertEqual(http.headers["authorization"], "Bearer token")
+        self.assertEqual(http.timeout_ms, 700)
 
 
 class FakeAsyncPGConnection:

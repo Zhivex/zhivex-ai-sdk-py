@@ -474,8 +474,45 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `handoff_to(...)`
 - `remote_tool(...)`
 - `discover_mcp_tools(...)`
+- `mcp_stdio_server(...)`
+- `mcp_http_server(...)`
+- `create_mcp_tool_registry(...)`
 
 This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, and traces without rewriting the lower-level loop yourself.
+
+For new MCP integrations, prefer the higher-level helpers:
+
+```python
+import asyncio
+
+from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, mcp_stdio_server, run_agent
+
+
+async def main() -> None:
+    tools = await create_mcp_tool_registry(
+        mcp_stdio_server(
+            name="fs",
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+        )
+    )
+
+    openai = create_openai()
+    agent = Agent(
+        name="assistant",
+        instructions="Use the filesystem MCP tools when needed.",
+        model=openai("gpt-4o-mini"),
+        tools=tools,
+    )
+
+    result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+`discover_mcp_tools(...)` is still available when you want raw tool definitions or full control over prefixes and registry composition.
 
 ## Examples
 

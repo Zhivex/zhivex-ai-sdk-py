@@ -16,6 +16,8 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (
     AudioInput,
+    MCPServerConfig,
+    MCPToolConfig,
     ToolChoiceName,
     ValidationError,
     create_openai,
@@ -228,6 +230,65 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertIn("strict mode", str(context.exception))
         self.assertIn("additionalProperties", str(context.exception))
         self.assertEqual(requests, [])
+
+    async def test_openai_normalizes_mcp_tool_schema_for_strict_mode(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gpt-4o-mini"),
+            prompt="hello",
+            tools={
+                "fs_read_file": tool(
+                    name="fs_read_file",
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "head": {"type": "integer"},
+                            "tail": {"type": "integer"},
+                        },
+                        "required": ["path"],
+                    },
+                    source="mcp",
+                    mcp_config=MCPToolConfig(
+                        server=MCPServerConfig(transport="stdio", name="fs", command="npx"),
+                        tool_name="read_file",
+                    ),
+                )
+            },
+        )
+        parameters = requests[0]["json"]["tools"][0]["parameters"]
+        self.assertFalse(parameters["additionalProperties"])
+        self.assertEqual(parameters["required"], ["path", "head", "tail"])
+        self.assertEqual(parameters["properties"]["path"]["type"], "string")
+        self.assertEqual(
+            parameters["properties"]["head"]["anyOf"],
+            [{"type": "integer"}, {"type": "null"}],
+        )
+        self.assertEqual(
+            parameters["properties"]["tail"]["anyOf"],
+            [{"type": "integer"}, {"type": "null"}],
+        )
 
     async def test_openai_serializes_failed_tool_results_without_slots_error(self) -> None:
         requests: list[dict[str, Any]] = []

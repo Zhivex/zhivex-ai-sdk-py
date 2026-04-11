@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
+
+
+def _looks_like_json_schema(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    json_schema_keys = {
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "anyOf",
+        "oneOf",
+        "allOf",
+        "$defs",
+        "$ref",
+        "definitions",
+    }
+    return any(key in schema for key in json_schema_keys)
+
+
+class _RawJsonSchemaAdapter:
+    def __init__(self, schema: dict[str, Any]) -> None:
+        self._schema = deepcopy(schema)
+
+    def validate_python(self, value: Any) -> Any:
+        return value
+
+    def json_schema(self) -> dict[str, Any]:
+        return deepcopy(self._schema)
 
 
 class SchemaAdapter:
@@ -20,6 +51,8 @@ class SchemaAdapter:
     def _to_adapter(schema: Any) -> TypeAdapter[Any]:
         if isinstance(schema, TypeAdapter):
             return schema
+        if _looks_like_json_schema(schema):
+            return _RawJsonSchemaAdapter(schema)
         if isinstance(schema, type) and issubclass(schema, BaseModel):
             return TypeAdapter(schema)
         return TypeAdapter(schema)

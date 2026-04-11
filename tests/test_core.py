@@ -25,6 +25,7 @@ from zhivex_ai import (
     stream_text,
     tool,
 )
+from zhivex_ai.schema import create_schema_adapter
 from zhivex_ai.types import (
     GenerateResult,
     ModelGenerateInput,
@@ -183,6 +184,17 @@ class FakeGroundedModel:
 
 
 class CoreTests(IsolatedAsyncioTestCase):
+    def test_schema_adapter_supports_raw_json_schema(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+            "additionalProperties": False,
+        }
+        adapter = create_schema_adapter(schema)
+        self.assertEqual(adapter.json_schema(), schema)
+        self.assertEqual(adapter.validate_python({"city": "Madrid"}), {"city": "Madrid"})
+
     async def test_generate_text_executes_tools(self) -> None:
         model = FakeLanguageModel()
         result = await generate_text(

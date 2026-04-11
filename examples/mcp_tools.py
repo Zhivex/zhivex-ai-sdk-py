@@ -1,27 +1,33 @@
 import asyncio
+from dotenv import load_dotenv
+import os
 
-from zhivex_ai import Agent, MCPServerConfig, create_openai, discover_mcp_tools, run_agent
+load_dotenv()  # Load environment variables from .env file
+
+from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, mcp_stdio_server, run_agent
 
 
 async def main() -> None:
-    server = MCPServerConfig(
-        transport="stdio",
-        name="filesystem",
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+    mcp_tools = await create_mcp_tool_registry(
+        mcp_stdio_server(
+            name="fs",
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+        )
     )
-    mcp_tools = await discover_mcp_tools(server, prefix="fs_")
+    try:
+        openai = create_openai(api_key=os.getenv("OPENAI_API_KEY"))
+        agent = Agent(
+            name="assistant",
+            instructions="Use filesystem tools when needed.",
+            model=openai("gpt-5.4-nano"),
+            tools=mcp_tools,
+        )
 
-    openai = create_openai()
-    agent = Agent(
-        name="assistant",
-        instructions="Use filesystem tools when needed.",
-        model=openai("gpt-4o-mini"),
-        tools=mcp_tools,
-    )
-
-    result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
-    print(result.text)
+        result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
+        print(result.text)
+    finally:
+        await mcp_tools.aclose()
 
 
 if __name__ == "__main__":

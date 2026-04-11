@@ -7,7 +7,7 @@ import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
 from ._http import default_fetch
@@ -469,27 +469,94 @@ class ToolRegistry:
             await runtime.aclose()
 
 
-async def discover_mcp_tools(
+def mcp_stdio_server(
+    *,
+    name: str,
+    command: str,
+    args: Iterable[str] | None = None,
+    env: dict[str, str] | None = None,
+    timeout_ms: int | None = None,
+) -> MCPServerConfig:
+    return MCPServerConfig(
+        transport="stdio",
+        name=name,
+        command=command,
+        args=list(args or []),
+        env=dict(env or {}),
+        timeout_ms=timeout_ms,
+    )
+
+
+def mcp_http_server(
+    *,
+    name: str,
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout_ms: int | None = None,
+) -> MCPServerConfig:
+    return MCPServerConfig(
+        transport="streamable-http",
+        name=name,
+        url=url,
+        headers=dict(headers or {}),
+        timeout_ms=timeout_ms,
+    )
+
+
+def _sanitize_tool_name(value: str) -> str:
+    normalized: list[str] = []
+    last_was_separator = False
+    for char in value:
+        if char.isalnum():
+            normalized.append(char.lower())
+            last_was_separator = False
+            continue
+        if not last_was_separator:
+            normalized.append("_")
+            last_was_separator = True
+    sanitized = "".join(normalized).strip("_")
+    return sanitized or "tool"
+
+
+def _build_mcp_local_tool_name(
+    tool_name: str,
+    *,
+    prefix: str | None,
+    name_transform: Literal["preserve", "snake_case"],
+) -> str:
+    base_name = _sanitize_tool_name(tool_name) if name_transform == "snake_case" else str(tool_name)
+    resolved_prefix = _sanitize_tool_name(prefix) if prefix and name_transform == "snake_case" else prefix
+    if not resolved_prefix:
+        return base_name
+    if resolved_prefix.endswith("_"):
+        return f"{resolved_prefix}{base_name}"
+    return f"{resolved_prefix}_{base_name}"
+
+
+async def _load_mcp_tool_definitions(
     server: MCPServerConfig,
     *,
     prefix: str | None = None,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    name_transform: Literal["preserve", "snake_case"] = "preserve",
 ) -> ToolSet:
     runtime = MCPToolRuntime()
     try:
         include_set = set(include or [])
         exclude_set = set(exclude or [])
         tools: ToolSet = {}
+        seen_remote_names: dict[str, str] = {}
         for item in await runtime.list_tools(server):
             tool_name = getattr(item, "name", None)
             if tool_name is None and isinstance(item, dict):
                 tool_name = item.get("name")
             if not tool_name:
                 continue
-            if include_set and tool_name not in include_set:
+            remote_name = str(tool_name)
+            if include_set and remote_name not in include_set:
                 continue
-            if tool_name in exclude_set:
+            if remote_name in exclude_set:
                 continue
             description = getattr(item, "description", None)
             if description is None and isinstance(item, dict):
@@ -499,18 +566,64 @@ async def discover_mcp_tools(
                 schema = getattr(item, "input_schema", None)
             if schema is None and isinstance(item, dict):
                 schema = item.get("inputSchema") or item.get("input_schema") or {}
-            local_name = f"{prefix}{tool_name}" if prefix else str(tool_name)
+            local_name = _build_mcp_local_tool_name(remote_name, prefix=prefix, name_transform=name_transform)
+            previous_remote_name = seen_remote_names.get(local_name)
+            if previous_remote_name is not None and previous_remote_name != remote_name:
+                raise ValidationError(
+                    f'MCP tool name collision for "{local_name}": "{previous_remote_name}" and "{remote_name}". '
+                    "Use a prefix or preserve the original names to disambiguate them."
+                )
+            seen_remote_names[local_name] = remote_name
             tools[local_name] = ToolDefinition(
                 name=local_name,
                 description=description,
                 schema=schema or {},
                 execute=None,
                 source="mcp",
-                mcp_config=MCPToolConfig(server=server, tool_name=str(tool_name)),
+                metadata={"mcp_server": server.name, "mcp_tool_name": remote_name},
+                mcp_config=MCPToolConfig(server=server, tool_name=remote_name),
             )
         return tools
     finally:
         await runtime.aclose()
+
+
+async def discover_mcp_tools(
+    server: MCPServerConfig,
+    *,
+    prefix: str | None = None,
+    include: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+) -> ToolSet:
+    return await _load_mcp_tool_definitions(
+        server,
+        prefix=prefix,
+        include=include,
+        exclude=exclude,
+        name_transform="preserve",
+    )
+
+
+async def create_mcp_tool_registry(
+    server: MCPServerConfig,
+    *,
+    prefix: str | None = None,
+    include: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+    name_transform: Literal["preserve", "snake_case"] = "snake_case",
+) -> ToolRegistry:
+    resolved_prefix = server.name if prefix is None and name_transform == "snake_case" else prefix
+    tools = await _load_mcp_tool_definitions(
+        server,
+        prefix=resolved_prefix,
+        include=include,
+        exclude=exclude,
+        name_transform=name_transform,
+    )
+    return ToolRegistry(
+        tools,
+        runtimes={"mcp": MCPToolRuntime()},
+    )
 
 
 @dataclass(slots=True)

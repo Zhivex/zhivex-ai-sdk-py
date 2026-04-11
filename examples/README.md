@@ -40,6 +40,7 @@ Useful starting points:
 - OpenAI and Azure OpenAI currently expose the richest Python feature surface for audio and grounded text.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.
+- `mcp_tools.py` shows the recommended high-level MCP flow with `mcp_stdio_server(...)` plus `create_mcp_tool_registry(...)`.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - Structured output examples use `pydantic`.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.

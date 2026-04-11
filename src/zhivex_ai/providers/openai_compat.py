@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import os
 from collections.abc import AsyncIterable
@@ -167,6 +168,8 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     mapped = []
     for tool in tools.values():
         parameters = create_schema_adapter(tool.schema).json_schema()
+        if getattr(tool, "source", None) == "mcp":
+            parameters = _normalize_openai_strict_tool_schema(parameters)
         _validate_openai_strict_tool_schema(tool.name, parameters)
         mapped.append(
             {
@@ -233,6 +236,61 @@ def _is_object_schema(schema: dict[str, Any]) -> bool:
     if kind == "object":
         return True
     return isinstance(kind, list) and "object" in kind
+
+
+def _schema_allows_null(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    kind = schema.get("type")
+    if kind == "null":
+        return True
+    if isinstance(kind, list) and "null" in kind:
+        return True
+    for key in ("anyOf", "oneOf"):
+        variants = schema.get(key)
+        if isinstance(variants, list):
+            for item in variants:
+                if isinstance(item, dict) and item.get("type") == "null":
+                    return True
+    return False
+
+
+def _make_schema_nullable(schema: dict[str, Any]) -> dict[str, Any]:
+    if _schema_allows_null(schema):
+        return schema
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _normalize_openai_strict_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(schema)
+
+    def visit(node: Any) -> Any:
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        updated = {key: visit(value) for key, value in node.items()}
+
+        properties = updated.get("properties")
+        if isinstance(properties, dict):
+            required = updated.get("required")
+            required_names = set(required) if isinstance(required, list) else set()
+            normalized_properties: dict[str, Any] = {}
+            for name, property_schema in properties.items():
+                if name not in required_names and isinstance(property_schema, dict):
+                    normalized_properties[name] = _make_schema_nullable(property_schema)
+                else:
+                    normalized_properties[name] = property_schema
+            updated["properties"] = normalized_properties
+            updated["required"] = list(normalized_properties.keys())
+
+        if _is_object_schema(updated):
+            updated["additionalProperties"] = False
+
+        return updated
+
+    return visit(normalized)
 
 
 def _validate_openai_strict_tool_schema(tool_name: str, schema: dict[str, Any]) -> None:
