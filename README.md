@@ -33,6 +33,7 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 - Structured output with `generate_object()` and `stream_object()`
 - Grounded text for providers with web search support
 - Audio transcription and speech generation where the provider supports it
+- Experimental realtime/live voice sessions plus `stream_live_agent()` for voice-first agents
 - Embeddings support where the provider supports it
 - Provider factories for hosted and local models
 - Gateway routing with fallback support
@@ -42,18 +43,18 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 
 ## Supported Providers
 
-| Provider | Text | Streaming | Tools | Structured Output | Embeddings | Audio In | Audio Out | Grounded Text |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | Yes | Yes | Prompted fallback | No | No | No | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Bedrock | Yes | No | No | No | No | No | No | No |
-| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Qwen | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| Provider | Text | Streaming | Tools | Structured Output | Embeddings | Audio In | Audio Out | Grounded Text | Realtime |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
+| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
+| Anthropic | Yes | Yes | Yes | Prompted fallback | No | No | No | No | No |
+| Gemini | Yes | Yes | Yes | Yes | Yes | No | No | No | Experimental |
+| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | No | No | Experimental |
+| Bedrock | Yes | No | No | No | No | No | No | No | Experimental |
+| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
+| Qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
+| Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
+| Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
 
 ### Tool Calling Notes
 
@@ -415,6 +416,7 @@ Adapters may also expose optional factories such as:
 - `provider.transcription_model("gpt-4o-mini-transcribe")`
 - `provider.speech_model("gpt-4o-mini-tts")`
 - `provider.grounded_language_model("gpt-4o-search-preview")`
+- `provider.realtime_model("gpt-realtime")`
 
 ## Why not use provider SDKs directly?
 
@@ -542,6 +544,11 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - [grounded_text.py](./examples/grounded_text.py)
 - [transcribe_audio.py](./examples/transcribe_audio.py)
 - [generate_speech.py](./examples/generate_speech.py)
+- [openai_realtime.py](./examples/openai_realtime.py)
+- [azure_realtime.py](./examples/azure_realtime.py)
+- [gemini_realtime.py](./examples/gemini_realtime.py)
+- [bedrock_realtime.py](./examples/bedrock_realtime.py)
+- [live_agent_realtime.py](./examples/live_agent_realtime.py)
 - [ui_messages.py](./examples/ui_messages.py)
 - [http_responses.py](./examples/http_responses.py)
 - [middleware.py](./examples/middleware.py)

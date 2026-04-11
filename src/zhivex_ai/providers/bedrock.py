@@ -7,8 +7,30 @@ from typing import Any, Protocol
 
 from ..errors import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..messages import normalize_finish_reason
+from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, encode_audio_frame, tool_result_payload, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import GenerateResult, LanguageModel, ModelCapabilities, ModelGenerateInput, ModelMessage, TextPart, TokenUsage
+from ..types import (
+    AudioFrame,
+    GenerateResult,
+    LanguageModel,
+    ModelCapabilities,
+    ModelGenerateInput,
+    ModelMessage,
+    RealtimeAudioOutputEvent,
+    RealtimeConnectOptions,
+    RealtimeModel,
+    RealtimeSession,
+    RealtimeSessionConfig,
+    RealtimeSessionEndedEvent,
+    RealtimeTextDeltaEvent,
+    RealtimeTokenResult,
+    RealtimeToolCallEvent,
+    RealtimeTranscriptEvent,
+    TextPart,
+    TokenUsage,
+    ToolCall,
+    ToolExecutionResult,
+)
 from .base import ProviderAdapter
 from ._payload import drop_none
 
@@ -28,9 +50,78 @@ BEDROCK_CAPABILITIES = ModelCapabilities(
     web_search=False,
 )
 
+BEDROCK_REALTIME_CAPABILITIES = ModelCapabilities(
+    streaming=False,
+    tools=False,
+    structured_output=False,
+    json_mode=False,
+    tool_choice=False,
+    parallel_tool_calls=False,
+    vision=False,
+    files=False,
+    audio_input=True,
+    audio_output=True,
+    embeddings=False,
+    reasoning=False,
+    web_search=False,
+    realtime=True,
+    realtime_audio_input=True,
+    realtime_audio_output=True,
+    realtime_tools=True,
+    realtime_browser_tokens=False,
+)
+
 
 class BedrockClient(Protocol):
     async def converse(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
+def _bedrock_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [{"type": "audio_input", "audio": encode_audio_frame(frame), "media_type": frame.media_type, "is_final": frame.is_final}]
+
+
+def _bedrock_realtime_build_text(text: str, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [{"type": "text_input", "text": text}]
+
+
+def _bedrock_realtime_build_tool_result(result: ToolExecutionResult, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [{"type": "tool_result", "tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "output": tool_result_payload(result)}]
+
+
+def _bedrock_realtime_build_update(config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [{"type": "session.start", "config": drop_none({"voice": config.voice, "instructions": config.instructions, **(config.provider_options or {})})}]
+
+
+def _bedrock_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
+    event_type = str(payload.get("type") or "")
+    if event_type == "text_output":
+        return [RealtimeTextDeltaEvent(text_delta=str(payload.get("text") or ""), provider_metadata=payload)]
+    if event_type == "audio_output":
+        chunk = payload.get("audio")
+        audio = base64.b64decode(chunk) if isinstance(chunk, str) and chunk else b""
+        return [RealtimeAudioOutputEvent(audio=audio, media_type=str(payload.get("media_type") or "audio/pcm"), provider_metadata=payload)]
+    if event_type == "transcript":
+        return [
+            RealtimeTranscriptEvent(
+                text=str(payload.get("text") or ""),
+                role="user" if payload.get("role") == "user" else "assistant",
+                is_final=bool(payload.get("is_final")),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type == "tool_call":
+        return [
+            RealtimeToolCallEvent(
+                tool_call=ToolCall(
+                    id=str(payload.get("id") or ""),
+                    name=str(payload.get("name") or ""),
+                    input=payload.get("input") or {},
+                )
+            )
+        ]
+    if event_type in {"session.ended", "turn.end"}:
+        return [RealtimeSessionEndedEvent(reason=event_type, provider_metadata=payload)]
+    return []
 
 
 def _parse_data_url(value: str) -> tuple[str, bytes]:
@@ -110,7 +201,56 @@ class BedrockLanguageModel(LanguageModel):
         )
 
 
-def create_bedrock(*, client: BedrockClient | None = None, region: str | None = None):
+@dataclass(slots=True)
+class BedrockRealtimeModel(RealtimeModel):
+    provider: str
+    model_id: str
+    connection_factory: RealtimeConnectionFactory | None = None
+    capabilities: ModelCapabilities = field(default_factory=lambda: BEDROCK_REALTIME_CAPABILITIES)
+
+    async def connect(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeSession:
+        if self.connection_factory is None:
+            raise ConfigurationError("No Bedrock realtime transport configured. Inject a realtime_connection_factory.")
+        resolved_config = config or RealtimeSessionConfig()
+        url = str((resolved_config.provider_options or {}).get("realtime_url") or "wss://bedrock-runtime.amazonaws.com/realtime")
+        headers = dict((resolved_config.provider_options or {}).get("headers") or {})
+        connection = await self.connection_factory(url, headers, options)
+        session = CallbackRealtimeSession(
+            provider=self.provider,
+            model_id=self.model_id,
+            capabilities=self.capabilities,
+            config=resolved_config,
+            connection=connection,
+            callbacks=RealtimeSessionCallbacks(
+                parse_event=_bedrock_realtime_parse_event,
+                build_audio_payloads=_bedrock_realtime_build_audio,
+                build_text_payloads=_bedrock_realtime_build_text,
+                build_tool_result_payloads=_bedrock_realtime_build_tool_result,
+                build_update_payloads=_bedrock_realtime_build_update,
+                build_initial_payloads=_bedrock_realtime_build_update,
+            ),
+        )
+        await session.initialize()
+        return session
+
+    async def create_browser_token(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeTokenResult:
+        return await unsupported_browser_token(config=config, options=options)
+
+
+def create_bedrock(
+    *,
+    client: BedrockClient | None = None,
+    region: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
+):
     resolved_client = client
     if resolved_client is None:
         resolved_region = region or os.getenv("AWS_REGION")
@@ -127,4 +267,9 @@ def create_bedrock(*, client: BedrockClient | None = None, region: str | None = 
     return ProviderAdapter(
         name="bedrock",
         language_model_factory=lambda model_id: BedrockLanguageModel(provider="bedrock", model_id=model_id, client=resolved_client),
+        realtime_model_factory=lambda model_id: BedrockRealtimeModel(
+            provider="bedrock",
+            model_id=model_id,
+            connection_factory=realtime_connection_factory,
+        ),
     )

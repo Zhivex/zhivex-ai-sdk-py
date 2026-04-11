@@ -29,6 +29,16 @@ class AudioInput:
 
 
 @dataclass(slots=True)
+class AudioFrame:
+    data: bytes | bytearray | memoryview | str
+    media_type: str
+    sample_rate_hz: int | None = None
+    channels: int | None = None
+    timestamp_ms: int | None = None
+    is_final: bool = False
+
+
+@dataclass(slots=True)
 class ToolCall:
     id: str
     name: str
@@ -167,6 +177,11 @@ class ModelCapabilities:
     embeddings: bool
     reasoning: bool
     web_search: bool
+    realtime: bool = False
+    realtime_audio_input: bool = False
+    realtime_audio_output: bool = False
+    realtime_tools: bool = False
+    realtime_browser_tokens: bool = False
 
 
 @dataclass(slots=True)
@@ -174,6 +189,13 @@ class RetryOptions:
     timeout_ms: int | None = None
     max_retries: int | None = None
     retry_backoff_ms: int | None = None
+
+
+@dataclass(slots=True)
+class RealtimeConnectOptions(RetryOptions):
+    metadata: dict[str, Any] = field(default_factory=dict)
+    browser_client: bool = False
+    subprotocols: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -359,6 +381,30 @@ ProviderOptions = dict[str, Any]
 
 
 @dataclass(slots=True)
+class RealtimeSessionConfig:
+    instructions: str | None = None
+    voice: str | None = None
+    tools: dict[str, "ToolDefinition"] | None = None
+    tool_choice: ToolChoice | None = None
+    input_audio_media_type: str | None = None
+    output_audio_media_type: str | None = None
+    input_sample_rate_hz: int | None = None
+    output_sample_rate_hz: int | None = None
+    channels: int | None = None
+    turn_detection: dict[str, Any] | None = None
+    provider_options: ProviderOptions | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    auto_response: bool = True
+
+
+@dataclass(slots=True)
+class RealtimeTokenResult:
+    value: str
+    expires_at_ms: int | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
 class ModelGenerateInput(RetryOptions):
     messages: list[ModelMessage] = field(default_factory=list)
     tools: dict[str, "ToolDefinition[Any]"] | None = None
@@ -434,6 +480,133 @@ class SpeechModel(Protocol):
         provider_options: ProviderOptions | None = None,
         options: RetryOptions | None = None,
     ) -> SpeechOutput: ...
+
+
+@dataclass(slots=True)
+class RealtimeSessionStartedEvent:
+    type: Literal["realtime-start"] = "realtime-start"
+    session_id: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeTextDeltaEvent:
+    type: Literal["realtime-text-delta"] = "realtime-text-delta"
+    text_delta: str = ""
+    item_id: str | None = None
+    response_id: str | None = None
+    role: Literal["assistant"] = "assistant"
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeAudioOutputEvent:
+    type: Literal["realtime-audio-output"] = "realtime-audio-output"
+    audio: bytes = b""
+    media_type: str = "audio/pcm"
+    sample_rate_hz: int | None = None
+    channels: int | None = None
+    item_id: str | None = None
+    response_id: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeTranscriptEvent:
+    type: Literal["realtime-transcript"] = "realtime-transcript"
+    text: str = ""
+    role: Literal["user", "assistant"] = "assistant"
+    is_final: bool = False
+    item_id: str | None = None
+    response_id: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeToolCallEvent:
+    type: Literal["realtime-tool-call"] = "realtime-tool-call"
+    tool_call: ToolCall = field(default_factory=lambda: ToolCall(id="", name="", input={}))
+
+
+@dataclass(slots=True)
+class RealtimeToolResultEvent:
+    type: Literal["realtime-tool-result"] = "realtime-tool-result"
+    tool_result: ToolExecutionResult = field(
+        default_factory=lambda: ToolExecutionResult(tool_call_id="", tool_name="", is_error=False)
+    )
+
+
+@dataclass(slots=True)
+class RealtimeSessionEndedEvent:
+    type: Literal["realtime-end"] = "realtime-end"
+    reason: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeErrorEvent:
+    type: Literal["realtime-error"] = "realtime-error"
+    error: Exception | None = None
+    message: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+RealtimeEvent: TypeAlias = (
+    RealtimeSessionStartedEvent
+    | RealtimeTextDeltaEvent
+    | RealtimeAudioOutputEvent
+    | RealtimeTranscriptEvent
+    | RealtimeToolCallEvent
+    | RealtimeToolResultEvent
+    | RealtimeSessionEndedEvent
+    | RealtimeErrorEvent
+)
+
+
+class RealtimeSession(Protocol):
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+    config: RealtimeSessionConfig
+
+    async def send_audio(self, frame: AudioFrame) -> None: ...
+
+    async def send_text(self, text: str) -> None: ...
+
+    async def send_tool_result(self, result: ToolExecutionResult) -> None: ...
+
+    async def update(
+        self,
+        *,
+        instructions: str | None = None,
+        voice: str | None = None,
+        tools: dict[str, "ToolDefinition"] | None = None,
+        tool_choice: ToolChoice | None = None,
+        turn_detection: dict[str, Any] | None = None,
+        provider_options: ProviderOptions | None = None,
+    ) -> None: ...
+
+    def event_stream(self) -> AsyncIterable[RealtimeEvent]: ...
+
+    async def aclose(self) -> None: ...
+
+
+class RealtimeModel(Protocol):
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+
+    async def connect(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeSession: ...
+
+    async def create_browser_token(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeTokenResult: ...
 
 
 TSchema = TypeVar("TSchema")

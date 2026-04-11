@@ -1,19 +1,31 @@
 from __future__ import annotations
 
+import base64
 import json
 from copy import deepcopy
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlencode, urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError
 from ..messages import normalize_finish_reason
+from ..realtime import (
+    CallbackRealtimeSession,
+    RealtimeConnectionFactory,
+    RealtimeSessionCallbacks,
+    encode_audio_frame,
+    open_websocket_connection,
+    tool_result_payload,
+    unsupported_browser_token,
+)
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    AudioFrame,
     EmbedResult,
     EmbeddingModel,
     GenerateResult,
@@ -25,6 +37,16 @@ from ..types import (
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    RealtimeAudioOutputEvent,
+    RealtimeConnectOptions,
+    RealtimeModel,
+    RealtimeSession,
+    RealtimeSessionConfig,
+    RealtimeSessionEndedEvent,
+    RealtimeTextDeltaEvent,
+    RealtimeTokenResult,
+    RealtimeToolCallEvent,
+    RealtimeTranscriptEvent,
     StreamEvent,
     StreamFinishEvent,
     StreamTextDeltaEvent,
@@ -34,6 +56,7 @@ from ..types import (
     ToolCall,
     ToolChoiceName,
     ToolCallPart,
+    ToolExecutionResult,
 )
 from .base import ProviderAdapter
 from ._payload import drop_none
@@ -68,6 +91,27 @@ GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=True,
+)
+
+GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
+    streaming=False,
+    tools=False,
+    structured_output=False,
+    json_mode=False,
+    tool_choice=False,
+    parallel_tool_calls=False,
+    vision=True,
+    files=False,
+    audio_input=True,
+    audio_output=True,
+    embeddings=False,
+    reasoning=True,
+    web_search=False,
+    realtime=True,
+    realtime_audio_input=True,
+    realtime_audio_output=True,
+    realtime_tools=True,
+    realtime_browser_tokens=False,
 )
 
 GOOGLE_SEARCH_PROVIDER_OPTION = "google_search"
@@ -257,6 +301,161 @@ def _generation_config(model_id: str, input: ModelGenerateInput) -> dict[str, An
         config["responseMimeType"] = "application/json"
         config["responseJsonSchema"] = create_schema_adapter(input.structured_output.schema).json_schema()
     return drop_none(config)
+
+
+def _gemini_realtime_url(base_url: str, api_key: str, provider_options: dict[str, Any] | None = None) -> str:
+    override = (provider_options or {}).get("realtime_url")
+    if isinstance(override, str) and override:
+        return override
+    parsed = urlparse(base_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    query = dict((provider_options or {}).get("realtime_query") or {})
+    query.setdefault("key", api_key)
+    return urlunparse((scheme, parsed.netloc, "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", "", urlencode(query), ""))
+
+
+def _gemini_realtime_headers(provider_options: dict[str, Any] | None = None) -> dict[str, str]:
+    return dict((provider_options or {}).get("headers") or {})
+
+
+def _gemini_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]] | None:
+    return _map_tools(config.tools, config.provider_options)
+
+
+def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": f"models/{model_id}",
+        "generation_config": drop_none({
+            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": config.voice}}} if config.voice else None,
+            "response_modalities": ["AUDIO"] if config.output_audio_media_type else ["TEXT"],
+        }),
+        "tools": _gemini_realtime_tools(config),
+        "system_instruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
+        **(_provider_options_without_google_search(config.provider_options) or {}),
+    }
+    return {"setup": drop_none(payload)}
+
+
+def _gemini_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [
+        {
+            "realtime_input": {
+                "media_chunks": [
+                    {
+                        "mime_type": frame.media_type,
+                        "data": encode_audio_frame(frame),
+                    }
+                ]
+            }
+        }
+    ]
+
+
+def _gemini_realtime_build_text(text: str, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [
+        {
+            "client_content": {
+                "turns": [{"role": "user", "parts": [{"text": text}]}],
+                "turn_complete": True,
+            }
+        }
+    ]
+
+
+def _gemini_realtime_build_tool_result(result: ToolExecutionResult, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [
+        {
+            "tool_response": {
+                "function_responses": [
+                    {
+                        "id": result.tool_call_id,
+                        "name": result.tool_name,
+                        "response": tool_result_payload(result),
+                    }
+                ]
+            }
+        }
+    ]
+
+
+def _gemini_realtime_build_update(config: RealtimeSessionConfig, model_id: str) -> list[dict[str, Any]]:
+    return [_gemini_realtime_setup(config, model_id)]
+
+
+def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
+    if "setupComplete" in payload:
+        return []
+    if isinstance(payload.get("server_content"), dict):
+        content = payload["server_content"]
+        model_turn = dict(content.get("model_turn") or {})
+        parts = list(model_turn.get("parts") or [])
+        events: list[Any] = []
+        for part in parts:
+            if isinstance(part, dict) and part.get("text"):
+                events.append(
+                    RealtimeTextDeltaEvent(
+                        text_delta=str(part.get("text") or ""),
+                        provider_metadata=payload,
+                    )
+                )
+            inline = part.get("inlineData") or part.get("inline_data")
+            if isinstance(inline, dict) and inline.get("data"):
+                audio = base64.b64decode(str(inline.get("data")))
+                events.append(
+                    RealtimeAudioOutputEvent(
+                        audio=audio,
+                        media_type=str(inline.get("mimeType") or inline.get("mime_type") or "audio/pcm"),
+                        provider_metadata=payload,
+                    )
+                )
+            if isinstance(part, dict) and part.get("functionCall"):
+                call = dict(part.get("functionCall") or {})
+                events.append(
+                    RealtimeToolCallEvent(
+                        tool_call=ToolCall(
+                            id=str(call.get("id") or f'{call.get("name", "")}-0'),
+                            name=str(call.get("name") or ""),
+                            input=call.get("args") or {},
+                        )
+                    )
+                )
+        input_transcription = content.get("input_transcription")
+        if isinstance(input_transcription, dict) and input_transcription.get("text"):
+            events.append(
+                RealtimeTranscriptEvent(
+                    text=str(input_transcription.get("text") or ""),
+                    role="user",
+                    is_final=bool(content.get("turn_complete")),
+                    provider_metadata=payload,
+                )
+            )
+        output_transcription = content.get("output_transcription")
+        if isinstance(output_transcription, dict) and output_transcription.get("text"):
+            events.append(
+                RealtimeTranscriptEvent(
+                    text=str(output_transcription.get("text") or ""),
+                    role="assistant",
+                    is_final=bool(content.get("turn_complete")),
+                    provider_metadata=payload,
+                )
+            )
+        if content.get("turn_complete"):
+            events.append(RealtimeSessionEndedEvent(reason="turn-complete", provider_metadata=payload))
+        return events
+    if isinstance(payload.get("tool_call"), dict):
+        call = dict(payload.get("tool_call") or {})
+        return [
+            RealtimeToolCallEvent(
+                tool_call=ToolCall(
+                    id=str(call.get("id") or f'{call.get("name", "")}-0'),
+                    name=str(call.get("name") or ""),
+                    input=call.get("args") or {},
+                )
+            )
+        ]
+    if isinstance(payload.get("error"), dict):
+        return [RealtimeSessionEndedEvent(reason="error", provider_metadata=payload)]
+    return []
 
 
 def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
@@ -505,11 +704,60 @@ class GeminiEmbeddingModel(EmbeddingModel):
         return EmbedResult(embeddings=embeddings)
 
 
+@dataclass(slots=True)
+class GeminiRealtimeModel(RealtimeModel):
+    provider: str
+    model_id: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    realtime_url: str | None = None
+    connection_factory: RealtimeConnectionFactory | None = None
+    capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_REALTIME_CAPABILITIES)
+
+    async def connect(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeSession:
+        resolved_config = config or RealtimeSessionConfig()
+        url = self.realtime_url or _gemini_realtime_url(self.base_url, self.api_key, resolved_config.provider_options)
+        headers = _gemini_realtime_headers(resolved_config.provider_options)
+        factory = self.connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
+        connection = await factory(url, headers, options)
+        session = CallbackRealtimeSession(
+            provider=self.provider,
+            model_id=self.model_id,
+            capabilities=self.capabilities,
+            config=resolved_config,
+            connection=connection,
+            callbacks=RealtimeSessionCallbacks(
+                parse_event=_gemini_realtime_parse_event,
+                build_audio_payloads=_gemini_realtime_build_audio,
+                build_text_payloads=_gemini_realtime_build_text,
+                build_tool_result_payloads=_gemini_realtime_build_tool_result,
+                build_update_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+                build_initial_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+            ),
+        )
+        await session.initialize()
+        return session
+
+    async def create_browser_token(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeTokenResult:
+        return await unsupported_browser_token(config=config, options=options)
+
+
 def create_gemini(
     *,
     api_key: str | None = None,
     base_url: str = "https://generativelanguage.googleapis.com/v1beta",
     fetch: Fetcher | None = None,
+    realtime_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
     resolved_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
     if not resolved_key:
@@ -526,5 +774,14 @@ def create_gemini(
         ),
         grounded_language_model_factory=lambda model_id: GeminiGroundedLanguageModel(
             provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
+        ),
+        realtime_model_factory=lambda model_id: GeminiRealtimeModel(
+            provider="gemini",
+            model_id=model_id,
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+            realtime_url=realtime_url,
+            connection_factory=realtime_connection_factory,
         ),
     )

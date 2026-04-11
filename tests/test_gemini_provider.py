@@ -32,6 +32,14 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
+    async def test_gemini_does_not_expose_speech_models(self) -> None:
+        provider = create_gemini(api_key="test")
+
+        with self.assertRaises(AttributeError) as context:
+            provider.speech_model("gemini-2.5-flash-preview-tts")
+
+        self.assertEqual(str(context.exception), 'Provider "gemini" does not expose speech models.')
+
     async def test_gemini_maps_tool_choice_and_usage(self) -> None:
         requests: list[dict[str, Any]] = []
 

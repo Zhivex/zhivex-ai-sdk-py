@@ -28,6 +28,7 @@ from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, tool_result_part
 from .types import (
+    AudioFrame,
     FinishReason,
     GenerateTextOutput,
     GenerateTextStep,
@@ -38,6 +39,15 @@ from .types import (
     ModelMessage,
     ReasoningConfig,
     RemoteHTTPToolConfig,
+    RealtimeConnectOptions,
+    RealtimeEvent,
+    RealtimeModel,
+    RealtimeSessionConfig,
+    RealtimeSessionEndedEvent,
+    RealtimeTextDeltaEvent,
+    RealtimeToolCallEvent,
+    RealtimeToolResultEvent,
+    RealtimeTranscriptEvent,
     StreamErrorEvent,
     StreamFinishEvent,
     StreamTextDeltaEvent,
@@ -629,7 +639,7 @@ async def create_mcp_tool_registry(
 @dataclass(slots=True)
 class Agent:
     name: str
-    model: LanguageModel
+    model: LanguageModel | RealtimeModel
     instructions: str | None = None
     tools: ToolSet | ToolRegistry = field(default_factory=dict)
     subagents: dict[str, "Agent"] = field(default_factory=dict)
@@ -2148,6 +2158,93 @@ class AgentStreamResult:
         return await self._runner
 
 
+AgentLiveEvent: TypeAlias = AgentEvent | RealtimeEvent
+
+
+@dataclass
+class _LiveBroadcast:
+    history: list[AgentLiveEvent]
+    done: bool = False
+    subscribers: list[asyncio.Queue[AgentLiveEvent | None]] | None = None
+
+    def __post_init__(self) -> None:
+        self.subscribers = []
+
+    async def publish(self, event: AgentLiveEvent) -> None:
+        self.history.append(event)
+        for queue in list(self.subscribers or []):
+            await queue.put(event)
+
+    async def close(self) -> None:
+        self.done = True
+        for queue in list(self.subscribers or []):
+            await queue.put(None)
+
+    def stream(self) -> AsyncIterable[AgentLiveEvent]:
+        async def generator() -> AsyncIterable[AgentLiveEvent]:
+            queue: asyncio.Queue[AgentLiveEvent | None] = asyncio.Queue()
+            cursor = 0
+            self.subscribers = self.subscribers or []
+            self.subscribers.append(queue)
+            try:
+                while True:
+                    while cursor < len(self.history):
+                        event = self.history[cursor]
+                        cursor += 1
+                        yield event
+                    if self.done:
+                        return
+                    item = await queue.get()
+                    if item is None:
+                        return
+            finally:
+                if self.subscribers and queue in self.subscribers:
+                    self.subscribers.remove(queue)
+
+        return generator()
+
+
+class LiveAgentStreamResult:
+    def __init__(self, runner: asyncio.Task[AgentRunResult], broadcast: _LiveBroadcast, live_session: asyncio.Future[Any]) -> None:
+        self._runner = runner
+        self._broadcast = broadcast
+        self._live_session = live_session
+
+    def event_stream(self) -> AsyncIterable[AgentLiveEvent]:
+        return self._broadcast.stream()
+
+    async def send_audio(self, frame: AudioFrame) -> None:
+        await (await self._live_session).send_audio(frame)
+
+    async def send_text(self, text: str) -> None:
+        await (await self._live_session).send_text(text)
+
+    async def update(
+        self,
+        *,
+        instructions: str | None = None,
+        voice: str | None = None,
+        tools: ToolSet | None = None,
+        tool_choice: str | ToolChoiceName | None = None,
+        turn_detection: dict[str, Any] | None = None,
+        provider_options: dict[str, Any] | None = None,
+    ) -> None:
+        await (await self._live_session).update(
+            instructions=instructions,
+            voice=voice,
+            tools=tools,
+            tool_choice=tool_choice,
+            turn_detection=turn_detection,
+            provider_options=provider_options,
+        )
+
+    async def aclose(self) -> None:
+        await (await self._live_session).aclose()
+
+    async def collect(self) -> AgentRunResult:
+        return await self._runner
+
+
 def run_agent(
     *,
     agent: Agent,
@@ -2306,3 +2403,230 @@ def stream_agent(
             await broadcast.close()
 
     return AgentStreamResult(asyncio.create_task(runner()), broadcast)
+
+
+def stream_live_agent(
+    *,
+    agent: Agent,
+    session: AgentSession | None = None,
+    tools: ToolSet | ToolRegistry | None = None,
+    tool_choice: str | ToolChoiceName | None = None,
+    connect_options: RealtimeConnectOptions | None = None,
+    realtime_config: RealtimeSessionConfig | None = None,
+    provider_options: dict[str, Any] | None = None,
+    runtime: AgentRuntime | None = None,
+    registry: AgentRegistry | None = None,
+    observer: AgentObserver | None = None,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+) -> LiveAgentStreamResult:
+    if not hasattr(agent.model, "connect"):
+        raise ValidationError("stream_live_agent() requires an agent.model that supports realtime sessions.")
+
+    resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
+    broadcast = _LiveBroadcast(history=[])
+    live_session_future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+    async def emit_agent(event: AgentEvent) -> None:
+        await broadcast.publish(event)
+
+    async def emit_live(event: RealtimeEvent) -> None:
+        await broadcast.publish(event)
+
+    async def runner() -> AgentRunResult:
+        resolved_session = session or create_agent_session()
+        if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
+            state = await agent.memory.load(resolved_session.id)
+            resolved_session.messages = list(state.messages)
+            resolved_session.summary = state.summary
+            resolved_session.metadata = {**state.metadata, **resolved_session.metadata}
+
+        run_id = _new_id("run")
+        trace = AgentTrace(
+            run_id=run_id,
+            session_id=resolved_session.id,
+            agent_name=agent.name,
+            started_at_ms=_now_ms(),
+            orchestration_path=[agent.name],
+        )
+        await emit_agent(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
+        registry_instance = _resolve_tool_registry(agent, tools)
+        context = AgentContext(
+            run_id=run_id,
+            session_id=resolved_session.id,
+            agent_name=agent.name,
+            memory_summary=resolved_session.summary,
+            metadata=dict(agent.metadata),
+            handoff_path=list(trace.orchestration_path),
+        )
+        wrapped_tools = resolved_runtime._wrap_agent_tools(
+            agent=agent,
+            registry=registry_instance,
+            run_id=run_id,
+            session_id=resolved_session.id,
+            trace=trace,
+            started_at_ms=trace.started_at_ms,
+            context=context,
+            emit=emit_agent,
+        )
+        live_config = realtime_config or RealtimeSessionConfig(
+            instructions=agent.instructions,
+            tools=wrapped_tools or None,
+            tool_choice=tool_choice,
+            provider_options=provider_options,
+        )
+        if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
+            live_config = replace(realtime_config, provider_options=provider_options)
+
+        transcript = list(resolved_session.messages)
+        tool_results: list[ToolExecutionResult] = []
+        assistant_buffer: list[str] = []
+        last_assistant_text = ""
+        live_model = agent.model
+        live_session = await live_model.connect(config=live_config, options=connect_options)  # type: ignore[attr-defined]
+        live_session_future.set_result(live_session)
+        resolved_session.metadata = {
+            **resolved_session.metadata,
+            "realtime": {
+                "provider": getattr(agent.model, "provider", ""),
+                "model_id": getattr(agent.model, "model_id", ""),
+            },
+        }
+        try:
+            if messages is not None:
+                for message in messages:
+                    text = _text_from_message(message)
+                    if message.role == "user" and text:
+                        await live_session.send_text(text)
+            elif prompt is not None:
+                await live_session.send_text(prompt)
+
+            async for event in live_session.event_stream():
+                await emit_live(event)
+                if isinstance(event, RealtimeTextDeltaEvent):
+                    assistant_buffer.append(event.text_delta)
+                    await emit_agent(AgentTextDeltaEvent(text_delta=event.text_delta))
+                    continue
+                if isinstance(event, RealtimeTranscriptEvent):
+                    if event.role == "user" and event.is_final and event.text:
+                        transcript.append(create_text_message("user", event.text))
+                    if event.role == "assistant" and event.is_final:
+                        text = event.text or "".join(assistant_buffer)
+                        if text:
+                            last_assistant_text = text
+                            transcript.append(create_text_message("assistant", text))
+                            assistant_buffer.clear()
+                    continue
+                if isinstance(event, RealtimeToolCallEvent):
+                    await emit_agent(AgentToolCallEvent(tool_call=event.tool_call))
+                    definition = wrapped_tools.get(event.tool_call.name) if wrapped_tools else None
+                    if definition is None or definition.execute is None:
+                        tool_result = ToolExecutionResult(
+                            tool_call_id=event.tool_call.id,
+                            tool_name=event.tool_call.name,
+                            error=ToolExecutionError(message=f'Unknown realtime tool "{event.tool_call.name}".'),
+                            is_error=True,
+                        )
+                    else:
+                        call_context = ToolExecutionContext(
+                            tool_name=event.tool_call.name,
+                            tool_call_id=event.tool_call.id,
+                            run_id=run_id,
+                            session_id=resolved_session.id,
+                            agent_name=agent.name,
+                            memory_summary=resolved_session.summary,
+                            permissions=list(definition.permissions),
+                            source=definition.source,
+                            metadata={**context.metadata, **definition.metadata},
+                            handoff_path=list(trace.orchestration_path),
+                        )
+                        try:
+                            output = _invoke_tool_callable(definition.execute, event.tool_call.input, call_context)
+                            output = await _maybe_await(output)
+                            tool_result = ToolExecutionResult(
+                                tool_call_id=event.tool_call.id,
+                                tool_name=event.tool_call.name,
+                                output=output,
+                                is_error=False,
+                            )
+                        except Exception as error:
+                            tool_result = ToolExecutionResult(
+                                tool_call_id=event.tool_call.id,
+                                tool_name=event.tool_call.name,
+                                error=ToolExecutionError(message=str(error)),
+                                is_error=True,
+                            )
+                    tool_results.append(tool_result)
+                    transcript.append(ModelMessage(role="tool", parts=[tool_result_part(tool_result)]))
+                    await live_session.send_tool_result(tool_result)
+                    await emit_agent(AgentToolResultEvent(tool_result=tool_result))
+                    await emit_live(RealtimeToolResultEvent(tool_result=tool_result))
+                    continue
+                if isinstance(event, RealtimeSessionEndedEvent):
+                    break
+            if assistant_buffer and not last_assistant_text:
+                last_assistant_text = "".join(assistant_buffer)
+                if last_assistant_text:
+                    transcript.append(create_text_message("assistant", last_assistant_text))
+        except Exception as error:
+            if not live_session_future.done():
+                live_session_future.set_exception(error)
+            await emit_agent(AgentErrorEvent(error=error))
+            raise
+        finally:
+            await live_session.aclose()
+
+        resolved_session.messages = _strip_runtime_system_messages(transcript, agent.instructions)
+        if agent.memory is not None and _should_refresh_summary(agent.memory, resolved_session):
+            resolved_session.summary = await agent.memory.summarize(
+                session_id=resolved_session.id,
+                state=AgentMemoryState(
+                    messages=list(resolved_session.messages),
+                    summary=resolved_session.summary,
+                    metadata=dict(resolved_session.metadata),
+                ),
+                agent=agent,
+            )
+            await emit_agent(AgentSummaryUpdateEvent(summary=resolved_session.summary))
+        if agent.memory is not None:
+            await agent.memory.save(
+                resolved_session.id,
+                AgentMemoryState(
+                    messages=list(resolved_session.messages),
+                    summary=resolved_session.summary,
+                    metadata=dict(resolved_session.metadata),
+                ),
+            )
+
+        await emit_agent(
+            AgentFinishEvent(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                text=last_assistant_text,
+                finish_reason="stop",
+            )
+        )
+        trace.finished_at_ms = _now_ms()
+        result = AgentRunResult(
+            run_id=run_id,
+            agent_name=agent.name,
+            session=resolved_session,
+            text=last_assistant_text,
+            finish_reason="stop",
+            steps=[],
+            messages=list(resolved_session.messages),
+            tool_results=tool_results,
+            trace=trace,
+            orchestration_path=list(trace.orchestration_path),
+        )
+        await broadcast.close()
+        return result
+
+    async def managed_runner() -> AgentRunResult:
+        try:
+            return await runner()
+        finally:
+            await broadcast.close()
+
+    task = asyncio.create_task(managed_runner())
+    return LiveAgentStreamResult(task, broadcast, live_session_future)

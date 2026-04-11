@@ -7,6 +7,7 @@ import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field, replace
 from typing import Any
+from urllib.parse import urlencode, urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
@@ -14,7 +15,17 @@ from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureEr
 from ..messages import normalize_finish_reason
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
+from ..realtime import (
+    CallbackRealtimeSession,
+    RealtimeConnectionFactory,
+    RealtimeSessionCallbacks,
+    encode_audio_frame,
+    open_websocket_connection,
+    tool_result_payload,
+    unsupported_browser_token,
+)
 from ..types import (
+    AudioFrame,
     AudioInput,
     EmbedResult,
     EmbeddingModel,
@@ -27,6 +38,16 @@ from ..types import (
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    RealtimeAudioOutputEvent,
+    RealtimeConnectOptions,
+    RealtimeModel,
+    RealtimeSession,
+    RealtimeSessionConfig,
+    RealtimeSessionEndedEvent,
+    RealtimeTextDeltaEvent,
+    RealtimeTokenResult,
+    RealtimeToolCallEvent,
+    RealtimeTranscriptEvent,
     RetryOptions,
     SpeechModel,
     SpeechOutput,
@@ -88,6 +109,17 @@ OPENAI_COMPAT_SPEECH_CAPABILITIES = replace(
 OPENAI_COMPAT_GROUNDED_CAPABILITIES = replace(
     OPENAI_COMPAT_CAPABILITIES,
     web_search=True,
+)
+
+OPENAI_COMPAT_REALTIME_CAPABILITIES = replace(
+    OPENAI_COMPAT_CAPABILITIES,
+    audio_input=True,
+    audio_output=True,
+    realtime=True,
+    realtime_audio_input=True,
+    realtime_audio_output=True,
+    realtime_tools=True,
+    realtime_browser_tokens=True,
 )
 
 
@@ -486,6 +518,178 @@ def _audio_payload(audio: AudioInput) -> dict[str, Any]:
     }
 
 
+def _openai_realtime_url(base_url: str, model_id: str, provider_options: dict[str, Any] | None = None) -> str:
+    override = (provider_options or {}).get("realtime_url")
+    if isinstance(override, str) and override:
+        return override
+    parsed = urlparse(base_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    path = parsed.path.rstrip("/")
+    query = dict((provider_options or {}).get("realtime_query") or {})
+    query.setdefault("model", model_id)
+    return urlunparse((scheme, parsed.netloc, f"{path}/realtime", "", urlencode(query), ""))
+
+
+def _openai_realtime_headers(
+    api_key: str,
+    *,
+    auth_header: str,
+    auth_prefix: str,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, str]:
+    value = api_key if not auth_prefix else f"{auth_prefix}{api_key}"
+    headers = {
+        auth_header: value,
+        "OpenAI-Beta": "realtime=v1",
+    }
+    headers.update(dict(extra_headers or {}))
+    return headers
+
+
+def _openai_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]] | None:
+    return _map_tools(config.tools)
+
+
+def _openai_realtime_session_payload(config: RealtimeSessionConfig) -> dict[str, Any]:
+    session: dict[str, Any] = {
+        "instructions": config.instructions,
+        "voice": config.voice,
+        "tools": _openai_realtime_tools(config),
+        "tool_choice": _map_tool_choice(config.tool_choice, provider_name="openai") if config.tool_choice is not None else None,
+        "input_audio_format": config.input_audio_media_type,
+        "output_audio_format": config.output_audio_media_type,
+        "turn_detection": config.turn_detection,
+        **(config.provider_options or {}),
+    }
+    return {"type": "session.update", "session": drop_none(session)}
+
+
+def _openai_realtime_build_audio(frame: AudioFrame, config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    payloads = [{"type": "input_audio_buffer.append", "audio": encode_audio_frame(frame)}]
+    if frame.is_final:
+        payloads.append({"type": "input_audio_buffer.commit"})
+        if config.auto_response:
+            payloads.append({"type": "response.create"})
+    return payloads
+
+
+def _openai_realtime_build_text(text: str, config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    payloads = [
+        {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            },
+        }
+    ]
+    if config.auto_response:
+        payloads.append({"type": "response.create"})
+    return payloads
+
+
+def _openai_realtime_build_tool_result(result: ToolExecutionResult, config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    payloads = [
+        {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": result.tool_call_id,
+                "output": json.dumps(tool_result_payload(result)),
+            },
+        }
+    ]
+    if config.auto_response:
+        payloads.append({"type": "response.create"})
+    return payloads
+
+
+def _openai_realtime_build_update(config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+    return [_openai_realtime_session_payload(config)]
+
+
+def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
+    event_type = str(payload.get("type") or "")
+    if event_type in {"response.text.delta", "response.output_text.delta"}:
+        return [
+            RealtimeTextDeltaEvent(
+                text_delta=str(payload.get("delta") or ""),
+                item_id=payload.get("item_id"),
+                response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type == "response.audio.delta":
+        delta = payload.get("delta")
+        audio = base64.b64decode(delta) if isinstance(delta, str) and delta else b""
+        return [
+            RealtimeAudioOutputEvent(
+                audio=audio,
+                media_type=str(payload.get("media_type") or "audio/pcm"),
+                sample_rate_hz=payload.get("sample_rate_hz"),
+                channels=payload.get("channels"),
+                item_id=payload.get("item_id"),
+                response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type in {"conversation.item.input_audio_transcription.completed", "input_audio_buffer.transcription.completed"}:
+        return [
+            RealtimeTranscriptEvent(
+                text=str(payload.get("transcript") or ""),
+                role="user",
+                is_final=True,
+                item_id=payload.get("item_id"),
+                response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type in {"response.audio_transcript.delta", "response.audio_transcription.delta"}:
+        return [
+            RealtimeTranscriptEvent(
+                text=str(payload.get("delta") or ""),
+                role="assistant",
+                is_final=False,
+                item_id=payload.get("item_id"),
+                response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type in {"response.audio_transcript.done", "response.output_text.done"}:
+        text = payload.get("transcript")
+        if text is None:
+            text = payload.get("text")
+        return [
+            RealtimeTranscriptEvent(
+                text=str(text or ""),
+                role="assistant",
+                is_final=True,
+                item_id=payload.get("item_id"),
+                response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type in {"response.output_item.done", "response.function_call_arguments.done"}:
+        item = dict(payload.get("item") or {})
+        if not item and payload.get("name"):
+            item = payload
+        if item.get("type") == "function_call" or item.get("name"):
+            arguments = item.get("arguments") or "{}"
+            return [
+                RealtimeToolCallEvent(
+                    tool_call=ToolCall(
+                        id=item.get("call_id") or item.get("id", ""),
+                        name=item.get("name", ""),
+                        input=json.loads(arguments),
+                    )
+                )
+            ]
+    if event_type in {"response.done", "response.completed", "response.incomplete", "response.failed", "session.closed"}:
+        return [RealtimeSessionEndedEvent(reason=event_type, provider_metadata=payload)]
+    return []
+
+
 @dataclass(slots=True)
 class _BaseOpenAICompatible:
     provider: str
@@ -725,6 +929,82 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
         )
 
 
+@dataclass(slots=True)
+class OpenAICompatibleRealtimeModel(_BaseOpenAICompatible, RealtimeModel):
+    capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_REALTIME_CAPABILITIES)
+    realtime_url: str | None = None
+    browser_token_url: str | None = None
+    connection_factory: RealtimeConnectionFactory | None = None
+
+    async def connect(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeSession:
+        resolved_config = config or RealtimeSessionConfig()
+        headers = _openai_realtime_headers(
+            self.api_key,
+            auth_header=self.auth_header,
+            auth_prefix=self.auth_prefix,
+            extra_headers=dict((resolved_config.provider_options or {}).get("headers") or {}),
+        )
+        url = self.realtime_url or _openai_realtime_url(self.base_url, self.model_id, resolved_config.provider_options)
+        factory = self.connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
+        connection = await factory(url, headers, options)
+        session = CallbackRealtimeSession(
+            provider=self.provider,
+            model_id=self.model_id,
+            capabilities=self.capabilities,
+            config=resolved_config,
+            connection=connection,
+            callbacks=RealtimeSessionCallbacks(
+                parse_event=_openai_realtime_parse_event,
+                build_audio_payloads=_openai_realtime_build_audio,
+                build_text_payloads=_openai_realtime_build_text,
+                build_tool_result_payloads=_openai_realtime_build_tool_result,
+                build_update_payloads=_openai_realtime_build_update,
+                build_initial_payloads=lambda session_config: _openai_realtime_build_update(session_config),
+            ),
+        )
+        await session.initialize()
+        return session
+
+    async def create_browser_token(
+        self,
+        config: RealtimeSessionConfig | None = None,
+        options: RealtimeConnectOptions | None = None,
+    ) -> RealtimeTokenResult:
+        resolved_config = config or RealtimeSessionConfig()
+        url = self.browser_token_url or f"{self.base_url}/realtime/sessions"
+        response = await with_retry(
+            lambda: self.fetch(
+                url,
+                headers=self._headers(),
+                json_body=drop_none({
+                    "model": self.model_id,
+                    "voice": resolved_config.voice,
+                    "instructions": resolved_config.instructions,
+                    "tools": _openai_realtime_tools(resolved_config),
+                    **(resolved_config.provider_options or {}),
+                }),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        payload = await response.json()
+        secret = payload.get("client_secret")
+        if isinstance(secret, dict):
+            value = str(secret.get("value") or "")
+            expires_at_ms = secret.get("expires_at_ms")
+        else:
+            value = str(payload.get("token") or payload.get("value") or "")
+            expires_at_ms = payload.get("expires_at_ms")
+        return RealtimeTokenResult(value=value, expires_at_ms=expires_at_ms, raw_response=payload)
+
+
 def create_openai_compatible_provider(
     *,
     provider_name: str,
@@ -737,6 +1017,10 @@ def create_openai_compatible_provider(
     capabilities: ModelCapabilities | None = None,
     supports_audio: bool = False,
     supports_grounding: bool = False,
+    supports_realtime: bool = False,
+    realtime_url: str | None = None,
+    browser_token_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ) -> ProviderAdapter:
     resolved_key = api_key or os.getenv(env_var)
     if not resolved_key:
@@ -803,6 +1087,22 @@ def create_openai_compatible_provider(
                 auth_prefix=auth_prefix,
             ))
             if supports_grounding
+            else None
+        ),
+        realtime_model_factory=(
+            (lambda model_id: OpenAICompatibleRealtimeModel(
+                provider=provider_name,
+                model_id=model_id,
+                api_key=resolved_key,
+                base_url=base,
+                fetch=requester,
+                auth_header=auth_header,
+                auth_prefix=auth_prefix,
+                realtime_url=realtime_url,
+                browser_token_url=browser_token_url,
+                connection_factory=realtime_connection_factory,
+            ))
+            if supports_realtime
             else None
         ),
     )

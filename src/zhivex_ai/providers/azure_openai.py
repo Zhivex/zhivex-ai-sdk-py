@@ -4,6 +4,7 @@ import os
 
 from .._http import Fetcher
 from ..errors import ConfigurationError
+from ..realtime import RealtimeConnectionFactory
 from .openai_compat import create_openai_compatible_provider
 
 
@@ -13,6 +14,9 @@ def create_azure_openai(
     endpoint: str | None = None,
     api_version: str = "2024-10-21",
     fetch: Fetcher | None = None,
+    realtime_url: str | None = None,
+    browser_token_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
     resolved_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
     resolved_endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -32,4 +36,8 @@ def create_azure_openai(
         auth_prefix="",
         supports_audio=True,
         supports_grounding=True,
+        supports_realtime=True,
+        realtime_url=realtime_url,
+        browser_token_url=browser_token_url,
+        realtime_connection_factory=realtime_connection_factory,
     )

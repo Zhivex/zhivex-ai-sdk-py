@@ -6,10 +6,20 @@ from typing import Any
 
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError
+from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import EmbedResult, EmbeddingModel, ModelCapabilities
+from ..types import EmbedResult, EmbeddingModel, ModelCapabilities, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult
 from .base import ProviderAdapter
-from .gemini import GEMINI_CAPABILITIES, GeminiLanguageModel
+from .gemini import (
+    GEMINI_CAPABILITIES,
+    GEMINI_REALTIME_CAPABILITIES,
+    GeminiLanguageModel,
+    _gemini_realtime_build_audio,
+    _gemini_realtime_build_text,
+    _gemini_realtime_build_tool_result,
+    _gemini_realtime_build_update,
+    _gemini_realtime_parse_event,
+)
 
 
 @dataclass(slots=True)
@@ -50,6 +60,8 @@ def create_vertex(
     api_version: str = "v1beta1",
     base_url: str | None = None,
     fetch: Fetcher | None = None,
+    realtime_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
     resolved_token = access_token or os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")
     if not resolved_token:
@@ -72,6 +84,53 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+    class VertexRealtimeModel:
+        provider = "vertex"
+        capabilities = GEMINI_REALTIME_CAPABILITIES
+
+        def __init__(self, model_id: str) -> None:
+            self.model_id = model_id
+
+        async def connect(
+            self,
+            config: RealtimeSessionConfig | None = None,
+            options: RealtimeConnectOptions | None = None,
+        ) -> RealtimeSession:
+            resolved_config = config or RealtimeSessionConfig()
+            url = realtime_url or resolved_config.provider_options.get("realtime_url") if resolved_config.provider_options else realtime_url
+            if not url:
+                url = f"wss://{location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.{api_version}.PredictionService.BidiGenerateContent"
+            headers = {
+                "authorization": f"Bearer {resolved_token}",
+                **dict((resolved_config.provider_options or {}).get("headers") or {}),
+            }
+            factory = realtime_connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
+            connection = await factory(url, headers, options)
+            session = CallbackRealtimeSession(
+                provider="vertex",
+                model_id=self.model_id,
+                capabilities=self.capabilities,
+                config=resolved_config,
+                connection=connection,
+                callbacks=RealtimeSessionCallbacks(
+                    parse_event=_gemini_realtime_parse_event,
+                    build_audio_payloads=_gemini_realtime_build_audio,
+                    build_text_payloads=_gemini_realtime_build_text,
+                    build_tool_result_payloads=_gemini_realtime_build_tool_result,
+                    build_update_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+                    build_initial_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+                ),
+            )
+            await session.initialize()
+            return session
+
+        async def create_browser_token(
+            self,
+            config: RealtimeSessionConfig | None = None,
+            options: RealtimeConnectOptions | None = None,
+        ) -> RealtimeTokenResult:
+            return await unsupported_browser_token(config=config, options=options)
+
     return ProviderAdapter(
         name="vertex",
         language_model_factory=lambda model_id: VertexLanguageModel(
@@ -88,4 +147,5 @@ def create_vertex(
             access_token=resolved_token,
             fetch=wrapped_fetch,
         ),
+        realtime_model_factory=lambda model_id: VertexRealtimeModel(model_id),
     )

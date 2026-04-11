@@ -1,12 +1,15 @@
 import asyncio
+import os
+from dotenv import load_dotenv
 
 from zhivex_ai import create_gemini, generate_grounded_text
 
+load_dotenv()
 
 async def main() -> None:
-    gemini = create_gemini()
+    gemini = create_gemini(api_key=os.getenv("GOOGLE_API_KEY"))
     result = await generate_grounded_text(
-        model=gemini.grounded_language_model("gemini-2.5-flash"),
+        model=gemini.grounded_language_model("gemini-3-flash-preview"),
         prompt="Find one recent fact about AI infrastructure and cite the source.",
     )
 

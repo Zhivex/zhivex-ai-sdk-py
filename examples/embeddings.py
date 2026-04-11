@@ -1,12 +1,16 @@
 import asyncio
+from dotenv import load_dotenv
+import os
 
-from zhivex_ai import create_openai, embed_many
+load_dotenv()  # Load environment variables from .env file
+
+from zhivex_ai import create_gemini, embed_many
 
 
 async def main() -> None:
-    provider = create_openai()
+    provider = create_gemini(api_key=os.getenv("GOOGLE_API_KEY"))
     result = await embed_many(
-        model=provider.embedding_model("text-embedding-3-small"),
+        model=provider.embedding_model("gemini-embedding-001"),
         values=[
             "Zhivex AI SDK normalizes providers.",
             "Embeddings help semantic search.",

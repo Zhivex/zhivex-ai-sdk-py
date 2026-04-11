@@ -28,6 +28,11 @@ Useful starting points:
 .venv/bin/python examples/grounded_text.py
 .venv/bin/python examples/transcribe_audio.py
 .venv/bin/python examples/generate_speech.py
+.venv/bin/python examples/openai_realtime.py
+.venv/bin/python examples/azure_realtime.py
+.venv/bin/python examples/gemini_realtime.py
+.venv/bin/python examples/bedrock_realtime.py
+.venv/bin/python examples/live_agent_realtime.py
 .venv/bin/python examples/ui_messages.py
 .venv/bin/python examples/http_responses.py
 .venv/bin/python examples/gateway_fallback.py
@@ -37,8 +42,10 @@ Useful starting points:
 
 ## Notes
 
-- OpenAI and Azure OpenAI currently expose the richest Python feature surface for audio and grounded text.
+- OpenAI and Azure OpenAI currently expose the richest Python feature surface for audio, grounded text, and realtime session bootstrap.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
+- The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
+- The Bedrock realtime example requires an injected AWS-signed websocket connection factory.
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.
 - `mcp_tools.py` shows the recommended high-level MCP flow with `mcp_stdio_server(...)` plus `create_mcp_tool_registry(...)`.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
