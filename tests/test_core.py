@@ -216,9 +216,44 @@ class CoreTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.usage.output_tokens, 6)
         self.assertEqual(result.usage.total_tokens, 24)
 
+    async def test_generate_text_returns_only_the_latest_assistant_reply(self) -> None:
+        class FinalReplyModel(FakeLanguageModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(text="new reply")
+
+        result = await generate_text(
+            model=FinalReplyModel(),
+            messages=[
+                create_text_message("user", "hi"),
+                create_text_message("assistant", "old reply"),
+                create_text_message("user", "what now?"),
+            ],
+        )
+
+        self.assertEqual(result.text, "new reply")
+
     async def test_generate_object_parses_schema(self) -> None:
         model = FakeLanguageModel()
         result = await generate_object(model=model, prompt="Return JSON", schema=Forecast)
+        self.assertEqual(result.object.city, "Madrid")
+        self.assertEqual(result.object.forecast, "sunny")
+
+    async def test_generate_object_ignores_prior_assistant_history_when_parsing(self) -> None:
+        class FinalJsonModel(FakeLanguageModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(text='{"city":"Madrid","forecast":"sunny"}')
+
+        result = await generate_object(
+            model=FinalJsonModel(),
+            messages=[
+                create_text_message("user", "hi"),
+                create_text_message("assistant", '{"city":"Paris","forecast":"rainy"}'),
+                create_text_message("user", "return Madrid weather"),
+            ],
+            schema=Forecast,
+        )
+
+        self.assertEqual(result.text, '{"city":"Madrid","forecast":"sunny"}')
         self.assertEqual(result.object.city, "Madrid")
         self.assertEqual(result.object.forecast, "sunny")
 

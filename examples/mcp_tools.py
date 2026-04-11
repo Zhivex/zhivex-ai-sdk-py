@@ -2,9 +2,9 @@ import asyncio
 import os
 from typing import Callable
 
-from dotenv import load_dotenv
+from _bootstrap import load_dotenv_if_available
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv_if_available()
 
 from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, create_gemini, mcp_stdio_server, run_agent
 

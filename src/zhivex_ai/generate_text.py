@@ -4,12 +4,13 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .errors import ParseError, UnsupportedFeatureError, ValidationError
 from .messages import (
     create_text_message,
-    get_text_from_messages,
+    get_text_from_result,
     normalize_finish_reason,
     result_messages,
     serialize_json_value,
@@ -157,24 +158,34 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
 
 
 def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
+    mode = _tool_callable_mode(execute)
+    if mode == "kwargs":
+        return execute(parsed, context=context)
+    if mode == "positional":
+        return execute(parsed, context)
+    return execute(parsed)
+
+
+@lru_cache(maxsize=256)
+def _tool_callable_mode(execute: Any) -> str:
     try:
         signature = inspect.signature(execute)
     except (TypeError, ValueError):
-        return execute(parsed)
+        return "single"
 
     parameters = list(signature.parameters.values())
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     if any(parameter.name == "context" for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     positional = [
         parameter
         for parameter in parameters
         if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     if len(positional) >= 2:
-        return execute(parsed, context)
-    return execute(parsed)
+        return "positional"
+    return "single"
 
 
 async def _execute_tools(
@@ -344,8 +355,9 @@ async def generate_text(
         raise ParseError("Model did not return a result.")
 
     merged_usage = _merge_usage([step.response.usage for step in steps])
+    final_text = get_text_from_result(final_result)
     return GenerateTextOutput(
-        text=get_text_from_messages(all_messages),
+        text=final_text,
         finish_reason=final_result.finish_reason,
         provider_finish_reason=final_result.provider_finish_reason,
         usage=merged_usage,
@@ -533,8 +545,9 @@ def stream_text(
             if final_result is None:
                 raise ParseError("Model did not return a result.")
             merged_usage = _merge_usage([step.response.usage for step in steps])
+            final_text = get_text_from_result(final_result)
             return GenerateTextOutput(
-                text=get_text_from_messages(all_messages),
+                text=final_text,
                 finish_reason=final_result.finish_reason,
                 provider_finish_reason=final_result.provider_finish_reason,
                 usage=merged_usage,

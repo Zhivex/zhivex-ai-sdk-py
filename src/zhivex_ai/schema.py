@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from functools import lru_cache
 from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
@@ -40,12 +41,15 @@ class SchemaAdapter:
     def __init__(self, schema: Any) -> None:
         self.schema = schema
         self.adapter = self._to_adapter(schema)
+        self._json_schema_cache: dict[str, Any] | None = None
 
     def validate_python(self, value: Any) -> Any:
         return self.adapter.validate_python(value)
 
     def json_schema(self) -> dict[str, Any]:
-        return self.adapter.json_schema()
+        if self._json_schema_cache is None:
+            self._json_schema_cache = self.adapter.json_schema()
+        return deepcopy(self._json_schema_cache)
 
     @staticmethod
     def _to_adapter(schema: Any) -> TypeAdapter[Any]:
@@ -58,5 +62,14 @@ class SchemaAdapter:
         return TypeAdapter(schema)
 
 
-def create_schema_adapter(schema: Any) -> SchemaAdapter:
+@lru_cache(maxsize=256)
+def _create_hashable_schema_adapter(schema: Any) -> SchemaAdapter:
     return SchemaAdapter(schema)
+
+
+def create_schema_adapter(schema: Any) -> SchemaAdapter:
+    try:
+        hash(schema)
+    except TypeError:
+        return SchemaAdapter(schema)
+    return _create_hashable_schema_adapter(schema)

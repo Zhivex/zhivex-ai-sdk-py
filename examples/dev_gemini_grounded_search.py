@@ -1,10 +1,11 @@
 import asyncio
 import os
-from dotenv import load_dotenv
+
+from _bootstrap import load_dotenv_if_available
 
 from zhivex_ai import create_gemini, generate_grounded_text
 
-load_dotenv()
+load_dotenv_if_available()
 
 async def main() -> None:
     gemini = create_gemini(api_key=os.getenv("GOOGLE_API_KEY"))

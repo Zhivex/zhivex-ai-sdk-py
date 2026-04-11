@@ -48,11 +48,11 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 | OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
 | Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
 | Anthropic | Yes | Yes | Yes | Prompted fallback | No | No | No | No | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes | No | No | No | Experimental |
-| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | No | No | Experimental |
+| Gemini | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Experimental |
+| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Experimental |
 | Bedrock | Yes | No | No | No | No | No | No | No | Experimental |
-| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
-| Qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
+| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
+| Qwen | Yes | Yes | No | Yes | Yes | No | Yes | No | No |
 | Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
 | Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
 

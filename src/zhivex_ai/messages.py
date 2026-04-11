@@ -65,6 +65,10 @@ def get_text_from_messages(messages: list[ModelMessage]) -> str:
     return "".join(get_text_from_parts(message.parts) for message in messages if message.role == "assistant")
 
 
+def get_text_from_result(result: GenerateResult) -> str:
+    return get_text_from_messages(result_messages(result))
+
+
 def _to_json_compatible(value: Any) -> Any:
     if is_dataclass(value):
         return {k: _to_json_compatible(v) for k, v in value.__dict__.items()}

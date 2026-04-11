@@ -1,8 +1,9 @@
 import asyncio
-from dotenv import load_dotenv
 import os
 
-load_dotenv()  # Load environment variables from .env file
+from _bootstrap import load_dotenv_if_available
+
+load_dotenv_if_available()
 
 from zhivex_ai import create_gemini, embed_many
 

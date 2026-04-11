@@ -7,6 +7,7 @@ This folder contains runnable Python examples for the main public surfaces of th
 From the repository root:
 
 ```bash
+make dev
 .venv/bin/python examples/openai_text.py
 ```
 
@@ -46,9 +47,11 @@ Useful starting points:
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
+- Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.
 - The Bedrock realtime example requires an injected AWS-signed websocket connection factory.
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.
 - `mcp_tools.py` shows the recommended high-level MCP flow with `mcp_stdio_server(...)` plus `create_mcp_tool_registry(...)`.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - Structured output examples use `pydantic`.
+- Examples that read `.env` files use `python-dotenv` when available, but they still work if you export environment variables manually.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.

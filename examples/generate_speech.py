@@ -2,11 +2,12 @@ import asyncio
 import os
 from pathlib import Path
 import wave
-from dotenv import load_dotenv
+
+from _bootstrap import load_dotenv_if_available
 
 from zhivex_ai import create_gemini, generate_speech
 
-load_dotenv()
+load_dotenv_if_available()
 
 
 def save_wave(path: Path, pcm: bytes, *, channels: int = 1, rate: int = 24_000, sample_width: int = 2) -> None:

@@ -7,6 +7,7 @@ import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, is_dataclass
+from functools import lru_cache
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
@@ -109,20 +110,30 @@ async def _maybe_await(value: Any) -> Any:
 
 
 def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
+    mode = _tool_callable_mode(execute)
+    if mode == "kwargs":
+        return execute(parsed, context=context)
+    if mode == "positional":
+        return execute(parsed, context)
+    return execute(parsed)
+
+
+@lru_cache(maxsize=256)
+def _tool_callable_mode(execute: Any) -> str:
     signature = inspect.signature(execute)
     parameters = list(signature.parameters.values())
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     if any(parameter.name == "context" for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     positional = [
         parameter
         for parameter in parameters
         if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     if len(positional) >= 2:
-        return execute(parsed, context)
-    return execute(parsed)
+        return "positional"
+    return "single"
 
 
 def handoff_to(target_agent: str, *, input: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:

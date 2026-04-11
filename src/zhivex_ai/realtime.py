@@ -228,7 +228,11 @@ async def open_websocket_connection(
     try:
         import websockets
     except Exception as error:
-        raise RuntimeError('Realtime voice support requires the optional dependency "websockets".') from error
+        raise RuntimeError(
+            'Realtime support requires the "websockets" package. '
+            'If you are running from this repo, install dependencies first with `make dev` '
+            "or `pip install -e .`."
+        ) from error
 
     websocket = await websockets.connect(
         url,
@@ -258,4 +262,3 @@ def tool_result_payload(result: ToolExecutionResult) -> Any:
 
 async def unsupported_browser_token(*_: Any, **__: Any) -> Any:
     raise UnsupportedFeatureError("This realtime model does not support browser session tokens.")
-
