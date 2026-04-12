@@ -375,6 +375,48 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(events[0].tool_call.provider_metadata["server_name"], "example-mcp")
         self.assertEqual(events[0].tool_call.input, {"value": "hi"})
 
+    async def test_anthropic_adds_current_mcp_beta_header(self) -> None:
+        headers_seen: list[dict[str, str]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            headers_seen.append(headers)
+            return FakeResponse(
+                status_code=200,
+                payload={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="use MCP",
+            provider_options={"mcp_servers": [anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")]},
+        )
+
+        self.assertEqual(headers_seen[0]["anthropic-beta"], "mcp-client-2025-04-04")
+
+    async def test_anthropic_adds_code_execution_beta_header(self) -> None:
+        headers_seen: list[dict[str, str]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            headers_seen.append(headers)
+            return FakeResponse(
+                status_code=200,
+                payload={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="run code",
+            provider_options={"tools": [anthropic_code_execution_tool()]},
+        )
+
+        self.assertIn("code-execution-2025-08-25", headers_seen[0]["anthropic-beta"])
+
     async def test_anthropic_files_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []
 

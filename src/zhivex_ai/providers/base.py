@@ -7,6 +7,7 @@ from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
     BatchesClient,
     CountTokensClient,
+    ContainersClient,
     ConversationsClient,
     EmbeddingModel,
     FileSearchStoresClient,
@@ -25,6 +26,7 @@ from ..types import (
     ResponsesClient,
     SpeechModel,
     SpeechOutput,
+    SkillsClient,
     TranscriptionModel,
     TranscriptionOutput,
     UploadsClient,
@@ -45,6 +47,8 @@ class ProviderAdapter:
     uploads_client_factory: Callable[[], UploadsClient] | None = None
     moderations_client_factory: Callable[[], ModerationsClient] | None = None
     batches_client_factory: Callable[[], BatchesClient] | None = None
+    containers_client_factory: Callable[[], ContainersClient] | None = None
+    skills_client_factory: Callable[[], SkillsClient] | None = None
     count_tokens_client_factory: Callable[[], CountTokensClient] | None = None
     file_search_stores_client_factory: Callable[[], FileSearchStoresClient] | None = None
     responses_client_factory: Callable[[], ResponsesClient] | None = None
@@ -60,6 +64,8 @@ class ProviderAdapter:
     _uploads_client: UploadsClient | None = field(default=None, init=False, repr=False)
     _moderations_client: ModerationsClient | None = field(default=None, init=False, repr=False)
     _batches_client: BatchesClient | None = field(default=None, init=False, repr=False)
+    _containers_client: ContainersClient | None = field(default=None, init=False, repr=False)
+    _skills_client: SkillsClient | None = field(default=None, init=False, repr=False)
     _count_tokens_client: CountTokensClient | None = field(default=None, init=False, repr=False)
     _file_search_stores_client: FileSearchStoresClient | None = field(default=None, init=False, repr=False)
     _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
@@ -130,6 +136,20 @@ class ProviderAdapter:
         if self._batches_client is None:
             self._batches_client = self.batches_client_factory()
         return self._batches_client
+
+    def containers(self) -> ContainersClient:
+        if self.containers_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a containers client.')
+        if self._containers_client is None:
+            self._containers_client = self.containers_client_factory()
+        return self._containers_client
+
+    def skills(self) -> SkillsClient:
+        if self.skills_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a skills client.')
+        if self._skills_client is None:
+            self._skills_client = self.skills_client_factory()
+        return self._skills_client
 
     def tokens(self) -> CountTokensClient:
         if self.count_tokens_client_factory is None:
@@ -361,6 +381,12 @@ class ProviderBundle:
     def batches(self) -> BatchesClient:
         return self.native.batches()
 
+    def containers(self) -> ContainersClient:
+        return self.native.containers()
+
+    def skills(self) -> SkillsClient:
+        return self.native.skills()
+
     def tokens(self) -> CountTokensClient:
         return self.native.tokens()
 
@@ -392,6 +418,8 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         uploads=adapter.uploads_client_factory is not None,
         moderations=adapter.moderations_client_factory is not None,
         batches=adapter.batches_client_factory is not None,
+        containers=adapter.containers_client_factory is not None,
+        skills=adapter.skills_client_factory is not None,
         responses=adapter.responses_client_factory is not None,
         conversations=adapter.conversations_client_factory is not None,
     )

@@ -84,6 +84,11 @@ class RateLimitedModel(WorkingModel):
         raise ProviderHTTPError("OpenAI request failed with status 429.", 429)
 
 
+class NonRetryableHTTPModel(WorkingModel):
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        raise ProviderHTTPError("OpenAI request failed with status 503.", 503, retryable=False)
+
+
 class StreamingModel(WorkingModel):
     async def stream(self, input: ModelGenerateInput):
         async def generator():
@@ -206,6 +211,23 @@ class GatewayTests(IsolatedAsyncioTestCase):
             )
         self.assertTrue(context.exception.retryable)
         self.assertIn("429", str(context.exception))
+
+    async def test_gateway_respects_explicit_non_retryable_http_error(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: NonRetryableHTTPModel()),
+                },
+                max_retries=0,
+            )
+        )
+        with self.assertRaises(GatewayError) as context:
+            await gateway.generate(
+                messages=[GatewayMessage(role="user", content="hello")],
+                primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+            )
+        self.assertFalse(context.exception.retryable)
+        self.assertIn("503", str(context.exception))
 
     async def test_gateway_stream_text_collects_result(self) -> None:
         gateway = create_gateway(

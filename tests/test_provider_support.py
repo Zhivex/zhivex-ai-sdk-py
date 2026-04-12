@@ -63,6 +63,8 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["openai"].uploads)
         self.assertTrue(native["openai"].moderations)
         self.assertTrue(native["openai"].batches)
+        self.assertTrue(native["openai"].containers)
+        self.assertTrue(native["openai"].skills)
         self.assertTrue(native["anthropic"].files)
 
         markdown = render_provider_support_markdown(rows)

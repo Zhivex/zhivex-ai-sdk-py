@@ -35,6 +35,7 @@ from ..types import (
     EmbedResult,
     EmbeddingModel,
     FilePart,
+    FileSearchBatch,
     FileSearchDocument,
     FileSearchDocumentListResult,
     FileSearchOperation,
@@ -1132,6 +1133,10 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
             )
         return _normalize_file_search_document(await response.json())
 
+    async def download_document(self, name: str) -> bytes:
+        del name
+        raise UnsupportedFeatureError('Provider "gemini" does not expose document download through the File Search API.')
+
     async def delete_document(self, name: str) -> bool:
         response = await self.fetch(
             self._json_url(f"/{name}"),
@@ -1170,6 +1175,46 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
     ) -> FileSearchSearchResult:
         del file_search_store_name, query, filters, max_num_results, ranking_options, rewrite_query
         raise UnsupportedFeatureError('Provider "gemini" does not expose a standalone file search query endpoint through this SDK.')
+
+    async def create_batch(
+        self,
+        *,
+        file_search_store_name: str,
+        file_names: list[str],
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchBatch:
+        del file_search_store_name, file_names, custom_metadata, chunking_config
+        raise UnsupportedFeatureError('Provider "gemini" does not expose OpenAI-style file search batch operations through this SDK.')
+
+    async def get_batch(self, name: str) -> FileSearchBatch:
+        del name
+        raise UnsupportedFeatureError('Provider "gemini" does not expose OpenAI-style file search batch operations through this SDK.')
+
+    async def cancel_batch(self, name: str) -> FileSearchBatch:
+        del name
+        raise UnsupportedFeatureError('Provider "gemini" does not expose OpenAI-style file search batch operations through this SDK.')
+
+    async def list_batch_documents(
+        self,
+        *,
+        name: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        state_filter: str | None = None,
+    ) -> FileSearchDocumentListResult:
+        del name, page_size, page_token, state_filter
+        raise UnsupportedFeatureError('Provider "gemini" does not expose OpenAI-style file search batch operations through this SDK.')
+
+    async def wait_batch(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+    ) -> FileSearchBatch:
+        del name, poll_interval_ms, timeout_ms
+        raise UnsupportedFeatureError('Provider "gemini" does not expose OpenAI-style file search batch operations through this SDK.')
 
     async def get_operation(self, name: str) -> FileSearchOperation:
         response = await self.fetch(

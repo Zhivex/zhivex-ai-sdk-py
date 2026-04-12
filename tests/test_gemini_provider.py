@@ -26,6 +26,10 @@ from zhivex_ai import (
     generate_speech,
     generate_text,
     tool,
+    vertex_external_search_tool,
+    vertex_google_maps_tool,
+    vertex_google_search_tool,
+    vertex_vertex_ai_search_tool,
 )
 from zhivex_ai import UnsupportedFeatureError
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
@@ -454,6 +458,147 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.supports[0].source_indices, [0])
         self.assertIn("/publishers/google/models/gemini-2.5-flash:generateContent", requests[0]["url"])
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+
+    async def test_vertex_hosted_tool_builders_are_exported(self) -> None:
+        self.assertEqual(vertex_google_search_tool(), {"google_search": {}})
+        self.assertEqual(vertex_google_maps_tool(enable_widget=False), {"google_maps": {"enable_widget": False}})
+        self.assertEqual(
+            vertex_vertex_ai_search_tool(datastore="projects/p/locations/global/collections/default_collection/dataStores/docs"),
+            {
+                "retrieval": {
+                    "vertexAiSearch": {
+                        "datastore": "projects/p/locations/global/collections/default_collection/dataStores/docs"
+                    }
+                }
+            },
+        )
+        self.assertEqual(
+            vertex_external_search_tool(endpoint="https://search.example.com", api_key="secret"),
+            {
+                "retrieval": {
+                    "externalApi": {
+                        "apiSpec": "SIMPLE_SEARCH",
+                        "endpoint": "https://search.example.com",
+                        "apiAuth": {"apiKeyConfig": {"apiKeyString": "secret"}},
+                    }
+                }
+            },
+        )
+
+    async def test_vertex_maps_native_grounding_aliases_to_tools(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}]},
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gemini-2.5-flash"),
+            prompt="Ground this",
+            provider_options={
+                "google_maps": {"enable_widget": False},
+                "vertex_ai_search": {
+                    "datastore": "projects/p/locations/global/collections/default_collection/dataStores/docs"
+                },
+                "external_search": {
+                    "endpoint": "https://search.example.com",
+                    "api_key": "secret",
+                },
+            },
+        )
+
+        self.assertEqual(
+            requests[0]["json"]["tools"],
+            [
+                {"googleMaps": {"enable_widget": False}},
+                {
+                    "retrieval": {
+                        "vertexAiSearch": {
+                            "datastore": "projects/p/locations/global/collections/default_collection/dataStores/docs"
+                        }
+                    }
+                },
+                {
+                    "retrieval": {
+                        "externalApi": {
+                            "apiSpec": "SIMPLE_SEARCH",
+                            "endpoint": "https://search.example.com",
+                            "apiAuth": {"apiKeyConfig": {"apiKeyString": "secret"}},
+                        }
+                    }
+                },
+            ],
+        )
+        self.assertNotIn("vertex_ai_search", requests[0]["json"])
+        self.assertNotIn("external_search", requests[0]["json"])
+
+    async def test_vertex_grounded_language_model_uses_explicit_grounding_tools_without_forcing_google_search(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "grounded"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        result = await generate_grounded_text(
+            model=provider.native.grounded_language_model("gemini-2.5-flash"),
+            prompt="Search my docs",
+            provider_options={
+                "vertex_ai_search": {
+                    "datastore": "projects/p/locations/global/collections/default_collection/dataStores/docs"
+                }
+            },
+        )
+
+        self.assertEqual(result.text, "grounded")
+        self.assertEqual(
+            requests[0]["json"]["tools"],
+            [
+                {
+                    "retrieval": {
+                        "vertexAiSearch": {
+                            "datastore": "projects/p/locations/global/collections/default_collection/dataStores/docs"
+                        }
+                    }
+                }
+            ],
+        )
+
+    async def test_vertex_rejects_invalid_grounding_alias_shape(self) -> None:
+        provider = create_vertex(access_token="token", project_id="proj", fetch=lambda **_: None)  # type: ignore[arg-type]
+        with self.assertRaises(ValidationError):
+            await generate_text(
+                model=provider.native.language_model("gemini-2.5-flash"),
+                prompt="hello",
+                provider_options={"vertex_ai_search": True},
+            )
 
     async def test_gemini_counts_tokens(self) -> None:
         requests: list[dict[str, Any]] = []

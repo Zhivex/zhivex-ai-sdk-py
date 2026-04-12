@@ -31,9 +31,11 @@ from ..types import (
     AudioInput,
     BatchesClient,
     CodeExecutionResultPart,
+    ContainersClient,
     ConversationsClient,
     EmbedResult,
     EmbeddingModel,
+    FileSearchBatch,
     FileSearchDocument,
     FileSearchDocumentListResult,
     FileSearchOperation,
@@ -73,6 +75,7 @@ from ..types import (
     RealtimeTranscriptEvent,
     RetryOptions,
     ResponsesClient,
+    SkillsClient,
     SpeechModel,
     SpeechOutput,
     StreamEvent,
@@ -840,6 +843,10 @@ def _openai_vector_store_file_name(store_id: str, file_id: str) -> str:
     return f"vector_stores/{store_id}/files/{file_id}"
 
 
+def _openai_vector_store_file_batch_name(store_id: str, batch_id: str) -> str:
+    return f"vector_stores/{store_id}/file_batches/{batch_id}"
+
+
 def _parse_openai_vector_store_file_name(name: str) -> tuple[str, str]:
     parts = [part for part in name.split("/") if part]
     if len(parts) >= 4 and parts[0] == "vector_stores" and parts[2] == "files":
@@ -848,6 +855,17 @@ def _parse_openai_vector_store_file_name(name: str) -> tuple[str, str]:
         return parts[0], parts[1]
     raise ValidationError(
         'OpenAI vector store document names must look like "vector_stores/<store_id>/files/<file_id>" or "<store_id>/<file_id>".'
+    )
+
+
+def _parse_openai_vector_store_file_batch_name(name: str) -> tuple[str, str]:
+    parts = [part for part in name.split("/") if part]
+    if len(parts) >= 4 and parts[0] == "vector_stores" and parts[2] == "file_batches":
+        return parts[1], parts[3]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    raise ValidationError(
+        'OpenAI vector store batch names must look like "vector_stores/<store_id>/file_batches/<batch_id>" or "<store_id>/<batch_id>".'
     )
 
 
@@ -888,6 +906,20 @@ def _normalize_openai_vector_store_operation(payload: dict[str, Any], *, store_i
         metadata=dict(payload),
         response=dict(payload),
         error=dict(payload.get("last_error") or {}) if isinstance(payload.get("last_error"), dict) else None,
+        raw_response=payload,
+    )
+
+
+def _normalize_openai_vector_store_batch(payload: dict[str, Any], *, store_id: str | None = None) -> FileSearchBatch:
+    resolved_store_id = store_id or str(payload.get("vector_store_id") or "")
+    batch_id = str(payload.get("id") or "")
+    name = _openai_vector_store_file_batch_name(resolved_store_id, batch_id) if resolved_store_id and batch_id else batch_id
+    return FileSearchBatch(
+        name=name,
+        file_search_store_name=resolved_store_id or None,
+        state=payload.get("status"),
+        create_time=_normalize_openai_timestamp(payload.get("created_at")),
+        metadata=dict(payload),
         raw_response=payload,
     )
 
@@ -1424,6 +1456,420 @@ class OpenAICompatibleBatchesClient(BatchesClient):
 
 
 @dataclass(slots=True)
+class OpenAICompatibleContainersClient(ContainersClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    auth_header: str = "authorization"
+    auth_prefix: str = "Bearer "
+
+    def _headers(self, *, json_content: bool = True) -> dict[str, str]:
+        value = self.api_key if not self.auth_prefix else f"{self.auth_prefix}{self.api_key}"
+        headers = {self.auth_header: value}
+        if json_content:
+            headers["content-type"] = "application/json"
+        return headers
+
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers",
+                headers=self._headers(),
+                json_body=deepcopy(body),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve(self, container_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}",
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def delete(self, container_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(self.base_url, "/containers", {"after": after, "limit": limit}),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def create_file(
+        self,
+        *,
+        container_id: str,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str = "application/octet-stream",
+        options: RetryOptions | None = None,
+    ) -> ProviderFile:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}/files",
+                headers=self._headers(json_content=False),
+                body={"data": None, "files": {"file": (filename, _normalize_binary(data), media_type)}},
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_file(await response.json(), provider=self.provider)
+
+    async def list_files(
+        self,
+        container_id: str,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> list[ProviderFile]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(self.base_url, f"/containers/{container_id}/files", {"after": after, "limit": limit}),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        payload = await response.json()
+        return [_normalize_openai_file(dict(item), provider=self.provider) for item in payload.get("data") or []]
+
+    async def retrieve_file(
+        self,
+        container_id: str,
+        file_id: str,
+        options: RetryOptions | None = None,
+    ) -> ProviderFile:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}/files/{file_id}",
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_file(await response.json(), provider=self.provider)
+
+    async def delete_file(
+        self,
+        container_id: str,
+        file_id: str,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}/files/{file_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve_file_content(
+        self,
+        container_id: str,
+        file_id: str,
+        options: RetryOptions | None = None,
+    ) -> bytes:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/containers/{container_id}/files/{file_id}/content",
+                method="GET",
+                headers=self._headers(json_content=False),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.read()
+
+
+@dataclass(slots=True)
+class OpenAICompatibleSkillsClient(SkillsClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    auth_header: str = "authorization"
+    auth_prefix: str = "Bearer "
+
+    def _headers(self, *, json_content: bool = True) -> dict[str, str]:
+        value = self.api_key if not self.auth_prefix else f"{self.auth_prefix}{self.api_key}"
+        headers = {self.auth_header: value}
+        if json_content:
+            headers["content-type"] = "application/json"
+        return headers
+
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills",
+                headers=self._headers(),
+                json_body=deepcopy(body),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve(self, skill_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}",
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve_content(self, skill_id: str, options: RetryOptions | None = None) -> bytes:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}/content",
+                method="GET",
+                headers=self._headers(json_content=False),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.read()
+
+    async def update(self, skill_id: str, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}",
+                headers=self._headers(),
+                json_body=deepcopy(body),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def delete(self, skill_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(self.base_url, "/skills", {"after": after, "limit": limit}),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def create_version(self, skill_id: str, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}/versions",
+                headers=self._headers(),
+                json_body=deepcopy(body),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve_version(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}/versions/{version_id}",
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve_version_content(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: RetryOptions | None = None,
+    ) -> bytes:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}/versions/{version_id}/content",
+                method="GET",
+                headers=self._headers(json_content=False),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.read()
+
+    async def delete_version(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/skills/{skill_id}/versions/{version_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def list_versions(
+        self,
+        skill_id: str,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(self.base_url, f"/skills/{skill_id}/versions", {"after": after, "limit": limit}),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+
+@dataclass(slots=True)
 class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
     provider: str
     api_key: str
@@ -1629,6 +2075,19 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         return _normalize_openai_vector_store_file(await response.json(), store_id=store_id)
 
+    async def download_document(self, name: str) -> bytes:
+        store_id, file_id = _parse_openai_vector_store_file_name(name)
+        response = await self.fetch(
+            f"{self.base_url}/vector_stores/{store_id}/files/{file_id}/content",
+            method="GET",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.read()
+
     async def delete_document(self, name: str) -> bool:
         store_id, file_id = _parse_openai_vector_store_file_name(name)
         response = await self.fetch(
@@ -1694,6 +2153,105 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
         return FileSearchSearchResult(results=list(payload.get("data") or []), raw_response=payload)
+
+    async def create_batch(
+        self,
+        *,
+        file_search_store_name: str,
+        file_names: list[str],
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchBatch:
+        response = await self.fetch(
+            f"{self.base_url}/vector_stores/{file_search_store_name}/file_batches",
+            headers=self._headers(),
+            json_body=drop_none(
+                {
+                    "file_ids": list(file_names),
+                    "attributes": _normalize_openai_vector_store_attributes(custom_metadata),
+                    "chunking_strategy": deepcopy(chunking_config),
+                }
+            ),
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_vector_store_batch(await response.json(), store_id=file_search_store_name)
+
+    async def get_batch(self, name: str) -> FileSearchBatch:
+        store_id, batch_id = _parse_openai_vector_store_file_batch_name(name)
+        response = await self.fetch(
+            f"{self.base_url}/vector_stores/{store_id}/file_batches/{batch_id}",
+            method="GET",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_vector_store_batch(await response.json(), store_id=store_id)
+
+    async def cancel_batch(self, name: str) -> FileSearchBatch:
+        store_id, batch_id = _parse_openai_vector_store_file_batch_name(name)
+        response = await self.fetch(
+            f"{self.base_url}/vector_stores/{store_id}/file_batches/{batch_id}/cancel",
+            headers=self._headers(),
+            json_body={},
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_vector_store_batch(await response.json(), store_id=store_id)
+
+    async def list_batch_documents(
+        self,
+        *,
+        name: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        state_filter: str | None = None,
+    ) -> FileSearchDocumentListResult:
+        store_id, batch_id = _parse_openai_vector_store_file_batch_name(name)
+        response = await self.fetch(
+            _request_url(
+                self.base_url,
+                f"/vector_stores/{store_id}/file_batches/{batch_id}/files",
+                {"limit": page_size, "after": page_token, "filter": state_filter},
+            ),
+            method="GET",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        payload = await response.json()
+        return FileSearchDocumentListResult(
+            documents=[_normalize_openai_vector_store_file(dict(item), store_id=store_id) for item in payload.get("data") or []],
+            next_page_token=(payload.get("last_id") or payload.get("next_page")) if payload.get("has_more") else None,
+            raw_response=payload,
+        )
+
+    async def wait_batch(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+    ) -> FileSearchBatch:
+        deadline = None if timeout_ms is None else time.monotonic() + max(0, timeout_ms) / 1000
+        while True:
+            batch = await self.get_batch(name)
+            state = str(batch.state or "").lower()
+            if state in {"completed", "failed", "cancelled"}:
+                return batch
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f'OpenAI vector store batch "{name}" did not finish before timeout.')
+                await asyncio.sleep(min(max(poll_interval_ms, 0) / 1000, remaining))
+            else:
+                await asyncio.sleep(max(poll_interval_ms, 0) / 1000)
 
     async def get_operation(self, name: str) -> FileSearchOperation:
         store_id, file_id = _parse_openai_vector_store_file_name(name)
@@ -2720,6 +3278,8 @@ def create_openai_compatible_provider(
     uploads_client_factory: Callable[[], UploadsClient] | None = None,
     moderations_client_factory: Callable[[], ModerationsClient] | None = None,
     batches_client_factory: Callable[[], BatchesClient] | None = None,
+    containers_client_factory: Callable[[], ContainersClient] | None = None,
+    skills_client_factory: Callable[[], SkillsClient] | None = None,
     file_search_stores_client_factory: Callable[[], FileSearchStoresClient] | None = None,
     responses_client_factory: Callable[[], ResponsesClient] | None = None,
     conversations_client_factory: Callable[[], ConversationsClient] | None = None,
@@ -2827,6 +3387,8 @@ def create_openai_compatible_provider(
         uploads_client_factory=uploads_client_factory,
         moderations_client_factory=moderations_client_factory,
         batches_client_factory=batches_client_factory,
+        containers_client_factory=containers_client_factory,
+        skills_client_factory=skills_client_factory,
         file_search_stores_client_factory=file_search_stores_client_factory,
         responses_client_factory=responses_client_factory,
         conversations_client_factory=conversations_client_factory,

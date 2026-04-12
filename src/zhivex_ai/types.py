@@ -54,6 +54,8 @@ class NativeSupport:
     uploads: bool = False
     moderations: bool = False
     batches: bool = False
+    containers: bool = False
+    skills: bool = False
     responses: bool = False
     conversations: bool = False
 
@@ -356,6 +358,114 @@ class BatchesClient(Protocol):
     async def cancel(self, batch_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
 
 
+class ContainersClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve(self, container_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def delete(self, container_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def create_file(
+        self,
+        *,
+        container_id: str,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str = "application/octet-stream",
+        options: "RetryOptions | None" = None,
+    ) -> ProviderFile: ...
+
+    async def list_files(
+        self,
+        container_id: str,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> list[ProviderFile]: ...
+
+    async def retrieve_file(
+        self,
+        container_id: str,
+        file_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> ProviderFile: ...
+
+    async def delete_file(
+        self,
+        container_id: str,
+        file_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def retrieve_file_content(
+        self,
+        container_id: str,
+        file_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> bytes: ...
+
+
+class SkillsClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve(self, skill_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve_content(self, skill_id: str, options: "RetryOptions | None" = None) -> bytes: ...
+
+    async def update(self, skill_id: str, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def delete(self, skill_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def create_version(self, skill_id: str, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve_version(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def retrieve_version_content(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> bytes: ...
+
+    async def delete_version(
+        self,
+        skill_id: str,
+        version_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def list_versions(
+        self,
+        skill_id: str,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+
 @dataclass(slots=True)
 class TokenCountDetail:
     modality: str | None = None
@@ -439,6 +549,16 @@ class FileSearchSearchResult:
     raw_response: Any = None
 
 
+@dataclass(slots=True)
+class FileSearchBatch:
+    name: str
+    file_search_store_name: str | None = None
+    state: str | None = None
+    create_time: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    raw_response: Any = None
+
+
 class FileSearchStoresClient(Protocol):
     async def create(
         self,
@@ -498,6 +618,8 @@ class FileSearchStoresClient(Protocol):
 
     async def get_document(self, name: str) -> FileSearchDocument: ...
 
+    async def download_document(self, name: str) -> bytes: ...
+
     async def delete_document(self, name: str) -> bool: ...
 
     async def update_document(
@@ -518,6 +640,36 @@ class FileSearchStoresClient(Protocol):
         ranking_options: dict[str, Any] | None = None,
         rewrite_query: bool | None = None,
     ) -> FileSearchSearchResult: ...
+
+    async def create_batch(
+        self,
+        *,
+        file_search_store_name: str,
+        file_names: list[str],
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchBatch: ...
+
+    async def get_batch(self, name: str) -> FileSearchBatch: ...
+
+    async def cancel_batch(self, name: str) -> FileSearchBatch: ...
+
+    async def list_batch_documents(
+        self,
+        *,
+        name: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        state_filter: str | None = None,
+    ) -> FileSearchDocumentListResult: ...
+
+    async def wait_batch(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+    ) -> FileSearchBatch: ...
 
     async def get_operation(self, name: str) -> FileSearchOperation: ...
 

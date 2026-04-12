@@ -69,18 +69,18 @@ This matrix is generated from runtime support metadata via `scripts/generate_sup
 
 ### Native Extras
 
-| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Realtime | Responses | Conversations |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | No | No | No | No | No | No | No | No |
-| azure-openai | No | No | No | No | No | No | Yes | No | No |
-| bedrock | No | No | No | No | No | No | Yes | No | No |
-| gemini | Yes | Yes | No | No | No | No | Yes | No | No |
-| kimi | No | No | No | No | No | No | No | No | No |
-| ollama | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| openrouter | No | No | No | No | No | No | No | No | No |
-| qwen | No | No | No | No | No | No | No | No | No |
-| vertex | No | No | No | No | No | No | Yes | No | No |
+| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Containers | Skills | Realtime | Responses | Conversations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | No | No | No | No | No | No | No | No | No | No |
+| azure-openai | No | No | No | No | No | No | No | No | Yes | No | No |
+| bedrock | No | No | No | No | No | No | No | No | Yes | No | No |
+| gemini | Yes | Yes | No | No | No | No | No | No | Yes | No | No |
+| kimi | No | No | No | No | No | No | No | No | No | No | No |
+| ollama | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| openrouter | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | No | No | No | No | No | No | No | No | No | No | No |
+| vertex | No | No | No | No | No | No | No | No | Yes | No | No |
 
 ### Tool Calling Notes
 
@@ -803,6 +803,8 @@ OpenAI providers may additionally expose low-level lifecycle clients:
 - `provider.uploads()` for multi-part uploads that complete into reusable OpenAI Files
 - `provider.moderations()` for raw Moderations API requests
 - `provider.batches()` for raw Batch API lifecycle operations such as `create`, `retrieve`, `list`, and `cancel`
+- `provider.containers()` for container lifecycle and container-file management
+- `provider.skills()` for skill lifecycle and skill-version management
 
 OpenAI helper builders cover the modern hosted-tool surface, including file search filters, code-interpreter containers, shell environments, MCP servers, inline skills, skill references, custom tools, namespaces, and tool search.
 
@@ -831,7 +833,10 @@ Notes:
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
+- `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
+- `create_vertex().native.language_model(...)` and `create_vertex().native.grounded_language_model(...)` also accept `provider_options={"vertex_ai_search": {...}}` and `provider_options={"external_search": {...}}`, which are normalized into the Vertex tool payloads automatically.
 - `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.
+- `create_openai().containers()` and `create_openai().skills()` expose the raw OpenAI Containers and Skills APIs.
 - `create_vertex().realtime_model(...).create_browser_token()` is intentionally unsupported. Vertex realtime sessions use server-side authentication instead of OpenAI/Gemini-style ephemeral browser tokens in this SDK.
 - `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
@@ -955,6 +960,18 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
 - Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)
 - Integrations: [ui_messages.py](./examples/integrations/ui_messages.py), [http_responses.py](./examples/integrations/http_responses.py), [gateway_fallback.py](./examples/integrations/gateway_fallback.py)
+
+For real provider validation, the repo also includes a live smoke runner:
+
+```bash
+export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
+export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
+export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
+export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+make smoke
+```
+
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini`.
 
 ## License
 

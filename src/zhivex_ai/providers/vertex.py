@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
+from copy import deepcopy
 from typing import Any
 
 from .._http import Fetcher, default_fetch
-from ..errors import ConfigurationError, ProviderHTTPError
+from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
+from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import CountTokensResult, EmbedResult, EmbeddingModel, ModelCapabilities, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail
+from ..types import CountTokensResult, EmbedResult, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
@@ -20,16 +22,130 @@ from .gemini import (
     GeminiLanguageModel,
     GeminiSpeechModel,
     GeminiTranscriptionModel,
+    gemini_code_execution_tool,
+    gemini_computer_use_tool,
+    gemini_google_maps_tool,
+    gemini_google_search_tool,
+    gemini_hosted_tool,
+    gemini_url_context_tool,
+    _extract_grounding_queries,
+    _extract_grounding_sources,
+    _extract_grounding_supports,
     _embedding_request_options,
+    _extract_search_entry_point,
     _gemini_realtime_build_audio,
     _gemini_realtime_build_text,
     _gemini_realtime_build_tool_result,
     _gemini_realtime_build_update,
     _gemini_realtime_parse_event,
+    _map_messages,
+    _map_reasoning,
+    _map_tools,
+    _parse_assistant_message,
+    _provider_options_without_mapped_tools,
+    _system_instruction,
     _provider_option_value,
 )
 
 VERTEX_REALTIME_CAPABILITIES = replace(GEMINI_REALTIME_CAPABILITIES, realtime_browser_tokens=False)
+_VERTEX_VERTEX_AI_SEARCH_PROVIDER_OPTIONS = ("vertex_ai_search", "vertexAiSearch")
+_VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS = ("external_search", "externalSearch")
+
+
+def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
+    return gemini_google_search_tool(exclude_domains=exclude_domains, **extra)
+
+
+def vertex_google_maps_tool(**config: Any) -> dict[str, Any]:
+    return gemini_google_maps_tool(**config)
+
+
+def vertex_url_context_tool(**config: Any) -> dict[str, Any]:
+    return gemini_url_context_tool(**config)
+
+
+def vertex_code_execution_tool(**config: Any) -> dict[str, Any]:
+    return gemini_code_execution_tool(**config)
+
+
+def vertex_computer_use_tool(**config: Any) -> dict[str, Any]:
+    return gemini_computer_use_tool(**config)
+
+
+def vertex_vertex_ai_search_tool(*, datastore: str, **extra: Any) -> dict[str, Any]:
+    return {"retrieval": {"vertexAiSearch": {"datastore": datastore, **deepcopy(extra)}}}
+
+
+def vertex_external_search_tool(
+    *,
+    endpoint: str,
+    api_key: str,
+    api_spec: str = "SIMPLE_SEARCH",
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "retrieval": {
+            "externalApi": {
+                "apiSpec": api_spec,
+                "endpoint": endpoint,
+                "apiAuth": {"apiKeyConfig": {"apiKeyString": api_key}},
+                **deepcopy(extra),
+            }
+        }
+    }
+
+
+def _vertex_extract_provider_option(provider_options: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in provider_options:
+            return provider_options.pop(name)
+    return None
+
+
+def _vertex_has_explicit_grounding_tools(provider_options: dict[str, Any] | None) -> bool:
+    if not provider_options:
+        return False
+    if any(name in provider_options for name in _VERTEX_VERTEX_AI_SEARCH_PROVIDER_OPTIONS + _VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS):
+        return True
+    if provider_options.get("tools"):
+        return True
+    if provider_options.get("built_in_tools") or provider_options.get("builtInTools"):
+        return True
+    return any(
+        name in provider_options
+        for name in ("google_search", "googleSearch", "google_maps", "googleMaps", "url_context", "urlContext")
+    )
+
+
+def _normalize_vertex_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not provider_options:
+        return provider_options
+    normalized = deepcopy(provider_options)
+    raw_tools = normalized.get("tools")
+    if raw_tools is None:
+        resolved_raw_tools: list[dict[str, Any]] = []
+    elif isinstance(raw_tools, list):
+        resolved_raw_tools = [deepcopy(item) for item in raw_tools]
+    else:
+        raise ValidationError('Vertex provider_options["tools"] must be a list when provided.')
+
+    vertex_ai_search = _vertex_extract_provider_option(normalized, *_VERTEX_VERTEX_AI_SEARCH_PROVIDER_OPTIONS)
+    if vertex_ai_search not in (None, False):
+        if not isinstance(vertex_ai_search, dict):
+            raise ValidationError('Vertex provider_options["vertex_ai_search"] must be a dictionary.')
+        resolved_raw_tools.append(vertex_vertex_ai_search_tool(**vertex_ai_search))
+
+    external_search = _vertex_extract_provider_option(normalized, *_VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS)
+    if external_search not in (None, False):
+        if not isinstance(external_search, dict):
+            raise ValidationError('Vertex provider_options["external_search"] must be a dictionary.')
+        resolved_raw_tools.append(vertex_external_search_tool(**external_search))
+
+    if resolved_raw_tools:
+        normalized["tools"] = resolved_raw_tools
+    elif "tools" in normalized:
+        normalized.pop("tools", None)
+    return normalized
 
 
 @dataclass(slots=True)
@@ -136,6 +252,12 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+        async def generate(self, input: ModelGenerateInput):  # type: ignore[override]
+            return await super().generate(replace(input, provider_options=_normalize_vertex_provider_options(input.provider_options)))
+
+        async def stream(self, input: ModelGenerateInput):  # type: ignore[override]
+            return await super().stream(replace(input, provider_options=_normalize_vertex_provider_options(input.provider_options)))
+
     class VertexSpeechModel(GeminiSpeechModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
@@ -150,6 +272,69 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+        async def generate(self, input: GroundedModelGenerateInput):  # type: ignore[override]
+            normalized_provider_options = _normalize_vertex_provider_options(input.provider_options)
+
+            response = await with_retry(
+                lambda: wrapped_fetch(
+                    self._url("generateContent"),
+                    headers={"content-type": "application/json"},
+                    json_body=drop_none({
+                        "contents": _map_messages(input.messages),
+                        "systemInstruction": _system_instruction(input.messages),
+                        "tools": _map_tools(
+                            None,
+                            normalized_provider_options,
+                            force_google_search=not _vertex_has_explicit_grounding_tools(normalized_provider_options),
+                        ),
+                        **(_provider_options_without_mapped_tools(normalized_provider_options) or {}),
+                        "generationConfig": drop_none({
+                            "temperature": input.temperature,
+                            "maxOutputTokens": input.max_tokens,
+                            "thinkingConfig": _map_reasoning(
+                                self.model_id,
+                                ModelGenerateInput(messages=input.messages, reasoning=input.reasoning),
+                            )
+                            if input.reasoning is not None
+                            else None,
+                        }),
+                    }),
+                    timeout_ms=input.timeout_ms,
+                ),
+                max_retries=input.max_retries or 0,
+                retry_backoff_ms=input.retry_backoff_ms or 250,
+                )
+            if response.status_code >= 400:
+                raise ProviderHTTPError(
+                    f"Vertex request failed with status {response.status_code}.",
+                    response.status_code,
+                    response_body=await response.text(),
+                )
+            payload = await response.json()
+            candidate = (payload.get("candidates") or [None])[0]
+            assistant_message = _parse_assistant_message(candidate)
+            usage = payload.get("usageMetadata") or {}
+
+            return GroundedGenerateResult(
+                messages=[assistant_message],
+                text="".join(part.text for part in assistant_message.parts if part.type == "text"),
+                finish_reason=normalize_finish_reason(candidate.get("finishReason") if candidate else None),
+                provider_finish_reason=candidate.get("finishReason") if candidate else None,
+                usage=TokenUsage(
+                    input_tokens=usage.get("promptTokenCount"),
+                    output_tokens=usage.get("candidatesTokenCount"),
+                    total_tokens=usage.get("totalTokenCount")
+                    or ((usage.get("promptTokenCount") or 0) + (usage.get("candidatesTokenCount") or 0)),
+                )
+                if usage
+                else None,
+                raw_response=payload,
+                sources=_extract_grounding_sources(payload),
+                queries=_extract_grounding_queries(payload),
+                supports=_extract_grounding_supports(payload),
+                search_entry_point=_extract_search_entry_point(payload),
+            )
+
     class VertexCountTokensClient(GeminiCountTokensClient):
         def _url(self, model_id: str) -> str:  # type: ignore[override]
             return f"{resolved_base.rstrip('/')}/publishers/google/models/{model_id}:countTokens"
@@ -160,7 +345,7 @@ def create_vertex(
             messages = kwargs.get("messages")
             system = kwargs.get("system")
             tools = kwargs.get("tools")
-            provider_options = kwargs.get("provider_options")
+            provider_options = _normalize_vertex_provider_options(kwargs.get("provider_options"))
             options = kwargs.get("options")
             from .gemini import (
                 _build_messages_for_request,

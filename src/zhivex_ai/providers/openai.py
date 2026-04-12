@@ -12,6 +12,7 @@ from ..types import PortableSupport
 from .base import create_provider_bundle
 from .openai_compat import (
     OpenAICompatibleBatchesClient,
+    OpenAICompatibleContainersClient,
     OPENAI_COMPAT_CAPABILITIES,
     OpenAICompatibleConversationsClient,
     OpenAICompatibleFileSearchStoresClient,
@@ -19,6 +20,7 @@ from .openai_compat import (
     OpenAICompatibleImagesClient,
     OpenAICompatibleModerationsClient,
     OpenAICompatibleResponsesClient,
+    OpenAICompatibleSkillsClient,
     OpenAICompatibleUploadsClient,
     create_openai_compatible_provider,
 )
@@ -425,6 +427,18 @@ def create_openai(
             fetch=requester,
         ),
         batches_client_factory=lambda: OpenAICompatibleBatchesClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        containers_client_factory=lambda: OpenAICompatibleContainersClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        skills_client_factory=lambda: OpenAICompatibleSkillsClient(
             provider="openai",
             api_key=resolved_key,
             base_url=base,

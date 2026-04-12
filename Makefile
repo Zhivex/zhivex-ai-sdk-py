@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test compile check build release-check clean
+.PHONY: dev test smoke compile check build release-check clean
 
 dev:
 	uv venv .venv
@@ -8,6 +8,9 @@ dev:
 
 test:
 	$(PYTHON) -m pytest -q
+
+smoke:
+	$(PYTHON) scripts/run_live_smoke.py
 
 compile:
 	$(PYTHON) -m compileall src tests examples

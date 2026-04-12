@@ -14,6 +14,7 @@ from ..messages import normalize_finish_reason, serialize_json_value, validate_f
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    CodeExecutionResultPart,
     CountTokensClient,
     CountTokensResult,
     FilePart,
@@ -79,7 +80,8 @@ ANTHROPIC_GROUNDED_CAPABILITIES = ModelCapabilities(
 
 _ANTHROPIC_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
-_ANTHROPIC_MCP_BETA = "mcp-client-2025-11-20"
+_ANTHROPIC_MCP_BETA = "mcp-client-2025-04-04"
+_ANTHROPIC_CODE_EXECUTION_BETA = "code-execution-2025-08-25"
 _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20250305"
 _ANTHROPIC_UNSUPPORTED_SCHEMA_KEYS = {
     "minimum",
@@ -204,6 +206,31 @@ def _extract_provider_options(provider_options: dict[str, Any] | None) -> tuple[
     options = dict(provider_options or {})
     request_betas = _coerce_beta_headers(options.pop("anthropic_beta", None))
     return options, request_betas
+
+
+def _tool_type(tool: dict[str, Any]) -> str | None:
+    value = tool.get("type")
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _tool_beta_headers(
+    mapped_tools: list[dict[str, Any]] | None,
+    provider_options: dict[str, Any],
+) -> list[str]:
+    headers: list[str] = []
+    tool_types = {
+        tool_type
+        for tool in mapped_tools or []
+        if isinstance(tool, dict)
+        for tool_type in [_tool_type(tool)]
+        if tool_type is not None
+    }
+    raw_mcp_servers = provider_options.get("mcp_servers")
+    if raw_mcp_servers is not None or "mcp_tool" in tool_types or "mcp_tool_use" in tool_types:
+        headers.append(_ANTHROPIC_MCP_BETA)
+    if any(tool_type.startswith("code_execution") for tool_type in tool_types):
+        headers.append(_ANTHROPIC_CODE_EXECUTION_BETA)
+    return headers
 
 
 def _normalize_anthropic_file(payload: dict[str, Any]) -> ProviderFile:
@@ -510,6 +537,19 @@ def _text_part_from_block(block: dict[str, Any]) -> TextPart:
     return TextPart(text=str(block.get("text") or ""), provider_metadata=provider_metadata)
 
 
+def _anthropic_result_text(block: dict[str, Any]) -> str:
+    for key in ("stdout", "stderr", "text", "result"):
+        value = block.get(key)
+        if isinstance(value, str) and value:
+            return value
+    content = block.get("content")
+    if isinstance(content, str) and content:
+        return content
+    if content is not None:
+        return json.dumps(serialize_json_value(content))
+    return json.dumps(serialize_json_value(block))
+
+
 def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
     parts: list[Any] = []
     thinking_blocks: list[dict[str, Any]] = []
@@ -550,6 +590,13 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
                         output=serialize_json_value(block.get("content") or block),
                         is_error=False,
                     )
+                )
+            )
+        elif block_type.endswith("_code_execution_result") or block_type == "code_execution_result":
+            parts.append(
+                CodeExecutionResultPart(
+                    output=_anthropic_result_text(block),
+                    outcome=block_type,
                 )
             )
         elif block_type:
@@ -775,13 +822,13 @@ class _AnthropicBase:
         *,
         messages: list[ModelMessage],
         provider_options: dict[str, Any],
+        body_tools: list[dict[str, Any]] | None = None,
         request_betas: list[str],
     ) -> list[str]:
         extra = list(request_betas)
         if _has_uploaded_file_reference(messages):
             extra.append(_ANTHROPIC_FILES_BETA)
-        if provider_options.get("mcp_servers") is not None:
-            extra.append(_ANTHROPIC_MCP_BETA)
+        extra.extend(_tool_beta_headers(body_tools, provider_options))
         return extra
 
 
@@ -825,6 +872,7 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
                     self._message_beta_headers(
                         messages=built_messages,
                         provider_options=extracted_options,
+                        body_tools=body_tools,
                         request_betas=request_betas,
                     )
                 ),
@@ -886,6 +934,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                     self._message_beta_headers(
                         messages=input.messages,
                         provider_options=provider_options,
+                        body_tools=body_tools,
                         request_betas=request_betas,
                     )
                 ),
@@ -924,6 +973,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                     self._message_beta_headers(
                         messages=input.messages,
                         provider_options=provider_options,
+                        body_tools=body_tools,
                         request_betas=request_betas,
                     )
                 ),
@@ -1032,6 +1082,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
                     self._message_beta_headers(
                         messages=input.messages,
                         provider_options=remaining_options,
+                        body_tools=body_tools,
                         request_betas=request_betas,
                     )
                 ),

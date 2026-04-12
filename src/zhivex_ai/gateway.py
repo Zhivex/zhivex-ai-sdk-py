@@ -44,6 +44,7 @@ class GatewayAttempt:
     ok: bool
     latency_ms: int
     error_message: str | None = None
+    retryable: bool = False
 
 
 @dataclass(slots=True)
@@ -202,7 +203,7 @@ def _normalize_error(error: Exception) -> GatewayError:
     if isinstance(error, asyncio.TimeoutError):
         return GatewayError("Gateway attempt timed out.", True)
     if isinstance(error, ProviderHTTPError):
-        return GatewayError(str(error), error.status in {408, 429} or error.status >= 500)
+        return GatewayError(str(error), error.retryable)
     if isinstance(error, OSError):
         return GatewayError(str(error), True)
     message = str(error).lower()
@@ -217,7 +218,7 @@ def _final_gateway_error(attempts: list[GatewayAttempt]) -> GatewayError:
     retryable = False
     for attempt in reversed(attempts):
         if not attempt.ok and attempt.error_message:
-            retryable = any(token in attempt.error_message.lower() for token in ("timed out", "429", "503", "connect"))
+            retryable = attempt.retryable
             break
     summary = "; ".join(
         f"{attempt.provider}/{attempt.model_id}: {attempt.error_message or 'unknown error'}"
@@ -240,6 +241,7 @@ def _attempt_payload(attempt: GatewayAttempt, retry: int, target_rank: int) -> d
         "ok": attempt.ok,
         "latencyMs": attempt.latency_ms,
         "errorMessage": attempt.error_message,
+        "retryable": attempt.retryable,
         "retry": retry,
         "targetRank": target_rank,
     }
@@ -322,7 +324,16 @@ def create_gateway(config: GatewayConfig):
                             error_message = (
                                 f'Gateway attempt timed out for "{target.provider}/{target.model_id}" after {timeout_ms} ms.'
                             )
-                        attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=latency_ms, error_message=str(normalized)))
+                        attempts.append(
+                            GatewayAttempt(
+                                provider=target.provider,
+                                model_id=target.model_id,
+                                ok=False,
+                                latency_ms=latency_ms,
+                                error_message=str(normalized),
+                                retryable=normalized.retryable,
+                            )
+                        )
                         attempts[-1].error_message = error_message
                         if config.on_attempt:
                             await _maybe_await(config.on_attempt(_attempt_payload(attempts[-1], retry, target_index)))

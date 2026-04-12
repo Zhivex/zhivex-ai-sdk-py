@@ -11,6 +11,20 @@ This folder contains runnable Python examples for the main public surfaces of th
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, and model catalog helpers.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 
+## Live Smoke
+
+There is also a repository-level smoke runner for real provider validation:
+
+```bash
+export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
+export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
+export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
+export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+make smoke
+```
+
+It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini`.
+
 ## Run
 
 From the repository root:
@@ -107,3 +121,4 @@ Suggested order if you are new to the SDK:
 - Examples that read `.env` files use `python-dotenv` when available, but they still work if you export environment variables manually.
 - `transcribe_audio.py` expects a WAV file at `examples/audio/sample.wav`.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.
+- `make smoke` runs a stricter live pass against OpenAI, Gemini, Anthropic, and Vertex when the corresponding credentials and model IDs are configured.

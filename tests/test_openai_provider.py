@@ -458,6 +458,8 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
                         "created_at": 456,
                     },
                 )
+            if method == "GET" and url.endswith("/vector_stores/vs_1/files/file_1/content"):
+                return FakeResponse(status_code=200, body_bytes=b"manual-content")
             if method == "DELETE" and url.endswith("/vector_stores/vs_1/files/file_1"):
                 return FakeResponse(status_code=200, payload={"id": "file_1", "deleted": True})
             if method == "DELETE" and url.endswith("/vector_stores/vs_1"):
@@ -471,6 +473,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         fetched = await stores.get("vs_1")
         documents = await stores.list_documents(file_search_store_name="vs_1")
         document = await stores.get_document("vector_stores/vs_1/files/file_1")
+        content = await stores.download_document("vector_stores/vs_1/files/file_1")
         deleted_document = await stores.delete_document("vector_stores/vs_1/files/file_1")
         deleted_store = await stores.delete("vs_1")
 
@@ -479,6 +482,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(fetched.display_name, "Docs")
         self.assertEqual(documents.documents[0].name, "vector_stores/vs_1/files/file_1")
         self.assertEqual(document.custom_metadata[0]["lang"], "es")
+        self.assertEqual(content, b"manual-content")
         self.assertTrue(deleted_document)
         self.assertTrue(deleted_store)
 
@@ -588,6 +592,50 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["json"], {"name": "Docs v2", "metadata": {"env": "prod"}})
         self.assertEqual(requests[1]["json"], {"attributes": {"topic": "billing"}})
         self.assertEqual(requests[2]["json"], {"query": "return policy", "max_num_results": 3, "rewrite_query": True})
+
+    async def test_openai_file_search_batches(self) -> None:
+        requests: list[dict[str, Any]] = []
+        polls = 0
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            nonlocal polls
+            requests.append({"url": url, "method": method, "json": json_body})
+            if url.endswith("/vector_stores/vs_1/file_batches") and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "batch_1", "vector_store_id": "vs_1", "status": "in_progress"})
+            if url.endswith("/vector_stores/vs_1/file_batches/batch_1") and method == "GET":
+                polls += 1
+                return FakeResponse(
+                    status_code=200,
+                    payload={"id": "batch_1", "vector_store_id": "vs_1", "status": "completed" if polls > 1 else "in_progress"},
+                )
+            if url.endswith("/vector_stores/vs_1/file_batches/batch_1/cancel"):
+                return FakeResponse(status_code=200, payload={"id": "batch_1", "vector_store_id": "vs_1", "status": "cancelled"})
+            return FakeResponse(
+                status_code=200,
+                payload={"data": [{"id": "file_1", "vector_store_id": "vs_1", "status": "completed", "filename": "doc.pdf"}], "has_more": False},
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stores = provider.file_search_stores()
+        batch = await stores.create_batch(file_search_store_name="vs_1", file_names=["file_1", "file_2"], custom_metadata=[{"team": "docs"}])
+        files = await stores.list_batch_documents(name=batch.name)
+        waited = await stores.wait_batch(batch.name, poll_interval_ms=0, timeout_ms=50)
+        cancelled = await stores.cancel_batch(batch.name)
+
+        self.assertEqual(batch.name, "vector_stores/vs_1/file_batches/batch_1")
+        self.assertEqual(files.documents[0].display_name, "doc.pdf")
+        self.assertEqual(waited.state, "completed")
+        self.assertEqual(cancelled.state, "cancelled")
+        self.assertEqual(requests[0]["json"], {"file_ids": ["file_1", "file_2"], "attributes": {"team": "docs"}})
 
     async def test_openai_images_client_generate_edit_and_variation(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -726,6 +774,84 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(retrieved["status"], "completed")
         self.assertEqual(listed["data"][0]["id"], "batch_1")
         self.assertEqual(cancelled["status"], "cancelling")
+
+    async def test_openai_containers_and_skills_clients(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body, "body": body})
+            if "/containers/" in url and url.endswith("/content"):
+                return FakeResponse(status_code=200, body_bytes=b"print('hi')")
+            if url.endswith("/containers/ctr_1/files/file_1"):
+                return FakeResponse(status_code=200, payload={"id": "file_1", "filename": "main.py", "bytes": 11})
+            if url.endswith("/containers/ctr_1/files"):
+                if method == "GET":
+                    return FakeResponse(status_code=200, payload={"data": [{"id": "file_1", "filename": "main.py", "bytes": 11}]})
+                return FakeResponse(status_code=200, payload={"id": "file_1", "filename": "main.py", "bytes": 11})
+            if url.endswith("/containers/ctr_1"):
+                if method == "DELETE":
+                    return FakeResponse(status_code=200, payload={"id": "ctr_1", "deleted": True})
+                return FakeResponse(status_code=200, payload={"id": "ctr_1", "status": "ready"})
+            if "/containers?" in url:
+                return FakeResponse(status_code=200, payload={"data": [{"id": "ctr_1", "status": "ready"}]})
+            if url.endswith("/containers"):
+                return FakeResponse(status_code=200, payload={"id": "ctr_1", "status": "ready"})
+
+            if "/skills/skill_1/versions/v1/content" in url:
+                return FakeResponse(status_code=200, body_bytes=b"zip-bytes")
+            if "/skills/skill_1/versions/v1" in url:
+                if method == "DELETE":
+                    return FakeResponse(status_code=200, payload={"id": "v1", "deleted": True})
+                return FakeResponse(status_code=200, payload={"id": "v1", "status": "ready"})
+            if "/skills/skill_1/versions" in url:
+                if method == "GET":
+                    return FakeResponse(status_code=200, payload={"data": [{"id": "v1", "status": "ready"}]})
+                return FakeResponse(status_code=200, payload={"id": "v1", "status": "ready"})
+            if url.endswith("/skills/skill_1/content"):
+                return FakeResponse(status_code=200, body_bytes=b"skill-zip")
+            if url.endswith("/skills/skill_1"):
+                if method == "DELETE":
+                    return FakeResponse(status_code=200, payload={"id": "skill_1", "deleted": True})
+                return FakeResponse(status_code=200, payload={"id": "skill_1", "name": "demo-skill"})
+            if "/skills?" in url:
+                return FakeResponse(status_code=200, payload={"data": [{"id": "skill_1", "name": "demo-skill"}]})
+            if url.endswith("/skills"):
+                return FakeResponse(status_code=200, payload={"id": "skill_1", "name": "demo-skill"})
+
+            return FakeResponse(status_code=200, payload={"deleted": True})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+
+        container = await provider.containers().create({"name": "sandbox"})
+        container_list = await provider.containers().list(limit=10)
+        container_file = await provider.containers().create_file(container_id="ctr_1", data=b"print('hi')", filename="main.py")
+        container_files = await provider.containers().list_files("ctr_1")
+        container_file_content = await provider.containers().retrieve_file_content("ctr_1", "file_1")
+        skill = await provider.skills().create({"name": "demo-skill"})
+        skill_content = await provider.skills().retrieve_content("skill_1")
+        skill_version = await provider.skills().create_version("skill_1", {"source": {"type": "inline"}})
+        skill_versions = await provider.skills().list_versions("skill_1")
+        skill_version_content = await provider.skills().retrieve_version_content("skill_1", "v1")
+
+        self.assertEqual(container["id"], "ctr_1")
+        self.assertEqual(container_list["data"][0]["id"], "ctr_1")
+        self.assertEqual(container_file.filename, "main.py")
+        self.assertEqual(container_files[0].id, "file_1")
+        self.assertEqual(container_file_content, b"print('hi')")
+        self.assertEqual(skill["id"], "skill_1")
+        self.assertEqual(skill_content, b"skill-zip")
+        self.assertEqual(skill_version["id"], "v1")
+        self.assertEqual(skill_versions["data"][0]["id"], "v1")
+        self.assertEqual(skill_version_content, b"zip-bytes")
 
     async def test_openai_normalizes_mcp_tool_schema_for_strict_mode(self) -> None:
         requests: list[dict[str, Any]] = []
