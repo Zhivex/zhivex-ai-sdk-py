@@ -12,14 +12,18 @@ from ..types import EmbedResult, EmbeddingModel, ModelCapabilities, RealtimeConn
 from .base import ProviderAdapter
 from .gemini import (
     GEMINI_CAPABILITIES,
+    GEMINI_GROUNDED_CAPABILITIES,
     GEMINI_REALTIME_CAPABILITIES,
+    GeminiGroundedLanguageModel,
     GeminiLanguageModel,
     GeminiSpeechModel,
+    _embedding_request_options,
     _gemini_realtime_build_audio,
     _gemini_realtime_build_text,
     _gemini_realtime_build_tool_result,
     _gemini_realtime_build_update,
     _gemini_realtime_parse_event,
+    _provider_option_value,
 )
 
 
@@ -39,15 +43,37 @@ class VertexEmbeddingModel(EmbeddingModel):
         return {"content-type": "application/json", "authorization": f"Bearer {self.access_token}"}
 
     async def embed(self, values: list[str], options: Any = None) -> EmbedResult:
+        config = _embedding_request_options(options)
+        task_type = config.get("task_type")
+        title = config.get("title")
+        output_dimensionality = config.get("output_dimensionality")
+        auto_truncate = config.get("auto_truncate")
+        task_types = config.get("task_types")
+        titles = config.get("titles")
         response = await with_retry(
             lambda: self.fetch(
                 self._url(),
                 headers=self._headers(),
-                json_body={"instances": [{"content": value} for value in values]},
-                timeout_ms=getattr(options, "timeout_ms", None),
+                json_body={
+                    "instances": [
+                        {
+                            "content": value,
+                            **({"task_type": task_types[index]} if isinstance(task_types, list) and index < len(task_types) else {}),
+                            **({"title": titles[index]} if isinstance(titles, list) and index < len(titles) else {}),
+                            **({"task_type": task_type} if not isinstance(task_types, list) and task_type is not None else {}),
+                            **({"title": title} if not isinstance(titles, list) and title is not None else {}),
+                        }
+                        for index, value in enumerate(values)
+                    ],
+                    "parameters": {
+                        **({"outputDimensionality": output_dimensionality} if output_dimensionality is not None else {}),
+                        **({"autoTruncate": auto_truncate} if auto_truncate is not None else {}),
+                    },
+                },
+                timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
             ),
-            max_retries=getattr(options, "max_retries", 0) or 0,
-            retry_backoff_ms=getattr(options, "retry_backoff_ms", 250) or 250,
+            max_retries=_provider_option_value(options, "max_retries", "maxRetries") or 0,
+            retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs") or 250,
         )
         payload = await response.json()
         return EmbedResult(embeddings=[prediction.get("embeddings", {}).get("values", []) for prediction in payload.get("predictions", [])], raw_response=payload)
@@ -58,7 +84,7 @@ def create_vertex(
     access_token: str | None = None,
     project_id: str | None = None,
     location: str = "us-central1",
-    api_version: str = "v1beta1",
+    api_version: str = "v1",
     base_url: str | None = None,
     fetch: Fetcher | None = None,
     realtime_url: str | None = None,
@@ -74,10 +100,30 @@ def create_vertex(
     requester = fetch or default_fetch
 
     class VertexFetcher:
-        async def __call__(self, url: str, *, headers: dict[str, str], json_body: dict[str, object], timeout_ms: int | None, stream: bool = False):
+        async def __call__(
+            self,
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
             merged = dict(headers)
             merged["authorization"] = f"Bearer {resolved_token}"
-            return await requester(url, headers=merged, json_body=json_body, timeout_ms=timeout_ms, stream=stream)
+            request_kwargs: dict[str, Any] = {
+                "headers": merged,
+                "json_body": json_body,
+                "timeout_ms": timeout_ms,
+                "stream": stream,
+            }
+            if method != "POST":
+                request_kwargs["method"] = method
+            if body is not None:
+                request_kwargs["body"] = body
+            return await requester(url, **request_kwargs)
 
     wrapped_fetch = VertexFetcher()
 
@@ -86,6 +132,12 @@ def create_vertex(
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
     class VertexSpeechModel(GeminiSpeechModel):
+        def _url(self, action: str) -> str:  # type: ignore[override]
+            return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
+
+    class VertexGroundedLanguageModel(GeminiGroundedLanguageModel):
+        capabilities = GEMINI_GROUNDED_CAPABILITIES
+
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
@@ -153,6 +205,13 @@ def create_vertex(
             fetch=wrapped_fetch,
         ),
         speech_model_factory=lambda model_id: VertexSpeechModel(
+            provider="vertex",
+            model_id=model_id,
+            api_key="unused",
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+        ),
+        grounded_language_model_factory=lambda model_id: VertexGroundedLanguageModel(
             provider="vertex",
             model_id=model_id,
             api_key="unused",

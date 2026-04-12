@@ -11,7 +11,7 @@ from zhivex_ai import (
 async def main() -> None:
     provider = create_openai()
     model = wrap_language_model(
-        provider("gpt-4o-mini"),
+        provider("gpt-5.4-mini"),
         [
             create_telemetry_middleware(
                 on_event=lambda event: print("telemetry:", event["type"])

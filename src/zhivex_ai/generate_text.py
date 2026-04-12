@@ -47,6 +47,10 @@ from .types import (
 _GEMINI_BUILTIN_SEARCH_TOOLS = {"search", "google_search", "googleSearch"}
 
 
+def _is_provider_managed_tool_call(call: ToolCall) -> bool:
+    return bool(call.provider_metadata.get("provider_managed"))
+
+
 def _validate_reasoning(model: LanguageModel, reasoning: ReasoningConfig | None) -> None:
     if reasoning is None:
         return
@@ -282,7 +286,7 @@ def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
     tool_calls: list[ToolCall] = []
     for message in messages:
         for part in message.parts:
-            if part.type == "tool-call":
+            if part.type == "tool-call" and not _is_provider_managed_tool_call(part.tool_call):
                 tool_calls.append(part.tool_call)
     return tool_calls
 

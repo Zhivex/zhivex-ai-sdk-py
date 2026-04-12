@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
-from ..messages import normalize_finish_reason
+from ..messages import normalize_finish_reason, validate_file_part, validate_message_parts
 from ..realtime import (
     CallbackRealtimeSession,
     RealtimeConnectionFactory,
@@ -20,29 +21,36 @@ from ..realtime import (
     encode_audio_frame,
     open_websocket_connection,
     tool_result_payload,
-    unsupported_browser_token,
 )
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
     AudioFrame,
+    CodeExecutionResultPart,
     EmbedResult,
     EmbeddingModel,
+    FilePart,
+    FilesClient,
     GenerateResult,
+    GeneratedCodePart,
     GroundedGenerateResult,
     GroundedLanguageModel,
+    GroundingSupport,
     GroundedModelGenerateInput,
     GroundingSource,
     LanguageModel,
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    ProviderFile,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
+    RealtimeGoAwayEvent,
     RealtimeModel,
     RealtimeSession,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
+    RealtimeSessionResumptionEvent,
     RealtimeTextDeltaEvent,
     RealtimeTokenResult,
     RealtimeToolCallEvent,
@@ -72,8 +80,8 @@ GEMINI_CAPABILITIES = ModelCapabilities(
     tool_choice=True,
     parallel_tool_calls=False,
     vision=True,
-    files=False,
-    audio_input=False,
+    files=True,
+    audio_input=True,
     audio_output=False,
     embeddings=True,
     reasoning=True,
@@ -130,10 +138,25 @@ GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
     realtime_audio_input=True,
     realtime_audio_output=True,
     realtime_tools=True,
-    realtime_browser_tokens=False,
+    realtime_browser_tokens=True,
 )
 
-GOOGLE_SEARCH_PROVIDER_OPTION = "google_search"
+_RAW_TOOLS_PROVIDER_OPTION = "tools"
+_BUILT_IN_TOOLS_PROVIDER_OPTIONS = {"built_in_tools", "builtInTools"}
+_BUILT_IN_TOOL_NAME_MAP = {
+    "google_search": "googleSearch",
+    "googlesearch": "googleSearch",
+    "google_maps": "googleMaps",
+    "googlemaps": "googleMaps",
+    "url_context": "urlContext",
+    "urlcontext": "urlContext",
+    "code_execution": "codeExecution",
+    "codeexecution": "codeExecution",
+    "file_search": "fileSearch",
+    "filesearch": "fileSearch",
+    "computer_use": "computerUse",
+    "computeruse": "computerUse",
+}
 
 
 def _system_instruction(messages: list[ModelMessage]) -> dict[str, Any] | None:
@@ -141,6 +164,23 @@ def _system_instruction(messages: list[ModelMessage]) -> dict[str, Any] | None:
         part.text for message in messages if message.role == "system" for part in message.parts if part.type == "text"
     )
     return {"parts": [{"text": text}]} if text else None
+
+
+def _map_file_part(part: FilePart) -> dict[str, Any]:
+    validate_file_part(part)
+    if part.text is not None or part.document_content is not None:
+        raise ValidationError('Provider "gemini" does not support FilePart "text" or "document_content".')
+    if part.file_id is not None:
+        raise ValidationError('Provider "gemini" does not support "file_id". Use "file_uri" instead.')
+    if part.data is not None:
+        return {"inlineData": {"mimeType": part.media_type or "application/octet-stream", "data": part.data}}
+    file_uri = part.file_uri or part.url
+    if file_uri is None:
+        raise ValidationError('Provider "gemini" requires "file_uri" or "url" for remote file references.')
+    payload = {"fileUri": file_uri}
+    if part.media_type:
+        payload["mimeType"] = part.media_type
+    return {"fileData": payload}
 
 
 def _map_part(part: Any) -> dict[str, Any]:
@@ -154,6 +194,8 @@ def _map_part(part: Any) -> dict[str, Any]:
             media_type = part.media_type or header.lower()
             data = body
         return {"inlineData": {"mimeType": media_type, "data": data}}
+    if part.type == "file":
+        return _map_file_part(part)
     if part.type == "tool-call":
         function_call = {"name": part.tool_call.name, "args": part.tool_call.input}
         thought_signature = part.tool_call.provider_metadata.get("thought_signature")
@@ -171,6 +213,13 @@ def _map_part(part: Any) -> dict[str, Any]:
                 },
             }
         }
+    if part.type == "generated-code":
+        return {"executableCode": {"language": part.language or "python", "code": part.code}}
+    if part.type == "code-result":
+        payload = {"output": part.output}
+        if part.outcome is not None:
+            payload["outcome"] = part.outcome
+        return {"codeExecutionResult": payload}
     return {"text": json.dumps(str(part))}
 
 
@@ -185,12 +234,94 @@ def _map_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     ]
 
 
-def _google_search_enabled(provider_options: dict[str, Any] | None) -> bool:
-    return bool((provider_options or {}).get(GOOGLE_SEARCH_PROVIDER_OPTION))
-
-
 def _google_search_tool() -> dict[str, Any]:
     return {"googleSearch": {}}
+
+
+def _provider_option_value(options: Any, *names: str) -> Any:
+    if options is None:
+        return None
+    if isinstance(options, dict):
+        for name in names:
+            if name in options:
+                return options[name]
+        return None
+    for name in names:
+        if hasattr(options, name):
+            return getattr(options, name)
+    return None
+
+
+def _normalize_builtin_tool_name(name: str) -> str | None:
+    normalized = "".join(char.lower() if char.isalnum() else "_" for char in name).strip("_")
+    normalized = "_".join(part for part in normalized.split("_") if part)
+    return _BUILT_IN_TOOL_NAME_MAP.get(normalized)
+
+
+def _normalize_builtin_tool_config(value: Any) -> dict[str, Any] | None:
+    if value in (None, False):
+        return None
+    if value is True:
+        return {}
+    if not isinstance(value, dict):
+        raise ValidationError("Gemini built-in tool config values must be booleans or dictionaries.")
+    return deepcopy(value)
+
+
+def _extract_builtin_tools(provider_options: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not provider_options:
+        return []
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in provider_options.items():
+        canonical = _normalize_builtin_tool_name(key)
+        if canonical is None:
+            continue
+        config = _normalize_builtin_tool_config(value)
+        if config is not None:
+            normalized[canonical] = config
+
+    built_in_tools = provider_options.get("built_in_tools") or provider_options.get("builtInTools")
+    if built_in_tools is not None:
+        if not isinstance(built_in_tools, list):
+            raise ValidationError('Gemini provider_options["built_in_tools"] must be a list.')
+        for item in built_in_tools:
+            if isinstance(item, str):
+                canonical = _normalize_builtin_tool_name(item)
+                if canonical is None:
+                    raise ValidationError(f'Unsupported Gemini built-in tool "{item}".')
+                normalized[canonical] = {}
+                continue
+            if not isinstance(item, dict) or len(item) != 1:
+                raise ValidationError('Each Gemini built-in tool entry must be a string or a single-key dictionary.')
+            raw_name, raw_config = next(iter(item.items()))
+            canonical = _normalize_builtin_tool_name(str(raw_name))
+            if canonical is None:
+                raise ValidationError(f'Unsupported Gemini built-in tool "{raw_name}".')
+            config = _normalize_builtin_tool_config(raw_config)
+            if config is not None:
+                normalized[canonical] = config
+
+    return [{name: config} for name, config in normalized.items()]
+
+
+def _extract_raw_tools(provider_options: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not provider_options:
+        return []
+    raw = provider_options.get(_RAW_TOOLS_PROVIDER_OPTION)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError('Gemini provider_options["tools"] must be a list when provided.')
+    return [deepcopy(item) for item in raw]
+
+
+def _validate_builtin_tool_combination(function_tools: dict[str, Any] | None, builtin_tools: list[dict[str, Any]]) -> None:
+    names = [next(iter(tool.keys())) for tool in builtin_tools if isinstance(tool, dict) and tool]
+    if "fileSearch" in names and (len(names) > 1 or bool(function_tools)):
+        raise UnsupportedFeatureError('Provider "gemini" does not support combining "file_search" with other tools.')
+    if "urlContext" in names and function_tools:
+        raise UnsupportedFeatureError('Provider "gemini" does not support combining "url_context" with function calling.')
 
 
 _GEMINI_SUPPORTED_SCHEMA_KEYS = {
@@ -234,7 +365,12 @@ def _normalize_gemini_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return visit(deepcopy(schema))
 
 
-def _map_tools(tools: dict[str, Any] | None, provider_options: dict[str, Any] | None = None) -> list[dict[str, Any]] | None:
+def _map_tools(
+    tools: dict[str, Any] | None,
+    provider_options: dict[str, Any] | None = None,
+    *,
+    force_google_search: bool = False,
+) -> list[dict[str, Any]] | None:
     mapped: list[dict[str, Any]] = []
     if tools:
         mapped.append(
@@ -253,8 +389,12 @@ def _map_tools(tools: dict[str, Any] | None, provider_options: dict[str, Any] | 
                 ]
             }
         )
-    if _google_search_enabled(provider_options):
-        mapped.append(_google_search_tool())
+    builtin_tools = _extract_builtin_tools(provider_options)
+    if force_google_search and not any("googleSearch" in tool for tool in builtin_tools):
+        builtin_tools.insert(0, _google_search_tool())
+    _validate_builtin_tool_combination(tools, builtin_tools)
+    mapped.extend(builtin_tools)
+    mapped.extend(_extract_raw_tools(provider_options))
     return mapped or None
 
 
@@ -273,10 +413,13 @@ def _map_tool_config(tools: dict[str, Any] | None, tool_choice: str | ToolChoice
     }
 
 
-def _provider_options_without_google_search(provider_options: dict[str, Any] | None) -> dict[str, Any] | None:
+def _provider_options_without_mapped_tools(provider_options: dict[str, Any] | None) -> dict[str, Any] | None:
     if not provider_options:
         return None
-    remaining = {key: value for key, value in provider_options.items() if key != GOOGLE_SEARCH_PROVIDER_OPTION}
+    stripped_keys = set(_BUILT_IN_TOOLS_PROVIDER_OPTIONS)
+    stripped_keys.add(_RAW_TOOLS_PROVIDER_OPTION)
+    stripped_keys.update(key for key in provider_options if _normalize_builtin_tool_name(key) is not None)
+    remaining = {key: value for key, value in provider_options.items() if key not in stripped_keys}
     return remaining or None
 
 
@@ -373,6 +516,177 @@ def _extract_gemini_audio_part(
     raise ValidationError(f'Provider "{provider}" did not return audio data for speech generation.')
 
 
+def _normalize_binary(data: bytes | bytearray | memoryview) -> bytes:
+    if isinstance(data, memoryview):
+        return data.tobytes()
+    return bytes(data)
+
+
+def _parse_timestamp_ms(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _embedding_request_options(options: Any) -> dict[str, Any]:
+    task_type = _provider_option_value(options, "task_type", "taskType")
+    title = _provider_option_value(options, "title")
+    output_dimensionality = _provider_option_value(options, "output_dimensionality", "outputDimensionality")
+    auto_truncate = _provider_option_value(options, "auto_truncate", "autoTruncate")
+    task_types = _provider_option_value(options, "task_types", "taskTypes")
+    titles = _provider_option_value(options, "titles")
+    return drop_none(
+        {
+            "task_type": task_type,
+            "title": title,
+            "output_dimensionality": output_dimensionality,
+            "auto_truncate": auto_truncate,
+            "task_types": task_types,
+            "titles": titles,
+        }
+    )
+
+
+def _normalize_gemini_file(payload: dict[str, Any], *, provider: str) -> ProviderFile:
+    return ProviderFile(
+        provider=provider,
+        id=str(payload.get("name") or ""),
+        filename=payload.get("displayName"),
+        media_type=payload.get("mimeType"),
+        size_bytes=payload.get("sizeBytes"),
+        status=payload.get("state"),
+        file_uri=payload.get("uri"),
+        created_at=payload.get("createTime"),
+        metadata=dict(payload),
+    )
+
+
+@dataclass(slots=True)
+class GeminiFilesClient(FilesClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _json_url(self, path: str) -> str:
+        return f"{self.base_url}{path}?key={self.api_key}"
+
+    def _upload_url(self) -> str:
+        return f"{self.base_url.replace('/v1beta', '')}/upload/v1beta/files?key={self.api_key}"
+
+    async def upload(
+        self,
+        *,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str = "application/pdf",
+        purpose: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProviderFile:
+        del purpose
+        raw = _normalize_binary(data)
+        start_body = {"file": {"display_name": filename}}
+        if metadata:
+            start_body["file"]["custom_metadata"] = metadata
+        start = await self.fetch(
+            self._upload_url(),
+            headers={
+                "content-type": "application/json",
+                "x-goog-upload-protocol": "resumable",
+                "x-goog-upload-command": "start",
+                "x-goog-upload-header-content-length": str(len(raw)),
+                "x-goog-upload-header-content-type": media_type,
+            },
+            json_body=start_body,
+            timeout_ms=None,
+        )
+        if start.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" request failed with status {start.status_code}.',
+                start.status_code,
+                response_body=await start.text(),
+            )
+        upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
+        if not upload_url:
+            raise ValidationError('Provider "gemini" did not return an upload URL for the Files API.')
+        finalize = await self.fetch(
+            str(upload_url),
+            headers={
+                "content-length": str(len(raw)),
+                "x-goog-upload-offset": "0",
+                "x-goog-upload-command": "upload, finalize",
+            },
+            json_body=None,
+            body=raw,
+            timeout_ms=None,
+        )
+        if finalize.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" request failed with status {finalize.status_code}.',
+                finalize.status_code,
+                response_body=await finalize.text(),
+            )
+        payload = await finalize.json()
+        return _normalize_gemini_file(dict(payload.get("file") or payload), provider=self.provider)
+
+    async def list(self) -> list[ProviderFile]:
+        response = await self.fetch(
+            self._json_url("/files"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" request failed with status {response.status_code}.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return [_normalize_gemini_file(dict(item), provider=self.provider) for item in payload.get("files") or []]
+
+    async def get(self, file_id: str) -> ProviderFile:
+        response = await self.fetch(
+            self._json_url(f"/files/{file_id}"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" request failed with status {response.status_code}.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_gemini_file(await response.json(), provider=self.provider)
+
+    async def delete(self, file_id: str) -> bool:
+        response = await self.fetch(
+            self._json_url(f"/files/{file_id}"),
+            method="DELETE",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" request failed with status {response.status_code}.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return True
+
+
 def _gemini_realtime_url(base_url: str, api_key: str, provider_options: dict[str, Any] | None = None) -> str:
     override = (provider_options or {}).get("realtime_url")
     if isinstance(override, str) and override:
@@ -395,13 +709,13 @@ def _gemini_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]
 def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": f"models/{model_id}",
-        "generation_config": drop_none({
-            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": config.voice}}} if config.voice else None,
-            "response_modalities": ["AUDIO"] if config.output_audio_media_type else ["TEXT"],
+        "generationConfig": drop_none({
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}} if config.voice else None,
+            "responseModalities": ["AUDIO"] if config.output_audio_media_type else ["TEXT"],
         }),
         "tools": _gemini_realtime_tools(config),
-        "system_instruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
-        **(_provider_options_without_google_search(config.provider_options) or {}),
+        "systemInstruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
+        **(_provider_options_without_mapped_tools(config.provider_options) or {}),
     }
     return {"setup": drop_none(payload)}
 
@@ -409,13 +723,11 @@ def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict
 def _gemini_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
     return [
         {
-            "realtime_input": {
-                "media_chunks": [
-                    {
-                        "mime_type": frame.media_type,
-                        "data": encode_audio_frame(frame),
-                    }
-                ]
+            "realtimeInput": {
+                "audio": {
+                    "mimeType": frame.media_type,
+                    "data": encode_audio_frame(frame),
+                }
             }
         }
     ]
@@ -424,9 +736,9 @@ def _gemini_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConf
 def _gemini_realtime_build_text(text: str, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
     return [
         {
-            "client_content": {
+            "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": text}]}],
-                "turn_complete": True,
+                "turnComplete": True,
             }
         }
     ]
@@ -435,8 +747,8 @@ def _gemini_realtime_build_text(text: str, _config: RealtimeSessionConfig) -> li
 def _gemini_realtime_build_tool_result(result: ToolExecutionResult, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
     return [
         {
-            "tool_response": {
-                "function_responses": [
+            "toolResponse": {
+                "functionResponses": [
                     {
                         "id": result.tool_call_id,
                         "name": result.tool_name,
@@ -455,9 +767,9 @@ def _gemini_realtime_build_update(config: RealtimeSessionConfig, model_id: str) 
 def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
     if "setupComplete" in payload:
         return []
-    if isinstance(payload.get("server_content"), dict):
-        content = payload["server_content"]
-        model_turn = dict(content.get("model_turn") or {})
+    if isinstance(payload.get("serverContent") or payload.get("server_content"), dict):
+        content = payload.get("serverContent") or payload.get("server_content") or {}
+        model_turn = dict(content.get("modelTurn") or content.get("model_turn") or {})
         parts = list(model_turn.get("parts") or [])
         events: list[Any] = []
         for part in parts:
@@ -489,31 +801,32 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                         )
                     )
                 )
-        input_transcription = content.get("input_transcription")
+        input_transcription = content.get("inputTranscription") or content.get("input_transcription")
         if isinstance(input_transcription, dict) and input_transcription.get("text"):
             events.append(
                 RealtimeTranscriptEvent(
                     text=str(input_transcription.get("text") or ""),
                     role="user",
-                    is_final=bool(content.get("turn_complete")),
+                    is_final=bool(content.get("turnComplete") or content.get("turn_complete")),
                     provider_metadata=payload,
                 )
             )
-        output_transcription = content.get("output_transcription")
+        output_transcription = content.get("outputTranscription") or content.get("output_transcription")
         if isinstance(output_transcription, dict) and output_transcription.get("text"):
             events.append(
                 RealtimeTranscriptEvent(
                     text=str(output_transcription.get("text") or ""),
                     role="assistant",
-                    is_final=bool(content.get("turn_complete")),
+                    is_final=bool(content.get("turnComplete") or content.get("turn_complete")),
                     provider_metadata=payload,
                 )
             )
-        if content.get("turn_complete"):
+        if content.get("turnComplete") or content.get("turn_complete"):
             events.append(RealtimeSessionEndedEvent(reason="turn-complete", provider_metadata=payload))
         return events
-    if isinstance(payload.get("tool_call"), dict):
-        call = dict(payload.get("tool_call") or {})
+    tool_call = payload.get("toolCall") or payload.get("tool_call")
+    if isinstance(tool_call, dict):
+        calls = tool_call.get("functionCalls") or tool_call.get("function_calls") or [tool_call]
         return [
             RealtimeToolCallEvent(
                 tool_call=ToolCall(
@@ -521,6 +834,25 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     name=str(call.get("name") or ""),
                     input=call.get("args") or {},
                 )
+            )
+            for call in calls
+            if isinstance(call, dict)
+        ]
+    session_resumption = payload.get("sessionResumptionUpdate") or payload.get("session_resumption_update")
+    if isinstance(session_resumption, dict):
+        return [
+            RealtimeSessionResumptionEvent(
+                new_handle=session_resumption.get("newHandle") or session_resumption.get("new_handle"),
+                resumable=session_resumption.get("resumable"),
+                provider_metadata=payload,
+            )
+        ]
+    go_away = payload.get("goAway") or payload.get("go_away")
+    if isinstance(go_away, dict):
+        return [
+            RealtimeGoAwayEvent(
+                time_left_ms=go_away.get("timeLeftMs") or go_away.get("time_left_ms"),
+                provider_metadata=payload,
             )
         ]
     if isinstance(payload.get("error"), dict):
@@ -533,6 +865,22 @@ def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
     for part in ((candidate or {}).get("content") or {}).get("parts", []):
         if part.get("text"):
             parts.append(TextPart(text=part["text"]))
+        elif part.get("executableCode") or part.get("executable_code"):
+            code = part.get("executableCode") or part.get("executable_code") or {}
+            parts.append(
+                GeneratedCodePart(
+                    code=str(code.get("code") or ""),
+                    language=code.get("language"),
+                )
+            )
+        elif part.get("codeExecutionResult") or part.get("code_execution_result"):
+            result = part.get("codeExecutionResult") or part.get("code_execution_result") or {}
+            parts.append(
+                CodeExecutionResultPart(
+                    output=str(result.get("output") or ""),
+                    outcome=result.get("outcome"),
+                )
+            )
         elif part.get("functionCall"):
             call = part["functionCall"]
             provider_metadata: dict[str, Any] = {}
@@ -557,22 +905,58 @@ def _extract_grounding_sources(payload: dict[str, Any]) -> list[GroundingSource]
     sources: list[GroundingSource] = []
     seen: set[str] = set()
     for chunk in grounding_metadata.get("groundingChunks") or []:
-        web = chunk.get("web")
-        if not isinstance(web, dict):
+        source_kind = next((key for key in ("web", "retrievedContext", "maps") if isinstance(chunk.get(key), dict)), None)
+        source_payload = chunk.get(source_kind) if source_kind else None
+        if not isinstance(source_payload, dict):
             continue
-        url = web.get("uri")
+        url = source_payload.get("uri") or source_payload.get("url") or source_payload.get("fileUri")
         if not isinstance(url, str) or not url or url in seen:
             continue
         seen.add(url)
         sources.append(
             GroundingSource(
                 url=url,
-                title=web.get("title"),
-                snippet=web.get("text"),
-                provider_metadata=web,
+                title=source_payload.get("title") or source_payload.get("displayName"),
+                snippet=source_payload.get("text") or source_payload.get("snippet"),
+                kind=source_kind,
+                provider_metadata=source_payload,
             )
         )
     return sources
+
+
+def _extract_grounding_queries(payload: dict[str, Any]) -> list[str]:
+    candidate = (payload.get("candidates") or [None])[0] or {}
+    grounding_metadata = candidate.get("groundingMetadata") or {}
+    queries = grounding_metadata.get("webSearchQueries") or grounding_metadata.get("searchQueries") or []
+    return [str(query) for query in queries if isinstance(query, str) and query]
+
+
+def _extract_grounding_supports(payload: dict[str, Any]) -> list[GroundingSupport]:
+    candidate = (payload.get("candidates") or [None])[0] or {}
+    grounding_metadata = candidate.get("groundingMetadata") or {}
+    supports: list[GroundingSupport] = []
+    for item in grounding_metadata.get("groundingSupports") or []:
+        if not isinstance(item, dict):
+            continue
+        segment = item.get("segment") or {}
+        supports.append(
+            GroundingSupport(
+                start_index=segment.get("startIndex"),
+                end_index=segment.get("endIndex"),
+                segment_text=segment.get("text"),
+                source_indices=[int(index) for index in item.get("groundingChunkIndices") or [] if isinstance(index, int)],
+                provider_metadata=item,
+            )
+        )
+    return supports
+
+
+def _extract_search_entry_point(payload: dict[str, Any]) -> dict[str, Any] | None:
+    candidate = (payload.get("candidates") or [None])[0] or {}
+    grounding_metadata = candidate.get("groundingMetadata") or {}
+    entry_point = grounding_metadata.get("searchEntryPoint")
+    return dict(entry_point) if isinstance(entry_point, dict) else None
 
 
 @dataclass(slots=True)
@@ -589,6 +973,7 @@ class GeminiLanguageModel(LanguageModel):
         return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        validate_message_parts(self, input.messages)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
@@ -599,7 +984,7 @@ class GeminiLanguageModel(LanguageModel):
                     "systemInstruction": _system_instruction(input.messages),
                     "tools": _map_tools(input.tools, input.provider_options),
                     "toolConfig": _map_tool_config(input.tools, input.tool_choice),
-                    **(_provider_options_without_google_search(input.provider_options) or {}),
+                    **(_provider_options_without_mapped_tools(input.provider_options) or {}),
                     "generationConfig": generation_config,
                 }),
                 timeout_ms=input.timeout_ms,
@@ -630,6 +1015,7 @@ class GeminiLanguageModel(LanguageModel):
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
+        validate_message_parts(self, input.messages)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
@@ -640,7 +1026,7 @@ class GeminiLanguageModel(LanguageModel):
                     "systemInstruction": _system_instruction(input.messages),
                     "tools": _map_tools(input.tools, input.provider_options),
                     "toolConfig": _map_tool_config(input.tools, input.tool_choice),
-                    **(_provider_options_without_google_search(input.provider_options) or {}),
+                    **(_provider_options_without_mapped_tools(input.provider_options) or {}),
                     "generationConfig": generation_config,
                 }),
                 timeout_ms=input.timeout_ms,
@@ -754,8 +1140,8 @@ class GeminiGroundedLanguageModel(GroundedLanguageModel):
                 json_body=drop_none({
                     "contents": _map_messages(input.messages),
                     "systemInstruction": _system_instruction(input.messages),
-                    "tools": [_google_search_tool()],
-                    **(input.provider_options or {}),
+                    "tools": _map_tools(None, input.provider_options, force_google_search=True),
+                    **(_provider_options_without_mapped_tools(input.provider_options) or {}),
                     "generationConfig": drop_none({
                         "temperature": input.temperature,
                         "maxOutputTokens": input.max_tokens,
@@ -793,6 +1179,9 @@ class GeminiGroundedLanguageModel(GroundedLanguageModel):
             else None,
             raw_response=payload,
             sources=_extract_grounding_sources(payload),
+            queries=_extract_grounding_queries(payload),
+            supports=_extract_grounding_supports(payload),
+            search_entry_point=_extract_search_entry_point(payload),
         )
 
 
@@ -806,23 +1195,63 @@ class GeminiEmbeddingModel(EmbeddingModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_CAPABILITIES)
 
     async def embed(self, values: list[str], options: Any = None) -> EmbedResult:
-        embeddings: list[list[float]] = []
-        for value in values:
+        config = _embedding_request_options(options)
+        task_type = config.get("task_type")
+        title = config.get("title")
+        output_dimensionality = config.get("output_dimensionality")
+        task_types = config.get("task_types")
+        titles = config.get("titles")
+
+        if len(values) == 1:
             response = await with_retry(
-                lambda value=value: self.fetch(
+                lambda: self.fetch(
                     f"{self.base_url}/models/{self.model_id}:embedContent?key={self.api_key}",
                     headers={"content-type": "application/json"},
-                    json_body={"content": {"parts": [{"text": value}]}},
-                    timeout_ms=getattr(options, "timeout_ms", None),
+                    json_body=drop_none(
+                        {
+                            "content": {"parts": [{"text": values[0]}]},
+                            "taskType": task_type,
+                            "title": title,
+                            "outputDimensionality": output_dimensionality,
+                        }
+                    ),
+                    timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
                 ),
-                max_retries=getattr(options, "max_retries", 0) or 0,
-                retry_backoff_ms=getattr(options, "retry_backoff_ms", 250) or 250,
+                max_retries=_provider_option_value(options, "max_retries", "maxRetries") or 0,
+                retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs") or 250,
             )
             if response.status_code >= 400:
                 raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
             payload = await response.json()
-            embeddings.append(payload["embedding"]["values"])
-        return EmbedResult(embeddings=embeddings)
+            return EmbedResult(embeddings=[payload["embedding"]["values"]], raw_response=payload)
+
+        requests = []
+        for index, value in enumerate(values):
+            requests.append(
+                drop_none(
+                    {
+                        "model": f"models/{self.model_id}",
+                        "content": {"parts": [{"text": value}]},
+                        "taskType": task_types[index] if isinstance(task_types, list) and index < len(task_types) else task_type,
+                        "title": titles[index] if isinstance(titles, list) and index < len(titles) else title,
+                        "outputDimensionality": output_dimensionality,
+                    }
+                )
+            )
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/models/{self.model_id}:batchEmbedContents?key={self.api_key}",
+                headers={"content-type": "application/json"},
+                json_body={"requests": requests},
+                timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
+            ),
+            max_retries=_provider_option_value(options, "max_retries", "maxRetries") or 0,
+            retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs") or 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        payload = await response.json()
+        return EmbedResult(embeddings=[item["values"] for item in payload.get("embeddings") or []], raw_response=payload)
 
 
 @dataclass(slots=True)
@@ -833,6 +1262,7 @@ class GeminiRealtimeModel(RealtimeModel):
     base_url: str
     fetch: Fetcher
     realtime_url: str | None = None
+    auth_token_url: str | None = None
     connection_factory: RealtimeConnectionFactory | None = None
     capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_REALTIME_CAPABILITIES)
 
@@ -869,7 +1299,47 @@ class GeminiRealtimeModel(RealtimeModel):
         config: RealtimeSessionConfig | None = None,
         options: RealtimeConnectOptions | None = None,
     ) -> RealtimeTokenResult:
-        return await unsupported_browser_token(config=config, options=options)
+        resolved_config = config or RealtimeSessionConfig()
+        url = self.auth_token_url or f"{self.base_url.replace('/v1beta', '')}/v1alpha/authTokens?key={self.api_key}"
+        provider_options = resolved_config.provider_options or {}
+        payload = drop_none(
+            {
+                "authToken": drop_none(
+                    {
+                        "expireTime": provider_options.get("expireTime") or provider_options.get("expire_time"),
+                        "newSessionExpireTime": provider_options.get("newSessionExpireTime") or provider_options.get("new_session_expire_time"),
+                        "uses": provider_options.get("uses"),
+                    }
+                )
+            }
+        )
+        response = await with_retry(
+            lambda: self.fetch(
+                url,
+                method="POST",
+                headers={"content-type": "application/json"},
+                json_body=payload,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        body = await response.json()
+        auth_token = dict(body.get("authToken") or body)
+        token_value = auth_token.get("name") or auth_token.get("token") or auth_token.get("accessToken")
+        if not isinstance(token_value, str) or not token_value:
+            raise ValidationError('Provider "gemini" did not return a valid ephemeral token.')
+        return RealtimeTokenResult(
+            value=token_value,
+            expires_at_ms=_parse_timestamp_ms(auth_token.get("expireTime") or auth_token.get("expire_time")),
+            raw_response=body,
+        )
 
 
 def create_gemini(
@@ -878,6 +1348,7 @@ def create_gemini(
     base_url: str = "https://generativelanguage.googleapis.com/v1beta",
     fetch: Fetcher | None = None,
     realtime_url: str | None = None,
+    auth_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
     resolved_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
@@ -906,6 +1377,13 @@ def create_gemini(
             base_url=base,
             fetch=requester,
             realtime_url=realtime_url,
+            auth_token_url=auth_token_url,
             connection_factory=realtime_connection_factory,
+        ),
+        files_client_factory=lambda: GeminiFilesClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
         ),
     )

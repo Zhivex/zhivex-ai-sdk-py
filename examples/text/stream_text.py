@@ -6,7 +6,7 @@ from zhivex_ai import create_openai, stream_text
 async def main() -> None:
     provider = create_openai()
     result = stream_text(
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
         prompt="Reply in two short sentences about SDK portability.",
     )
 

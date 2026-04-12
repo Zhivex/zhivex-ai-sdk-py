@@ -4,9 +4,10 @@ import json
 from dataclasses import is_dataclass
 from typing import Any
 
-from .errors import UnsupportedFeatureError
+from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
     ContentPart,
+    FilePart,
     FinishReason,
     GenerateResult,
     ImagePart,
@@ -90,6 +91,12 @@ def tool(
     description: str | None = None,
     schema: Any = None,
     execute: Any = None,
+    input_examples: list[Any] | None = None,
+    strict: bool | None = None,
+    defer_loading: bool | None = None,
+    eager_input_streaming: bool | None = None,
+    allowed_callers: list[str] | None = None,
+    cache_control: dict[str, Any] | None = None,
     tags: list[str] | None = None,
     requires_approval: bool | None = None,
     permissions: list[str] | None = None,
@@ -114,6 +121,12 @@ def tool(
         description=description,
         schema=schema,
         execute=execute,
+        input_examples=[serialize_json_value(item) for item in (input_examples or [])],
+        strict=strict,
+        defer_loading=defer_loading,
+        eager_input_streaming=eager_input_streaming,
+        allowed_callers=list(allowed_callers or []),
+        cache_control=serialize_json_value(cache_control) if cache_control is not None else None,
         tags=list(tags or []),
         requires_approval=requires_approval,
         permissions=list(permissions or []),
@@ -173,6 +186,29 @@ def normalize_finish_reason(reason: str | None) -> FinishReason | None:
     return "unknown"
 
 
+def validate_file_part(part: FilePart) -> None:
+    sources = [
+        name
+        for name, value in (
+            ("data", part.data),
+            ("text", part.text),
+            ("document_content", part.document_content),
+            ("file_id", part.file_id),
+            ("file_uri", part.file_uri),
+            ("url", part.url),
+        )
+        if value
+    ]
+    if len(sources) != 1:
+        raise ValidationError(
+            'FilePart requires exactly one source: "data", "text", "document_content", "file_id", "file_uri", or "url".'
+        )
+
+    media_type = (part.media_type or "").strip().lower()
+    if sources == ["data"] and not media_type:
+        raise ValidationError('Inline FilePart values require "media_type".')
+
+
 def result_messages(result: GenerateResult) -> list[ModelMessage]:
     if result.messages:
         return result.messages
@@ -194,6 +230,8 @@ def validate_message_parts(model: LanguageModel, messages: list[ModelMessage]) -
                 raise UnsupportedFeatureError(
                     f'Model "{model.provider}/{model.model_id}" does not support file inputs.'
                 )
+            if part.type == "file":
+                validate_file_part(part)
             if part.type in {"tool-call", "tool-result"} and not model.capabilities.tools:
                 raise UnsupportedFeatureError(
                     f'Model "{model.provider}/{model.model_id}" does not support tool calling.'

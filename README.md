@@ -47,9 +47,9 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
 | Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
-| Anthropic | Yes | Yes | Yes | Prompted fallback | No | No | No | No | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Experimental |
-| Vertex AI | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Experimental |
+| Anthropic | Yes | Yes | Yes | Yes | No | No | No | Yes | No |
+| Gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
+| Vertex AI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
 | Bedrock | Yes | No | No | No | No | No | No | No | Experimental |
 | OpenRouter | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
 | Qwen | Yes | Yes | No | Yes | Yes | No | Yes | No | No |
@@ -61,8 +61,10 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 Tool support varies in practice even when the high-level SDK API is shared:
 
 - OpenAI and Azure OpenAI currently have the most robust tool-calling path in this SDK, including MCP-oriented schema normalization for strict-mode function tools.
-- Gemini and Vertex AI support tools through the Gemini function-calling path. The SDK preserves Gemini thought signatures across tool loops and normalizes MCP schemas to the subset Gemini accepts.
-- Anthropic supports tools, but when using extended thinking (`reasoning.budget_tokens`) the SDK only allows `tool_choice="auto"` or `"none"` and preserves returned thinking blocks during tool loops.
+- OpenAI now also supports mixing local function tools with official hosted OpenAI tools by passing hosted tool definitions in `provider_options={"tools": [...]}`. The adapter merges both sets and ignores provider-managed tool calls in the local execution loop.
+- The OpenAI provider also exposes hosted-tool builders such as `openai_web_search_tool(...)`, `openai_file_search_tool(...)`, `openai_image_generation_tool(...)`, `openai_code_interpreter_tool(...)`, `openai_computer_use_tool(...)`, `openai_mcp_tool(...)`, `openai_shell_tool(...)`, `openai_apply_patch_tool(...)`, `openai_custom_tool(...)`, `openai_namespace_tool(...)`, and `openai_tool_search_tool(...)`, plus `openai_response_options(...)` for common Responses API fields.
+- Gemini and Vertex AI support function calling plus Gemini built-in tools. The SDK preserves Gemini thought signatures across tool loops, normalizes MCP schemas to the subset Gemini accepts, and maps built-in tools from `provider_options` such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use`.
+- Anthropic now supports native structured outputs, richer document inputs (`url`, inline text, uploaded `file_id`, citations metadata), the Files API, and grounded web search through `provider.grounded_language_model(...)`. When using extended thinking (`reasoning.budget_tokens`) the SDK still only allows `tool_choice="auto"` or `"none"` and preserves returned thinking blocks during tool loops.
 - OpenRouter supports the shared Responses-style adapter, but this SDK does not allow `tool_choice="required"` there because the current OpenRouter Responses docs only document `auto`, `none`, or forcing a named function.
 - Qwen is available for text generation through the OpenAI-compatible factory, but tool calling is not currently exposed through this SDK adapter because the implementation path here is Responses-based while the official Qwen docs for tools currently describe a different OpenAI-compatible flow.
 - Kimi and Ollama use the shared OpenAI-compatible adapter in this SDK. Basic compatibility may work, but provider-specific tool behavior can still differ from OpenAI depending on the upstream compatibility layer.
@@ -93,7 +95,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Be concise and remember prior turns.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         memory=create_in_memory_agent_memory_store(),
     )
 
@@ -120,7 +122,7 @@ async def main() -> None:
     anthropic = create_anthropic()
 
     result = await generate_text(
-        model=anthropic("claude-3-5-sonnet"),
+        model=anthropic("claude-sonnet-4-20250514"),
         system="Be concise and technical.",
         prompt="What is a provider adapter?",
     )
@@ -150,7 +152,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_object(
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         prompt="Return a compact JSON recipe summary.",
         schema=Recipe,
     )
@@ -172,7 +174,7 @@ from zhivex_ai import create_openai, stream_text
 async def main() -> None:
     openai = create_openai()
     result = stream_text(
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         prompt="Reply in two short sentences.",
     )
 
@@ -204,7 +206,7 @@ class Recipe(BaseModel):
 async def main() -> None:
     openai = create_openai()
     result = stream_object(
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         prompt="Return a compact JSON recipe.",
         schema=Recipe,
     )
@@ -231,7 +233,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_grounded_text(
-        model=openai.grounded_language_model("gpt-4o-search-preview"),
+        model=openai.grounded_language_model("gpt-5.4-mini"),
         prompt="Find one recent fact about AI infrastructure.",
     )
 
@@ -243,7 +245,31 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Gemini search is explicit and opt-in:
+Anthropic, Gemini, and Vertex grounding are explicit and opt-in:
+
+```python
+import asyncio
+
+from zhivex_ai import create_anthropic, generate_grounded_text
+
+
+async def main() -> None:
+    anthropic = create_anthropic()
+
+    result = await generate_grounded_text(
+        model=anthropic.grounded_language_model("claude-sonnet-4-20250514"),
+        prompt="Find one recent fact about AI infrastructure.",
+    )
+
+    print(result.text)
+    for source in result.sources:
+        print(source.title, source.url)
+
+
+asyncio.run(main())
+```
+
+Gemini and Vertex grounding are also explicit and opt-in:
 
 ```python
 import asyncio
@@ -267,6 +293,165 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+### Files and multimodal input
+
+`FilePart` is no longer PDF-only. Gemini accepts inline or uploaded files for documents, audio, images, and video. Vertex accepts inline files plus URI-based file references such as `gs://...`.
+
+Inline document input:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, ModelMessage, TextPart, create_openai, generate_text
+
+
+async def main() -> None:
+    openai = create_openai()
+    result = await generate_text(
+        model=openai("gpt-5.4-mini"),
+        messages=[
+            ModelMessage(
+                role="user",
+                parts=[
+                    FilePart(
+                        data="JVBERi0xLjQK",
+                        media_type="application/pdf",
+                        filename="statement.pdf",
+                    ),
+                    TextPart(text="Summarize this PDF in three bullets."),
+                ],
+            )
+        ],
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Reusing a previously uploaded provider file:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, ModelMessage, create_anthropic, generate_text
+
+
+async def main() -> None:
+    anthropic = create_anthropic()
+    result = await generate_text(
+        model=anthropic("claude-sonnet-4-20250514"),
+        messages=[
+            ModelMessage(
+                role="user",
+                parts=[FilePart(file_id="file_123"), FilePart(file_id="file_456")],
+            )
+        ],
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Using the Gemini Files API first, then passing the returned reference:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, ModelMessage, TextPart, create_gemini, generate_text
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    uploaded = await gemini.files().upload(
+        data=b"%PDF-1.4...",
+        filename="statement.pdf",
+    )
+
+    result = await generate_text(
+        model=gemini("gemini-2.5-flash"),
+        messages=[
+            ModelMessage(
+                role="user",
+                parts=[
+                    FilePart(file_uri=uploaded.file_uri),
+                    TextPart(text="Extract the key numbers from this statement."),
+                ],
+            )
+        ],
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Passing inline audio to Gemini text generation:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, ModelMessage, TextPart, create_gemini, generate_text
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    result = await generate_text(
+        model=gemini("gemini-2.5-flash"),
+        messages=[
+            ModelMessage(
+                role="user",
+                parts=[
+                    FilePart(
+                        data="SUQzBAAAAAAA...",
+                        media_type="audio/mpeg",
+                        filename="call.mp3",
+                    ),
+                    TextPart(text="Summarize the call in five bullets."),
+                ],
+            )
+        ],
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Passing a Vertex-hosted file reference:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, ModelMessage, TextPart, create_vertex, generate_text
+
+
+async def main() -> None:
+    vertex = create_vertex()
+    result = await generate_text(
+        model=vertex("gemini-2.5-flash"),
+        messages=[
+            ModelMessage(
+                role="user",
+                parts=[
+                    FilePart(file_uri="gs://my-bucket/meeting.mp4", media_type="video/mp4"),
+                    TextPart(text="Extract the main decisions from this meeting."),
+                ],
+            )
+        ],
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
 ### Audio
 
 ```python
@@ -285,7 +470,7 @@ async def main() -> None:
     )
 
     result = await transcribe_audio(
-        model=openai.transcription_model("gpt-4o-mini-transcribe"),
+        model=openai.transcription_model("gpt-4o-transcribe"),
         audio=audio,
     )
 
@@ -349,12 +534,12 @@ async def main() -> None:
     researcher = Agent(
         name="researcher",
         instructions="Answer delegated research questions directly.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
     )
     triage = Agent(
         name="triage",
         instructions="Delegate research work to the researcher agent.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         tools={
             "delegate": tool(
                 name="delegate",
@@ -381,6 +566,20 @@ result = await run_agent(
     agent=triage,
     prompt="Research the Apollo migration status.",
     provider_options={"google_search": True},
+)
+```
+
+Built-in Gemini tools can also be configured directly:
+
+```python
+result = await generate_text(
+    model=gemini("gemini-3-flash-preview"),
+    prompt="Research this page and show your work.",
+    provider_options={
+        "google_search": {"excludeDomains": ["example.com"]},
+        "url_context": {},
+        "code_execution": True,
+    },
 )
 ```
 
@@ -411,8 +610,8 @@ async def main() -> None:
 
     result = await gateway.generate(
         messages=[GatewayMessage(role="user", content="Say hello in one sentence.")],
-        primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
-        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+        primary=GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini"),
+        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-4-20250514")],
     )
 
     print(result.text)
@@ -442,10 +641,17 @@ OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama reuse the
 Adapters may also expose optional factories such as:
 
 - `provider.embedding_model("text-embedding-3-small")`
-- `provider.transcription_model("gpt-4o-mini-transcribe")`
+- `provider.transcription_model("gpt-4o-transcribe")`
 - `provider.speech_model("gpt-4o-mini-tts")`
-- `provider.grounded_language_model("gpt-4o-search-preview")`
+- `provider.grounded_language_model("gpt-5.4-mini")`
 - `provider.realtime_model("gpt-realtime")`
+
+OpenAI providers may additionally expose low-level lifecycle clients:
+
+- `provider.responses()` for raw Responses API operations such as `create`, `create_background`, `retrieve`, `wait`, `cancel`, `compact`, and `list_input_items`
+- `provider.conversations()` for raw Conversations API operations such as `create`, `retrieve`, `update`, `create_item`, and `list_items`
+
+OpenAI helper builders cover the modern hosted-tool surface, including file search filters, code-interpreter containers, shell environments, MCP servers, inline skills, skill references, custom tools, namespaces, and tool search.
 
 ### Capability Matrix
 
@@ -455,9 +661,9 @@ This table reflects the adapters currently exposed by this repository.
 | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
 | Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | No | No | No | No | No |
+| Anthropic | Yes | No | No | No | Yes | No |
 | Gemini | Yes | Yes | No | Yes | Yes | Yes |
-| Vertex | Yes | Yes | No | Yes | No | Yes |
+| Vertex | Yes | Yes | No | Yes | Yes | Yes |
 | Bedrock | Yes | No | No | No | No | Yes |
 | OpenRouter | Yes | Yes | No | Yes | No | No |
 | Qwen | Yes | Yes | No | Yes | No | No |
@@ -469,6 +675,7 @@ Notes:
 - "Grounded" means the adapter exposes `provider.grounded_language_model(...)`.
 - "Realtime" means the adapter exposes `provider.realtime_model(...)`.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
+- `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
 ## Why not use provider SDKs directly?
@@ -567,7 +774,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Use the filesystem MCP tools when needed.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         tools=tools,
     )
 
@@ -584,29 +791,11 @@ asyncio.run(main())
 
 See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
-- [openai_text.py](./examples/openai_text.py)
-- [agent_basic.py](./examples/agent_basic.py)
-- [stream_agent.py](./examples/stream_agent.py)
-- [resume_agent.py](./examples/resume_agent.py)
-- [remote_tool.py](./examples/remote_tool.py)
-- [mcp_tools.py](./examples/mcp_tools.py)
-- [stream_text.py](./examples/stream_text.py)
-- [stream_object.py](./examples/stream_object.py)
-- [messages_and_tools.py](./examples/messages_and_tools.py)
-- [embeddings.py](./examples/embeddings.py)
-- [grounded_text.py](./examples/grounded_text.py)
-- [transcribe_audio.py](./examples/transcribe_audio.py)
-- [generate_speech.py](./examples/generate_speech.py)
-- [openai_realtime.py](./examples/openai_realtime.py)
-- [azure_realtime.py](./examples/azure_realtime.py)
-- [gemini_realtime.py](./examples/gemini_realtime.py)
-- [bedrock_realtime.py](./examples/bedrock_realtime.py)
-- [live_agent_realtime.py](./examples/live_agent_realtime.py)
-- [ui_messages.py](./examples/ui_messages.py)
-- [http_responses.py](./examples/http_responses.py)
-- [middleware.py](./examples/middleware.py)
-- [model_catalog.py](./examples/model_catalog.py)
-- [gateway_fallback.py](./examples/gateway_fallback.py)
+- Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py)
+- Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
+- Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
+- Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)
+- Integrations: [ui_messages.py](./examples/integrations/ui_messages.py), [http_responses.py](./examples/integrations/http_responses.py), [gateway_fallback.py](./examples/integrations/gateway_fallback.py)
 
 ## License
 

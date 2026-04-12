@@ -5,7 +5,9 @@ from typing import Any
 
 from .schema import create_schema_adapter
 from .types import (
+    CodeExecutionResultPart,
     GenerateResult,
+    GeneratedCodePart,
     MCPServerConfig,
     MCPToolConfig,
     ModelGenerateInput,
@@ -95,20 +97,51 @@ def deserialize_tool_execution_result(payload: dict[str, Any]) -> ToolExecutionR
 
 def serialize_content_part(part: Any) -> dict[str, Any]:
     if getattr(part, "type", None) == "text":
-        return {"type": "text", "text": getattr(part, "text", "")}
+        return {
+            "type": "text",
+            "text": getattr(part, "text", ""),
+            "provider_metadata": _json_compatible(getattr(part, "provider_metadata", {})),
+        }
     if getattr(part, "type", None) == "image":
-        return {"type": "image", "image": getattr(part, "image", ""), "media_type": getattr(part, "media_type", None)}
+        return {
+            "type": "image",
+            "image": getattr(part, "image", ""),
+            "media_type": getattr(part, "media_type", None),
+            "provider_metadata": _json_compatible(getattr(part, "provider_metadata", {})),
+        }
     if getattr(part, "type", None) == "file":
         return {
             "type": "file",
-            "data": getattr(part, "data", ""),
-            "media_type": getattr(part, "media_type", ""),
+            "data": getattr(part, "data", None),
+            "text": getattr(part, "text", None),
+            "document_content": _json_compatible(getattr(part, "document_content", None)),
+            "media_type": getattr(part, "media_type", None),
             "filename": getattr(part, "filename", None),
+            "file_id": getattr(part, "file_id", None),
+            "file_uri": getattr(part, "file_uri", None),
+            "url": getattr(part, "url", None),
+            "title": getattr(part, "title", None),
+            "context": getattr(part, "context", None),
+            "citations_enabled": getattr(part, "citations_enabled", None),
+            "cache_control": _json_compatible(getattr(part, "cache_control", None)),
+            "provider_metadata": _json_compatible(getattr(part, "provider_metadata", {})),
         }
     if getattr(part, "type", None) == "tool-call":
         return {"type": "tool-call", "tool_call": serialize_tool_call(part.tool_call)}
     if getattr(part, "type", None) == "tool-result":
         return {"type": "tool-result", "tool_result": serialize_tool_execution_result(part.tool_result)}
+    if getattr(part, "type", None) == "generated-code":
+        return {
+            "type": "generated-code",
+            "code": getattr(part, "code", ""),
+            "language": getattr(part, "language", None),
+        }
+    if getattr(part, "type", None) == "code-result":
+        return {
+            "type": "code-result",
+            "output": getattr(part, "output", ""),
+            "outcome": getattr(part, "outcome", None),
+        }
     raise TypeError(f"Unsupported content part type: {getattr(part, 'type', type(part).__name__)}")
 
 
@@ -117,23 +150,50 @@ def deserialize_content_part(payload: dict[str, Any]) -> Any:
     if part_type == "text":
         from .types import TextPart
 
-        return TextPart(text=str(payload.get("text", "")))
+        return TextPart(
+            text=str(payload.get("text", "")),
+            provider_metadata=dict(payload.get("provider_metadata") or {}),
+        )
     if part_type == "image":
         from .types import ImagePart
 
-        return ImagePart(image=str(payload.get("image", "")), media_type=payload.get("media_type"))
+        return ImagePart(
+            image=str(payload.get("image", "")),
+            media_type=payload.get("media_type"),
+            provider_metadata=dict(payload.get("provider_metadata") or {}),
+        )
     if part_type == "file":
         from .types import FilePart
 
         return FilePart(
-            data=str(payload.get("data", "")),
-            media_type=str(payload.get("media_type", "")),
+            data=payload.get("data"),
+            text=payload.get("text"),
+            document_content=payload.get("document_content"),
+            media_type=payload.get("media_type"),
             filename=payload.get("filename"),
+            file_id=payload.get("file_id"),
+            file_uri=payload.get("file_uri"),
+            url=payload.get("url"),
+            title=payload.get("title"),
+            context=payload.get("context"),
+            citations_enabled=payload.get("citations_enabled"),
+            cache_control=payload.get("cache_control"),
+            provider_metadata=dict(payload.get("provider_metadata") or {}),
         )
     if part_type == "tool-call":
         return ToolCallPart(tool_call=deserialize_tool_call(dict(payload.get("tool_call") or {})))
     if part_type == "tool-result":
         return ToolResultPart(tool_result=deserialize_tool_execution_result(dict(payload.get("tool_result") or {})))
+    if part_type == "generated-code":
+        return GeneratedCodePart(
+            code=str(payload.get("code", "")),
+            language=payload.get("language"),
+        )
+    if part_type == "code-result":
+        return CodeExecutionResultPart(
+            output=str(payload.get("output", "")),
+            outcome=payload.get("outcome"),
+        )
     raise TypeError(f"Unsupported content part type: {part_type}")
 
 
@@ -239,6 +299,12 @@ def serialize_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
         "name": definition.name,
         "description": definition.description,
         "schema": _serialize_schema(definition.schema),
+        "input_examples": _json_compatible(definition.input_examples),
+        "strict": definition.strict,
+        "defer_loading": definition.defer_loading,
+        "eager_input_streaming": definition.eager_input_streaming,
+        "allowed_callers": list(definition.allowed_callers),
+        "cache_control": _json_compatible(definition.cache_control),
         "tags": list(definition.tags),
         "requires_approval": definition.requires_approval,
         "permissions": list(definition.permissions),
@@ -260,6 +326,12 @@ def deserialize_tool_definition(payload: dict[str, Any]) -> ToolDefinition:
         description=payload.get("description"),
         schema=schema,
         execute=None,
+        input_examples=list(payload.get("input_examples") or []),
+        strict=payload.get("strict"),
+        defer_loading=payload.get("defer_loading"),
+        eager_input_streaming=payload.get("eager_input_streaming"),
+        allowed_callers=[str(item) for item in payload.get("allowed_callers") or []],
+        cache_control=payload.get("cache_control"),
         tags=[str(item) for item in payload.get("tags") or []],
         requires_approval=payload.get("requires_approval"),
         permissions=[str(item) for item in payload.get("permissions") or []],

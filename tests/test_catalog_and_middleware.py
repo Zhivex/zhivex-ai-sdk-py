@@ -53,10 +53,10 @@ class CountingModel:
 
 class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
     async def test_model_catalog_find_supports_lookup(self) -> None:
-        openai_entry = default_model_catalog.find("openai", "gpt-4o-mini")
+        openai_entry = default_model_catalog.find("openai", "gpt-5.4-mini")
         self.assertIsNotNone(openai_entry)
         catalog = create_model_catalog([openai_entry])  # type: ignore[list-item]
-        entry = catalog.find("openai", "gpt-4o-mini")
+        entry = catalog.find("openai", "gpt-5.4-mini")
         self.assertIsNotNone(entry)
         self.assertEqual(entry.provider, "openai")
 

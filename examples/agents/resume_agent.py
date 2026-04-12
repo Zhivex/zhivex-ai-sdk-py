@@ -13,12 +13,12 @@ from zhivex_ai import (
 
 
 async def main() -> None:
-    db_path = str(Path(".tmp-agent-state.sqlite3").resolve())
+    db_path = str(Path(__file__).with_name(".tmp-agent-state.sqlite3").resolve())
     openai = create_openai()
     agent = Agent(
         name="assistant",
         instructions="Remember prior turns.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         memory=create_sqlite_agent_memory_store(db_path),
         checkpoint_store=create_sqlite_checkpoint_store(db_path),
     )

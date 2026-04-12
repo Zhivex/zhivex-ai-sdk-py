@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from copy import deepcopy
 import json
 import os
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field, replace
+import time
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
-from ..messages import normalize_finish_reason
+from ..messages import normalize_finish_reason, validate_file_part, validate_message_parts
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..realtime import (
@@ -27,17 +29,24 @@ from ..realtime import (
 from ..types import (
     AudioFrame,
     AudioInput,
+    CodeExecutionResultPart,
+    ConversationsClient,
     EmbedResult,
     EmbeddingModel,
+    FilePart,
+    FilesClient,
     GenerateResult,
+    GeneratedCodePart,
     GroundedGenerateResult,
     GroundedLanguageModel,
     GroundedModelGenerateInput,
     GroundingSource,
+    ImagePart,
     LanguageModel,
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    ProviderFile,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeModel,
@@ -49,6 +58,7 @@ from ..types import (
     RealtimeToolCallEvent,
     RealtimeTranscriptEvent,
     RetryOptions,
+    ResponsesClient,
     SpeechModel,
     SpeechOutput,
     StreamEvent,
@@ -122,9 +132,111 @@ OPENAI_COMPAT_REALTIME_CAPABILITIES = replace(
     realtime_browser_tokens=True,
 )
 
+_PROVIDER_MANAGED_TOOL_NAMES = {
+    "apply_patch_call": "apply_patch",
+    "code_interpreter_call": "code_interpreter",
+    "computer_call": "computer_use",
+    "computer_call_output": "computer_use",
+    "file_search_call": "file_search",
+    "image_generation_call": "image_generation",
+    "local_shell_call": "local_shell",
+    "mcp_call": "mcp",
+    "shell_call": "shell",
+    "web_search_call": "web_search",
+}
+
+_TERMINAL_RESPONSE_STATUSES = {"completed", "failed", "incomplete", "cancelled"}
+
 
 def _parse_json_error(provider_name: str, status_code: int, body: str) -> ProviderHTTPError:
     return ProviderHTTPError(f"{provider_name} request failed with status {status_code}.", status_code, response_body=body)
+
+
+def _request_url(base_url: str, path: str, params: dict[str, Any] | None = None) -> str:
+    if not params:
+        return f"{base_url}{path}"
+    pairs: list[tuple[str, str]] = []
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            pairs.extend((key, str(item)) for item in value if item is not None)
+            continue
+        pairs.append((key, str(value)))
+    query = urlencode(pairs)
+    return f"{base_url}{path}" if not query else f"{base_url}{path}?{query}"
+
+
+def _normalize_tool_call_input(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"value": value}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return {}
+    return {"value": value}
+
+
+def _image_media_type_from_format(value: str | None, *, default: str = "image/png") -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return default
+    if "/" in normalized:
+        return normalized
+    if normalized in {"jpg", "jpeg"}:
+        return "image/jpeg"
+    return f"image/{normalized}"
+
+
+def _output_image_part(
+    *,
+    data: str | None,
+    url: str | None = None,
+    media_type: str | None = None,
+    default_media_type: str = "image/png",
+) -> ImagePart | None:
+    if isinstance(url, str) and url:
+        return ImagePart(image=url, media_type=media_type or default_media_type)
+    if not isinstance(data, str) or not data:
+        return None
+    resolved_media_type = media_type or default_media_type
+    image = data if data.startswith("data:") else f"data:{resolved_media_type};base64,{data}"
+    return ImagePart(image=image, media_type=resolved_media_type)
+
+
+def _provider_managed_tool_name(item_type: str) -> str:
+    if item_type in _PROVIDER_MANAGED_TOOL_NAMES:
+        return _PROVIDER_MANAGED_TOOL_NAMES[item_type]
+    if item_type.endswith("_call"):
+        return item_type[: -len("_call")]
+    return item_type
+
+
+def _provider_managed_tool_call(item: dict[str, Any]) -> ToolCall:
+    item_type = str(item.get("type") or "")
+    payload = item.get("arguments")
+    if payload is None:
+        payload = item.get("input")
+    if payload is None and isinstance(item.get("action"), dict):
+        payload = item.get("action")
+    metadata = dict(item)
+    metadata["provider_managed"] = True
+    metadata["item_type"] = item_type
+    return ToolCall(
+        id=str(item.get("call_id") or item.get("id") or item_type),
+        name=_provider_managed_tool_name(item_type),
+        input=_normalize_tool_call_input(payload),
+        provider_metadata=metadata,
+    )
+
+
+def _is_provider_managed_output_item(item: dict[str, Any]) -> bool:
+    item_type = str(item.get("type") or "")
+    return item_type in _PROVIDER_MANAGED_TOOL_NAMES or item_type.endswith("_call")
 
 
 def _system_instructions(messages: list[ModelMessage]) -> str | None:
@@ -134,6 +246,22 @@ def _system_instructions(messages: list[ModelMessage]) -> str | None:
     return text or None
 
 
+def _map_file_part(part: FilePart) -> dict[str, Any]:
+    validate_file_part(part)
+    if part.text is not None or part.document_content is not None:
+        raise ValidationError('This SDK does not map FilePart "text" or "document_content" to OpenAI-compatible file inputs.')
+    payload: dict[str, Any] = {"type": "input_file"}
+    if part.data is not None:
+        payload["file_data"] = part.data
+    if part.file_id is not None:
+        payload["file_id"] = part.file_id
+    if part.url is not None:
+        payload["file_url"] = part.url
+    if part.filename is not None:
+        payload["filename"] = part.filename
+    return payload
+
+
 def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     for part in message.parts:
@@ -141,6 +269,8 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
             content.append({"type": "input_text", "text": part.text})
         elif part.type == "image":
             content.append({"type": "input_image", "image_url": part.image})
+        elif part.type == "file":
+            content.append(_map_file_part(part))
     return content
 
 
@@ -417,22 +547,103 @@ def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[str | None, 
     return normalize_finish_reason(status), status
 
 
+def _parse_output_content_part(content: dict[str, Any]) -> list[Any]:
+    content_type = str(content.get("type") or "")
+    if content_type in {"output_text", "text"} and content.get("text"):
+        provider_metadata = dict(content)
+        return [TextPart(text=str(content["text"]), provider_metadata=provider_metadata)]
+    if content_type in {"output_image", "image"}:
+        image_part = _output_image_part(
+            data=content.get("result") or content.get("b64_json") or content.get("image_base64"),
+            url=content.get("image_url") or content.get("url"),
+            media_type=content.get("media_type"),
+            default_media_type=_image_media_type_from_format(content.get("output_format")),
+        )
+        if image_part is not None:
+            image_part.provider_metadata = dict(content)
+        return [image_part] if image_part is not None else []
+    return []
+
+
 def _parse_output_item(item: dict[str, Any]) -> list[Any]:
     parts: list[Any] = []
-    if item.get("type") == "message" and item.get("role") == "assistant":
+    item_type = str(item.get("type") or "")
+    if item_type == "message" and item.get("role") == "assistant":
         for content in item.get("content") or []:
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                parts.append(TextPart(text=content["text"]))
-    elif item.get("type") == "function_call":
+            if isinstance(content, dict):
+                parts.extend(_parse_output_content_part(content))
+    elif item_type == "function_call":
         parts.append(
             ToolCallPart(
                 tool_call=ToolCall(
                     id=item.get("call_id") or item.get("id", ""),
                     name=item.get("name", ""),
-                    input=json.loads(item.get("arguments") or "{}"),
+                    input=_normalize_tool_call_input(item.get("arguments")),
                 )
             )
         )
+    elif item_type == "image_generation_call":
+        image_part = _output_image_part(
+            data=item.get("result"),
+            url=item.get("url"),
+            media_type=item.get("media_type"),
+            default_media_type=_image_media_type_from_format(item.get("output_format")),
+        )
+        if image_part is not None:
+            image_part.provider_metadata = dict(item)
+            parts.append(image_part)
+        parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
+    elif item_type == "code_interpreter_call":
+        if item.get("code"):
+            parts.append(
+                GeneratedCodePart(
+                    code=str(item.get("code") or ""),
+                    language=item.get("language") or "python",
+                )
+            )
+        for output in item.get("outputs") or []:
+            if not isinstance(output, dict):
+                continue
+            if output.get("type") == "logs" and output.get("logs") is not None:
+                parts.append(
+                    CodeExecutionResultPart(
+                        output=str(output.get("logs") or ""),
+                        outcome=item.get("status"),
+                    )
+                )
+            elif output.get("type") == "image" and output.get("url"):
+                parts.append(ImagePart(image=str(output["url"]), provider_metadata=dict(output)))
+        parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
+    elif item_type == "computer_call_output":
+        output = item.get("output") or {}
+        if isinstance(output, dict):
+            if output.get("image_url"):
+                parts.append(ImagePart(image=str(output["image_url"]), provider_metadata=dict(item)))
+            elif output.get("file_id"):
+                parts.append(
+                    FilePart(
+                        file_id=str(output["file_id"]),
+                        provider_metadata=dict(item),
+                    )
+                )
+        parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
+    elif item_type == "file_search_call":
+        for result in item.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            source = result.get("text")
+            if source:
+                parts.append(
+                    FilePart(
+                        text=str(source),
+                        title=result.get("filename"),
+                        context=result.get("filename"),
+                        provider_metadata=dict(result),
+                    )
+                )
+        parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
+    elif _is_provider_managed_output_item(item):
+        parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
     return parts
 
 
@@ -449,18 +660,28 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
             'Provider "qwen" tool calling is not currently supported through this Responses-compatible adapter. '
             "Use a Qwen chat-completions-compatible path for tool calling."
         )
+    provider_options = deepcopy(input.provider_options or {})
+    provider_tools = provider_options.pop("tools", None)
+    if provider_tools is not None and not isinstance(provider_tools, list):
+        raise ValidationError('The OpenAI-compatible "provider_options.tools" field must be a list.')
+    merged_tools = []
+    mapped_tools = _map_tools(input.tools) or []
+    if mapped_tools:
+        merged_tools.extend(mapped_tools)
+    if provider_tools:
+        merged_tools.extend(deepcopy(provider_tools))
     body = {
         "model": model_id,
         "instructions": _system_instructions(input.messages),
         "input": _to_responses_input(input.messages),
-        "tools": _map_tools(input.tools),
+        "tools": merged_tools or None,
         "tool_choice": _map_tool_choice(input.tool_choice, provider_name=provider_name),
         "text": _map_structured_output(input),
         "temperature": input.temperature,
         "max_output_tokens": input.max_tokens,
         "reasoning": _map_reasoning(input, provider_name),
-        "parallel_tool_calls": True if input.tools else None,
-        **(input.provider_options or {}),
+        "parallel_tool_calls": True if merged_tools else None,
+        **provider_options,
         "stream": True if stream else None,
     }
     return drop_none(body)
@@ -496,6 +717,106 @@ def _extract_sources(value: Any) -> list[GroundingSource]:
         seen.add(item.url)
         deduped.append(item)
     return deduped
+
+
+def _normalize_binary(data: bytes | bytearray | memoryview) -> bytes:
+    if isinstance(data, memoryview):
+        return data.tobytes()
+    return bytes(data)
+
+
+def _normalize_openai_file(payload: dict[str, Any], *, provider: str) -> ProviderFile:
+    return ProviderFile(
+        provider=provider,
+        id=str(payload.get("id") or ""),
+        filename=payload.get("filename"),
+        media_type=payload.get("mime_type"),
+        size_bytes=payload.get("bytes"),
+        status=payload.get("status"),
+        url=payload.get("url"),
+        created_at=payload.get("created_at"),
+        metadata=dict(payload),
+    )
+
+
+@dataclass(slots=True)
+class OpenAICompatibleFilesClient(FilesClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    auth_header: str = "authorization"
+    auth_prefix: str = "Bearer "
+    default_purpose: str = "assistants"
+
+    def _headers(self, *, json_content: bool = True) -> dict[str, str]:
+        value = self.api_key if not self.auth_prefix else f"{self.auth_prefix}{self.api_key}"
+        headers = {self.auth_header: value}
+        if json_content:
+            headers["content-type"] = "application/json"
+        return headers
+
+    async def upload(
+        self,
+        *,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str = "application/pdf",
+        purpose: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProviderFile:
+        if media_type != "application/pdf":
+            raise ValidationError('This SDK currently supports only PDF uploads with media_type="application/pdf".')
+        response = await self.fetch(
+            f"{self.base_url}/files",
+            headers=self._headers(json_content=False),
+            body={
+                "data": {"purpose": purpose or self.default_purpose, **({"metadata": json.dumps(metadata)} if metadata else {})},
+                "files": {"file": (filename, _normalize_binary(data), media_type)},
+            },
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_file(await response.json(), provider=self.provider)
+
+    async def list(self) -> list[ProviderFile]:
+        response = await self.fetch(
+            f"{self.base_url}/files",
+            method="GET",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        payload = await response.json()
+        return [_normalize_openai_file(dict(item), provider=self.provider) for item in payload.get("data") or []]
+
+    async def get(self, file_id: str) -> ProviderFile:
+        response = await self.fetch(
+            f"{self.base_url}/files/{file_id}",
+            method="GET",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return _normalize_openai_file(await response.json(), provider=self.provider)
+
+    async def delete(self, file_id: str) -> bool:
+        response = await self.fetch(
+            f"{self.base_url}/files/{file_id}",
+            method="DELETE",
+            headers=self._headers(),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        payload = await response.json()
+        return bool(payload.get("deleted"))
 
 
 def _audio_payload(audio: AudioInput) -> dict[str, Any]:
@@ -713,6 +1034,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        validate_message_parts(self, input.messages)
         body = _responses_body(self.model_id, self.provider, input, stream=False)
         response = await with_retry(
             lambda: self.fetch(
@@ -739,6 +1061,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
+        validate_message_parts(self, input.messages)
         body = _responses_body(self.model_id, self.provider, input, stream=True)
         response = await with_retry(
             lambda: self.fetch(
@@ -769,9 +1092,11 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                             tool_call=ToolCall(
                                 id=item.get("call_id") or item.get("id", ""),
                                 name=item.get("name", ""),
-                                input=json.loads(item.get("arguments") or "{}"),
+                                input=_normalize_tool_call_input(item.get("arguments")),
                             )
                         )
+                    elif isinstance(item, dict) and _is_provider_managed_output_item(item):
+                        yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
                     continue
                 if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
                     response_payload = payload.get("response") or {}
@@ -972,6 +1297,10 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_GROUNDED_CAPABILITIES)
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
+        provider_options = deepcopy(input.provider_options or {})
+        web_search_tool = provider_options.pop("web_search", None)
+        if web_search_tool is None:
+            web_search_tool = {"type": "web_search"}
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses",
@@ -979,10 +1308,10 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
                 json_body={
                     "model": self.model_id,
                     "input": _to_responses_input(input.messages),
-                    "tools": [{"type": "web_search_preview"}],
+                    "tools": [web_search_tool],
                     "temperature": input.temperature,
                     "max_output_tokens": input.max_tokens,
-                    **(input.provider_options or {}),
+                    **provider_options,
                 },
                 timeout_ms=input.timeout_ms,
             ),
@@ -1005,6 +1334,378 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
             ),
             raw_response=payload,
         )
+
+
+@dataclass(slots=True)
+class OpenAICompatibleResponsesClient(_BaseOpenAICompatible, ResponsesClient):
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/responses",
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def create_background(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        payload = dict(body)
+        payload["background"] = True
+        return await self.create(payload, options=options)
+
+    async def retrieve(
+        self,
+        response_id: str,
+        *,
+        include: list[str] | None = None,
+        stream: bool | None = None,
+        starting_after: int | None = None,
+        include_obfuscation: bool | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(
+                    self.base_url,
+                    f"/responses/{response_id}",
+                    {
+                        "include": include,
+                        "stream": stream,
+                        "starting_after": starting_after,
+                        "include_obfuscation": include_obfuscation,
+                    },
+                ),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def wait(
+        self,
+        response_id: str,
+        *,
+        include: list[str] | None = None,
+        stream: bool | None = None,
+        starting_after: int | None = None,
+        include_obfuscation: bool | None = None,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        deadline = None if timeout_ms is None else time.monotonic() + max(0, timeout_ms) / 1000
+        while True:
+            payload = await self.retrieve(
+                response_id,
+                include=include,
+                stream=stream,
+                starting_after=starting_after,
+                include_obfuscation=include_obfuscation,
+                options=options,
+            )
+            status = str(payload.get("status") or "").lower()
+            if not status or status in _TERMINAL_RESPONSE_STATUSES:
+                return payload
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f'OpenAI response "{response_id}" did not reach a terminal state before timeout.')
+                await asyncio.sleep(min(max(poll_interval_ms, 0) / 1000, remaining))
+            else:
+                await asyncio.sleep(max(poll_interval_ms, 0) / 1000)
+
+    async def delete(self, response_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/responses/{response_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def list_input_items(
+        self,
+        response_id: str,
+        *,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+        order: str | None = None,
+        include: list[str] | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(
+                    self.base_url,
+                    f"/responses/{response_id}/input_items",
+                    {
+                        "after": after,
+                        "before": before,
+                        "include": include,
+                        "limit": limit,
+                        "order": order,
+                    },
+                ),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def count_input_tokens(
+        self,
+        body: dict[str, Any],
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/responses/input_tokens",
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def cancel(self, response_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/responses/{response_id}/cancel",
+                headers=self._headers(),
+                json_body={},
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def compact(
+        self,
+        body: dict[str, Any],
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/responses/compact",
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+
+@dataclass(slots=True)
+class OpenAICompatibleConversationsClient(_BaseOpenAICompatible, ConversationsClient):
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/conversations",
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve(self, conversation_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/conversations/{conversation_id}",
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def update(
+        self,
+        conversation_id: str,
+        body: dict[str, Any],
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/conversations/{conversation_id}",
+                method="POST",
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def delete(self, conversation_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/conversations/{conversation_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def create_item(
+        self,
+        conversation_id: str,
+        body: dict[str, Any],
+        *,
+        include: list[str] | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(self.base_url, f"/conversations/{conversation_id}/items", {"include": include}),
+                headers=self._headers(),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def retrieve_item(
+        self,
+        conversation_id: str,
+        item_id: str,
+        *,
+        include: list[str] | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(
+                    self.base_url,
+                    f"/conversations/{conversation_id}/items/{item_id}",
+                    {"include": include},
+                ),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def delete_item(
+        self,
+        conversation_id: str,
+        item_id: str,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/conversations/{conversation_id}/items/{item_id}",
+                method="DELETE",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
+
+    async def list_items(
+        self,
+        conversation_id: str,
+        *,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+        order: str | None = None,
+        include: list[str] | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await with_retry(
+            lambda: self.fetch(
+                _request_url(
+                    self.base_url,
+                    f"/conversations/{conversation_id}/items",
+                    {
+                        "after": after,
+                        "before": before,
+                        "include": include,
+                        "limit": limit,
+                        "order": order,
+                    },
+                ),
+                method="GET",
+                headers=self._headers(),
+                json_body=None,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.json()
 
 
 @dataclass(slots=True)
@@ -1102,6 +1803,9 @@ def create_openai_compatible_provider(
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
+    files_client_factory: Callable[[], FilesClient] | None = None,
+    responses_client_factory: Callable[[], ResponsesClient] | None = None,
+    conversations_client_factory: Callable[[], ConversationsClient] | None = None,
 ) -> ProviderAdapter:
     resolved_key = api_key or os.getenv(env_var)
     if not resolved_key:
@@ -1200,4 +1904,7 @@ def create_openai_compatible_provider(
             if supports_realtime
             else None
         ),
+        files_client_factory=files_client_factory,
+        responses_client_factory=responses_client_factory,
+        conversations_client_factory=conversations_client_factory,
     )

@@ -20,12 +20,12 @@ async def main() -> None:
     researcher = Agent(
         name="researcher",
         instructions="You are a concise research assistant. Answer delegated tasks directly.",
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
     )
     triage = Agent(
         name="triage",
         instructions="Delegate background research work to the researcher agent.",
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
         tools={
             "delegate_research": tool(
                 name="delegate_research",

@@ -13,7 +13,7 @@ class Summary(BaseModel):
 async def main() -> None:
     provider = create_openai()
     result = await generate_object(
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
         prompt="Return a JSON summary for: Zhivex AI SDK helps unify multiple LLM providers.",
         schema=Summary,
     )

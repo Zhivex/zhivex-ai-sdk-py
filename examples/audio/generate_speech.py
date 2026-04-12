@@ -1,7 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path
+import sys
 import wave
+
+EXAMPLES_ROOT = Path(__file__).resolve().parents[1]
+if str(EXAMPLES_ROOT) not in sys.path:
+    sys.path.insert(0, str(EXAMPLES_ROOT))
 
 from _bootstrap import load_dotenv_if_available
 
@@ -26,7 +33,7 @@ async def main() -> None:
         voice="Kore",
     )
 
-    output_path = Path("speech.wav")
+    output_path = Path(__file__).with_name("speech.wav")
     save_wave(output_path, result.audio)
     print(f"saved {output_path}", result.media_type)
 

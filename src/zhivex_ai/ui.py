@@ -6,8 +6,10 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from .types import (
+    CodeExecutionResultPart,
     FilePart,
     FinishReason,
+    GeneratedCodePart,
     ImagePart,
     MessageRole,
     ModelMessage,
@@ -62,22 +64,51 @@ def _tool_result_from_dict(value: dict[str, Any]) -> ToolExecutionResult:
     )
 
 
-def _part_from_dict(value: dict[str, Any]) -> TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart:
+def _part_from_dict(
+    value: dict[str, Any],
+) -> TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart:
     part_type = value["type"]
     if part_type == "text":
-        return TextPart(text=value.get("text", ""))
+        return TextPart(
+            text=value.get("text", ""),
+            provider_metadata=value.get("provider_metadata") or {},
+        )
     if part_type == "image":
-        return ImagePart(image=value.get("image", ""), media_type=value.get("media_type"))
+        return ImagePart(
+            image=value.get("image", ""),
+            media_type=value.get("media_type"),
+            provider_metadata=value.get("provider_metadata") or {},
+        )
     if part_type == "file":
         return FilePart(
-            data=value.get("data", ""),
-            media_type=value.get("media_type", ""),
+            data=value.get("data"),
+            text=value.get("text"),
+            document_content=value.get("document_content"),
+            media_type=value.get("media_type"),
             filename=value.get("filename"),
+            file_id=value.get("file_id"),
+            file_uri=value.get("file_uri"),
+            url=value.get("url"),
+            title=value.get("title"),
+            context=value.get("context"),
+            citations_enabled=value.get("citations_enabled"),
+            cache_control=value.get("cache_control"),
+            provider_metadata=value.get("provider_metadata") or {},
         )
     if part_type == "tool-call":
         return ToolCallPart(tool_call=_tool_call_from_dict(value["tool_call"]))
     if part_type == "tool-result":
         return ToolResultPart(tool_result=_tool_result_from_dict(value["tool_result"]))
+    if part_type == "generated-code":
+        return GeneratedCodePart(
+            code=value.get("code", ""),
+            language=value.get("language"),
+        )
+    if part_type == "code-result":
+        return CodeExecutionResultPart(
+            output=value.get("output", ""),
+            outcome=value.get("outcome"),
+        )
     raise ValueError(f"Unsupported content part type: {part_type}")
 
 

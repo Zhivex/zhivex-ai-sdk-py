@@ -63,6 +63,9 @@ async def generate_grounded_text(
     return GenerateGroundedTextOutput(
         text=result.text or "",
         sources=result.sources,
+        queries=result.queries,
+        supports=result.supports,
+        search_entry_point=result.search_entry_point,
         finish_reason=result.finish_reason,
         provider_finish_reason=result.provider_finish_reason,
         usage=result.usage,

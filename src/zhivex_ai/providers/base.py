@@ -3,7 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..types import EmbeddingModel, GroundedLanguageModel, LanguageModel, RealtimeModel, SpeechModel, TranscriptionModel
+from ..types import (
+    ConversationsClient,
+    EmbeddingModel,
+    FilesClient,
+    GroundedLanguageModel,
+    LanguageModel,
+    RealtimeModel,
+    ResponsesClient,
+    SpeechModel,
+    TranscriptionModel,
+)
 
 
 @dataclass(slots=True)
@@ -15,12 +25,18 @@ class ProviderAdapter:
     speech_model_factory: Callable[[str], SpeechModel] | None = None
     grounded_language_model_factory: Callable[[str], GroundedLanguageModel] | None = None
     realtime_model_factory: Callable[[str], RealtimeModel] | None = None
+    files_client_factory: Callable[[], FilesClient] | None = None
+    responses_client_factory: Callable[[], ResponsesClient] | None = None
+    conversations_client_factory: Callable[[], ConversationsClient] | None = None
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
     _embedding_model_cache: dict[str, EmbeddingModel] = field(default_factory=dict, init=False, repr=False)
     _transcription_model_cache: dict[str, TranscriptionModel] = field(default_factory=dict, init=False, repr=False)
     _speech_model_cache: dict[str, SpeechModel] = field(default_factory=dict, init=False, repr=False)
     _grounded_language_model_cache: dict[str, GroundedLanguageModel] = field(default_factory=dict, init=False, repr=False)
     _realtime_model_cache: dict[str, RealtimeModel] = field(default_factory=dict, init=False, repr=False)
+    _files_client: FilesClient | None = field(default=None, init=False, repr=False)
+    _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
+    _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
 
     def __call__(self, model_id: str) -> LanguageModel:
         return self.language_model(model_id)
@@ -52,6 +68,27 @@ class ProviderAdapter:
         if self.realtime_model_factory is None:
             raise AttributeError(f'Provider "{self.name}" does not expose realtime models.')
         return self._cached_model(self._realtime_model_cache, self.realtime_model_factory, model_id)
+
+    def files(self) -> FilesClient:
+        if self.files_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a files client.')
+        if self._files_client is None:
+            self._files_client = self.files_client_factory()
+        return self._files_client
+
+    def responses(self) -> ResponsesClient:
+        if self.responses_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a responses client.')
+        if self._responses_client is None:
+            self._responses_client = self.responses_client_factory()
+        return self._responses_client
+
+    def conversations(self) -> ConversationsClient:
+        if self.conversations_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a conversations client.')
+        if self._conversations_client is None:
+            self._conversations_client = self.conversations_client_factory()
+        return self._conversations_client
 
     @staticmethod
     def _cached_model(cache: dict[str, object], factory: Callable[[str], object], model_id: str):

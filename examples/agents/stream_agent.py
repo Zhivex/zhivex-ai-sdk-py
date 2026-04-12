@@ -8,7 +8,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Be concise and narrate your reasoning as plain text.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
     )
 
     stream = stream_agent(agent=agent, prompt="Explain what an agent handoff is in two sentences.")

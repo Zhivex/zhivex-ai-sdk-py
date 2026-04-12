@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,8 +13,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import UnsupportedFeatureError, create_anthropic, generate_text, tool
-from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, TextPart, ToolChoiceName
+from zhivex_ai import FilePart, UnsupportedFeatureError, create_anthropic, generate_grounded_text, generate_text, tool
+from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, StructuredOutputConfig, TextPart, ToolChoiceName
 
 
 @dataclass
@@ -22,12 +22,19 @@ class FakeResponse:
     status_code: int
     payload: Any = None
     body_text: str = ""
+    body_bytes: bytes | None = None
+    headers: dict[str, str] = field(default_factory=dict)
 
     async def json(self) -> Any:
         return self.payload
 
     async def text(self) -> str:
         return self.body_text or json.dumps(self.payload)
+
+    async def read(self) -> bytes:
+        if self.body_bytes is not None:
+            return self.body_bytes
+        return (self.body_text or json.dumps(self.payload)).encode("utf-8")
 
     async def iter_lines(self) -> AsyncIterable[str]:
         for line in self.body_text.splitlines():
@@ -148,6 +155,127 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(image_block["source"]["media_type"], "image/png")
         self.assertEqual(image_block["source"]["data"], "aGVsbG8=")
 
+    async def test_anthropic_maps_inline_pdf_file_input(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            messages=[ModelMessage(role="user", parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="stub.pdf")])],
+        )
+
+        document_block = requests[0]["messages"][0]["content"][0]
+        self.assertEqual(document_block["type"], "document")
+        self.assertEqual(document_block["source"]["type"], "base64")
+        self.assertEqual(document_block["source"]["data"], "JVBERi0xLjQK")
+
+    async def test_anthropic_maps_pdf_urls_to_document_source(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            messages=[ModelMessage(role="user", parts=[FilePart(url="https://example.com/doc.pdf", title="Doc")])],
+        )
+
+        document_block = requests[0]["messages"][0]["content"][0]
+        self.assertEqual(document_block["type"], "document")
+        self.assertEqual(document_block["source"]["type"], "url")
+        self.assertEqual(document_block["source"]["url"], "https://example.com/doc.pdf")
+        self.assertEqual(document_block["title"], "Doc")
+
+    async def test_anthropic_maps_file_id_pdf_input(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            messages=[ModelMessage(role="user", parts=[FilePart(file_id="file_123", filename="stub.pdf")])],
+        )
+
+        document_block = requests[0]["messages"][0]["content"][0]
+        self.assertEqual(document_block["source"]["type"], "file")
+        self.assertEqual(document_block["source"]["file_id"], "file_123")
+
+    async def test_anthropic_maps_text_documents_with_citations(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            messages=[
+                ModelMessage(
+                    role="user",
+                    parts=[
+                        FilePart(
+                            text="Quarterly revenue grew 20% year over year.",
+                            title="Q1 Update",
+                            context="company=Acme",
+                            citations_enabled=True,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        document_block = requests[0]["messages"][0]["content"][0]
+        self.assertEqual(document_block["source"]["type"], "text")
+        self.assertEqual(document_block["source"]["data"], "Quarterly revenue grew 20% year over year.")
+        self.assertEqual(document_block["context"], "company=Acme")
+        self.assertEqual(document_block["citations"], {"enabled": True})
+
     async def test_anthropic_stream_includes_thinking_without_null_fields(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -174,3 +302,211 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(requests[0]["thinking"], {"type": "enabled", "budget_tokens": 2048})
         self.assertNotIn("temperature", requests[0])
+
+    async def test_anthropic_stream_handles_server_tool_events(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'event: content_block_start\n'
+                    'data: {"index":1,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web_search"}}\n\n'
+                    'event: content_block_delta\n'
+                    'data: {"index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"latest mars news\\"}"}}\n\n'
+                    'event: content_block_stop\n'
+                    'data: {"index":1}\n\n'
+                    'event: message_delta\n'
+                    'data: {"delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":7,"output_tokens":3}}\n\n'
+                    'event: message_stop\n'
+                    'data: {"stop_reason":"end_turn"}\n'
+                ),
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider("claude-sonnet-4-20250514")
+        events = []
+        async for event in await model.stream(ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="search")])])):
+            events.append(event)
+
+        self.assertEqual(events[0].tool_call.name, "web_search")
+        self.assertTrue(events[0].tool_call.provider_metadata["provider_managed"])
+        self.assertEqual(events[0].tool_call.input, {"query": "latest mars news"})
+        self.assertEqual(events[-1].usage.total_tokens, 10)
+
+    async def test_anthropic_files_client_crud(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            if method == "GET" and url.endswith("/files"):
+                return FakeResponse(status_code=200, payload={"data": [{"id": "file_1", "filename": "stub.pdf", "size_bytes": 12, "status": "processed", "downloadable": True}]})
+            if method == "GET" and url.endswith("/content"):
+                return FakeResponse(status_code=200, body_bytes=b"file-bytes")
+            if method == "GET":
+                return FakeResponse(status_code=200, payload={"id": "file_1", "filename": "stub.pdf", "size_bytes": 12, "status": "processed", "downloadable": True})
+            if method == "DELETE":
+                return FakeResponse(status_code=200, payload={"id": "file_1", "type": "file_deleted"})
+            return FakeResponse(status_code=200, payload={"id": "file_1", "filename": "stub.pdf", "size_bytes": 12, "status": "processed", "downloadable": True})
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        files = provider.files()
+        created = await files.upload(data=b"hello", filename="notes.txt", media_type="text/plain")
+        listed = await files.list()
+        fetched = await files.get("file_1")
+        downloaded = await files.download("file_1")
+        deleted = await files.delete("file_1")
+
+        self.assertEqual(created.id, "file_1")
+        self.assertEqual(listed[0].size_bytes, 12)
+        self.assertEqual(fetched.filename, "stub.pdf")
+        self.assertEqual(downloaded, b"file-bytes")
+        self.assertTrue(deleted)
+        self.assertEqual(requests[0]["headers"]["anthropic-beta"], "files-api-2025-04-14")
+        self.assertEqual(requests[0]["body"]["files"]["file"][2], "text/plain")
+
+    async def test_anthropic_maps_structured_output_and_tool_metadata(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": '{"value":4}'}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await provider("claude-sonnet-4-20250514").generate(
+            ModelGenerateInput(
+                messages=[ModelMessage(role="user", parts=[TextPart(text="return json")])],
+                structured_output=StructuredOutputConfig(
+                    schema={"type": "object", "properties": {"value": {"type": "integer"}}, "required": ["value"]},
+                    mode="native",
+                    name="calc",
+                ),
+            )
+        )
+
+        tool_def = tool(
+            name="lookup",
+            description="Look up data.",
+            schema={"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]},
+            execute=lambda input: input,
+            strict=True,
+            eager_input_streaming=True,
+            input_examples=[{"q": "weather in NYC"}],
+        )
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            prompt="lookup",
+            tools={"lookup": tool_def},
+        )
+
+        self.assertEqual(requests[0]["output_config"]["format"]["type"], "json_schema")
+        self.assertTrue(requests[1]["tools"][0]["strict"])
+        self.assertTrue(requests[1]["tools"][0]["eager_input_streaming"])
+        self.assertEqual(requests[1]["tools"][0]["input_examples"][0]["q"], "weather in NYC")
+
+    async def test_anthropic_merges_local_and_provider_managed_tools(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("claude-sonnet-4-20250514"),
+            prompt="search and lookup",
+            tools={
+                "lookup": tool(
+                    name="lookup",
+                    description="Look up data.",
+                    schema={"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]},
+                    execute=lambda input: input,
+                )
+            },
+            provider_options={"tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}]},
+        )
+
+        self.assertEqual(len(requests[0]["tools"]), 2)
+        self.assertEqual(requests[0]["tools"][0]["name"], "lookup")
+        self.assertEqual(requests[0]["tools"][1]["name"], "web_search")
+
+    async def test_anthropic_grounded_text_uses_web_search_and_extracts_sources(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [
+                        {"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "mars rover"}},
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srv_1",
+                            "content": [
+                                {
+                                    "type": "web_search_result",
+                                    "url": "https://example.com/mars",
+                                    "title": "Mars Update",
+                                    "encrypted_content": "enc",
+                                }
+                            ],
+                        },
+                        {
+                            "type": "text",
+                            "text": "Latest rover update.",
+                            "citations": [
+                                {
+                                    "type": "web_search_result_location",
+                                    "url": "https://example.com/mars",
+                                    "title": "Mars Update",
+                                    "cited_text": "Rover update snippet",
+                                    "encrypted_index": "idx",
+                                }
+                            ],
+                        },
+                    ],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 5, "output_tokens": 7, "server_tool_use": {"web_search_requests": 1}},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await generate_grounded_text(
+            model=provider.grounded_language_model("claude-sonnet-4-20250514"),
+            prompt="What is the latest Mars rover update?",
+        )
+
+        self.assertEqual(requests[0]["tools"][0]["type"], "web_search_20250305")
+        self.assertEqual(result.text, "Latest rover update.")
+        self.assertEqual(result.sources[0].url, "https://example.com/mars")
+        self.assertTrue(any(source.snippet == "Rover update snippet" for source in result.sources))

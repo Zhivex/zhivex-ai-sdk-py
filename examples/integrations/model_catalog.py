@@ -2,7 +2,7 @@ from zhivex_ai import default_model_catalog
 
 
 def main() -> None:
-    entry = default_model_catalog.find("openai", "gpt-4o-mini")
+    entry = default_model_catalog.find("openai", "gpt-5.4-mini")
     print(entry)
 
     for item in default_model_catalog.list():

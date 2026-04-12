@@ -22,9 +22,12 @@ from zhivex_ai import (  # noqa: E402
     to_ui_messages,
 )
 from zhivex_ai.types import (  # noqa: E402
+    CodeExecutionResultPart,
     GenerateResult,
+    GeneratedCodePart,
     ModelCapabilities,
     ModelGenerateInput,
+    ModelMessage,
     StreamFinishEvent,
     StreamTextDeltaEvent,
     TokenUsage,
@@ -75,10 +78,19 @@ class _FakeRequest:
 
 class TransportTests(IsolatedAsyncioTestCase):
     async def test_ui_message_roundtrip(self) -> None:
-        source = [create_text_message("user", "hello")]
+        source = [
+            ModelMessage(
+                role="assistant",
+                parts=[
+                    GeneratedCodePart(code="print('hello')", language="python"),
+                    CodeExecutionResultPart(output="hello", outcome="ok"),
+                ],
+            )
+        ]
         ui_messages = to_ui_messages(source)
         restored = from_ui_messages(ui_messages)
-        self.assertEqual(restored[0].parts[0].text, "hello")
+        self.assertEqual(restored[0].parts[0].type, "generated-code")
+        self.assertEqual(restored[0].parts[1].type, "code-result")
 
     async def test_parse_ui_message_request_accepts_ndjson(self) -> None:
         message = to_ui_messages([create_text_message("user", "hello")])[0]

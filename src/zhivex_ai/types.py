@@ -64,6 +64,7 @@ class ToolExecutionResult:
 class TextPart:
     type: Literal["text"] = "text"
     text: str = ""
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -71,14 +72,174 @@ class ImagePart:
     type: Literal["image"] = "image"
     image: str = ""
     media_type: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class FilePart:
     type: Literal["file"] = "file"
-    data: str = ""
-    media_type: str = ""
+    data: str | None = None
+    text: str | None = None
+    document_content: list[JsonValue] | None = None
+    media_type: str | None = None
     filename: str | None = None
+    file_id: str | None = None
+    file_uri: str | None = None
+    url: str | None = None
+    title: str | None = None
+    context: str | None = None
+    citations_enabled: bool | None = None
+    cache_control: dict[str, Any] | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ProviderFile:
+    provider: str
+    id: str
+    filename: str | None = None
+    media_type: str | None = None
+    size_bytes: int | None = None
+    status: str | None = None
+    url: str | None = None
+    file_uri: str | None = None
+    created_at: str | int | None = None
+    downloadable: bool | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class FilesClient(Protocol):
+    async def upload(
+        self,
+        *,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str = "application/pdf",
+        purpose: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProviderFile: ...
+
+    async def list(self) -> list[ProviderFile]: ...
+
+    async def get(self, file_id: str) -> ProviderFile: ...
+
+    async def download(self, file_id: str) -> bytes: ...
+
+    async def delete(self, file_id: str) -> bool: ...
+
+
+class ResponsesClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def create_background(
+        self,
+        body: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def retrieve(
+        self,
+        response_id: str,
+        *,
+        include: list[str] | None = None,
+        stream: bool | None = None,
+        starting_after: int | None = None,
+        include_obfuscation: bool | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def delete(self, response_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def list_input_items(
+        self,
+        response_id: str,
+        *,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+        order: Literal["asc", "desc"] | None = None,
+        include: list[str] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def count_input_tokens(
+        self,
+        body: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def cancel(self, response_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def compact(
+        self,
+        body: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def wait(
+        self,
+        response_id: str,
+        *,
+        include: list[str] | None = None,
+        stream: bool | None = None,
+        starting_after: int | None = None,
+        include_obfuscation: bool | None = None,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+
+class ConversationsClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve(self, conversation_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def update(
+        self,
+        conversation_id: str,
+        body: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def delete(self, conversation_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def create_item(
+        self,
+        conversation_id: str,
+        body: dict[str, Any],
+        *,
+        include: list[str] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def retrieve_item(
+        self,
+        conversation_id: str,
+        item_id: str,
+        *,
+        include: list[str] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def delete_item(
+        self,
+        conversation_id: str,
+        item_id: str,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def list_items(
+        self,
+        conversation_id: str,
+        *,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
+        order: Literal["asc", "desc"] | None = None,
+        include: list[str] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(slots=True)
@@ -95,7 +256,21 @@ class ToolResultPart:
     )
 
 
-ContentPart: TypeAlias = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart
+@dataclass(slots=True)
+class GeneratedCodePart:
+    type: Literal["generated-code"] = "generated-code"
+    code: str = ""
+    language: str | None = "python"
+
+
+@dataclass(slots=True)
+class CodeExecutionResultPart:
+    type: Literal["code-result"] = "code-result"
+    output: str = ""
+    outcome: str | None = None
+
+
+ContentPart: TypeAlias = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart
 
 
 @dataclass(slots=True)
@@ -347,12 +522,25 @@ class GroundingSource:
     url: str
     title: str | None = None
     snippet: str | None = None
+    kind: str | None = None
+    provider_metadata: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class GroundingSupport:
+    start_index: int | None = None
+    end_index: int | None = None
+    segment_text: str | None = None
+    source_indices: list[int] = field(default_factory=list)
     provider_metadata: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
 class GroundedGenerateResult(GenerateResult):
     sources: list[GroundingSource] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)
+    supports: list[GroundingSupport] = field(default_factory=list)
+    search_entry_point: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -544,6 +732,21 @@ class RealtimeSessionEndedEvent:
 
 
 @dataclass(slots=True)
+class RealtimeSessionResumptionEvent:
+    type: Literal["realtime-session-resumption"] = "realtime-session-resumption"
+    new_handle: str | None = None
+    resumable: bool | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RealtimeGoAwayEvent:
+    type: Literal["realtime-go-away"] = "realtime-go-away"
+    time_left_ms: int | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RealtimeErrorEvent:
     type: Literal["realtime-error"] = "realtime-error"
     error: Exception | None = None
@@ -559,6 +762,8 @@ RealtimeEvent: TypeAlias = (
     | RealtimeToolCallEvent
     | RealtimeToolResultEvent
     | RealtimeSessionEndedEvent
+    | RealtimeSessionResumptionEvent
+    | RealtimeGoAwayEvent
     | RealtimeErrorEvent
 )
 
@@ -618,6 +823,12 @@ class ToolDefinition:
     description: str | None
     schema: Any
     execute: Callable[..., Awaitable[JsonValue] | JsonValue] | None = None
+    input_examples: list[JsonValue] = field(default_factory=list)
+    strict: bool | None = None
+    defer_loading: bool | None = None
+    eager_input_streaming: bool | None = None
+    allowed_callers: list[str] = field(default_factory=list)
+    cache_control: dict[str, Any] | None = None
     tags: list[str] = field(default_factory=list)
     requires_approval: bool | None = None
     permissions: list[str] = field(default_factory=list)
@@ -658,6 +869,9 @@ class GenerateObjectOutput(GenerateTextOutput):
 class GenerateGroundedTextOutput:
     text: str
     sources: list[GroundingSource] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)
+    supports: list[GroundingSupport] = field(default_factory=list)
+    search_entry_point: dict[str, Any] | None = None
     finish_reason: FinishReason | None = None
     provider_finish_reason: str | None = None
     usage: TokenUsage | None = None

@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import (
+    FilePart,
     ImagePart,
     MCPServerConfig,
     MCPToolConfig,
@@ -28,6 +29,7 @@ from zhivex_ai import (
 from zhivex_ai import UnsupportedFeatureError
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
 from zhivex_ai.errors import ProviderHTTPError
+from zhivex_ai.errors import ValidationError
 
 
 @dataclass
@@ -35,6 +37,7 @@ class FakeResponse:
     status_code: int
     payload: Any = None
     body_text: str = ""
+    headers: dict[str, str] | None = None
 
     async def json(self) -> Any:
         return self.payload
@@ -85,11 +88,48 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(requests[0]["json"]["generationConfig"]["responseModalities"], ["AUDIO"])
 
+    async def test_gemini_creates_browser_token(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "name": "ephemeral-token",
+                    "expireTime": "2026-04-12T00:00:00Z",
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        token = await provider.realtime_model("gemini-live-2.5-flash").create_browser_token()
+
+        self.assertEqual(token.value, "ephemeral-token")
+        self.assertIsNotNone(token.expires_at_ms)
+        self.assertEqual(requests[0]["method"], "POST")
+        self.assertIn("/v1alpha/authTokens?key=test", requests[0]["url"])
+
     async def test_vertex_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
 
         async def fetch(
-            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
         ):
             requests.append({"url": url, "headers": headers, "json": json_body})
             return FakeResponse(
@@ -201,6 +241,58 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertNotIn("toolConfig", requests[0])
         self.assertNotIn("generationConfig", requests[0])
 
+    async def test_gemini_maps_inline_pdf_file_input(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}]},
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gemini-2.5-flash"),
+            messages=[ModelMessage(role="user", parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="stub.pdf")])],
+        )
+
+        inline_data = requests[0]["contents"][0]["parts"][0]["inlineData"]
+        self.assertEqual(inline_data["mimeType"], "application/pdf")
+        self.assertEqual(inline_data["data"], "JVBERi0xLjQK")
+
+    async def test_gemini_maps_file_uri_pdf_input(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}]},
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gemini-2.5-flash"),
+            messages=[ModelMessage(role="user", parts=[FilePart(file_uri="files/123")])],
+        )
+
+        file_data = requests[0]["contents"][0]["parts"][0]["fileData"]
+        self.assertEqual(file_data["fileUri"], "files/123")
+        self.assertNotIn("mimeType", file_data)
+
+    async def test_gemini_rejects_file_id_pdf_input(self) -> None:
+        provider = create_gemini(api_key="test", fetch=lambda **_: None)  # type: ignore[arg-type]
+        with self.assertRaises(ValidationError):
+            await generate_text(
+                model=provider("gemini-2.5-flash"),
+                messages=[ModelMessage(role="user", parts=[FilePart(file_id="file_123")])],
+            )
+
     async def test_gemini_maps_google_search_provider_option(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -225,6 +317,41 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "fresh answer")
         self.assertEqual(requests[0]["tools"], [{"googleSearch": {}}])
         self.assertNotIn("google_search", requests[0])
+
+    async def test_gemini_maps_builtin_tools_and_strips_provider_options(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}]},
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gemini-3-flash-preview"),
+            prompt="Research this",
+            provider_options={
+                "google_search": {"excludeDomains": ["example.com"]},
+                "code_execution": True,
+                "built_in_tools": [{"url_context": {}}],
+            },
+        )
+
+        self.assertEqual(
+            requests[0]["tools"],
+            [
+                {"googleSearch": {"excludeDomains": ["example.com"]}},
+                {"codeExecution": {}},
+                {"urlContext": {}},
+            ],
+        )
+        self.assertNotIn("google_search", requests[0])
+        self.assertNotIn("code_execution", requests[0])
+        self.assertNotIn("built_in_tools", requests[0])
 
     async def test_gemini_grounded_language_model_returns_sources(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -265,7 +392,128 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "grounded answer")
         self.assertEqual(result.sources[0].url, "https://example.com/1")
         self.assertEqual(result.sources[1].snippet, "snippet")
+        self.assertEqual(result.queries, [])
         self.assertEqual(requests[0]["tools"], [{"googleSearch": {}}])
+
+    async def test_vertex_grounded_language_model_returns_sources(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {
+                            "content": {"parts": [{"text": "vertex grounded"}]},
+                            "finishReason": "STOP",
+                            "groundingMetadata": {
+                                "webSearchQueries": ["latest ai infra"],
+                                "groundingChunks": [
+                                    {"web": {"uri": "https://example.com/vertex", "title": "Vertex Source", "text": "snippet"}}
+                                ],
+                                "groundingSupports": [
+                                    {
+                                        "segment": {"startIndex": 0, "endIndex": 14, "text": "vertex grounded"},
+                                        "groundingChunkIndices": [0],
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                },
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        result = await generate_grounded_text(
+            model=provider.grounded_language_model("gemini-2.5-flash"),
+            prompt="latest news",
+        )
+
+        self.assertEqual(result.text, "vertex grounded")
+        self.assertEqual(result.sources[0].url, "https://example.com/vertex")
+        self.assertEqual(result.queries, ["latest ai infra"])
+        self.assertEqual(result.supports[0].source_indices, [0])
+        self.assertIn("/publishers/google/models/gemini-2.5-flash:generateContent", requests[0]["url"])
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+
+    async def test_gemini_files_client_crud(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            if "upload/v1beta/files" in url:
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/resumable"})
+            if url == "https://upload.example.com/resumable":
+                return FakeResponse(status_code=200, payload={"file": {"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}})
+            if method == "GET" and "/files?" in url:
+                return FakeResponse(status_code=200, payload={"files": [{"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}]})
+            if method == "GET":
+                return FakeResponse(status_code=200, payload={"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"})
+            if method == "DELETE":
+                return FakeResponse(status_code=200, payload={})
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        files = provider.files()
+        created = await files.upload(data=b"%PDF-1.4", filename="stub.pdf")
+        listed = await files.list()
+        fetched = await files.get("files/123")
+        deleted = await files.delete("files/123")
+
+        self.assertEqual(created.id, "files/123")
+        self.assertEqual(created.file_uri, "gs://files/123")
+        self.assertEqual(listed[0].status, "ACTIVE")
+        self.assertEqual(fetched.media_type, "application/pdf")
+        self.assertTrue(deleted)
+        self.assertEqual(requests[0]["headers"]["x-goog-upload-header-content-type"], "application/pdf")
+
+    async def test_gemini_files_client_supports_audio_uploads(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            if "upload/v1beta/files" in url:
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/audio"})
+            if url == "https://upload.example.com/audio":
+                return FakeResponse(
+                    status_code=200,
+                    payload={"file": {"name": "files/audio-1", "displayName": "sample.mp3", "mimeType": "audio/mpeg", "uri": "files/audio-1"}},
+                )
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        created = await provider.files().upload(data=b"mp3-bytes", filename="sample.mp3", media_type="audio/mpeg")
+
+        self.assertEqual(created.media_type, "audio/mpeg")
+        self.assertEqual(requests[0]["headers"]["x-goog-upload-header-content-type"], "audio/mpeg")
 
     async def test_gemini_reports_builtin_search_tool_without_opt_in(self) -> None:
         async def fetch(

@@ -8,7 +8,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Use the remote tool when the user asks for project status.",
-        model=openai("gpt-4o-mini"),
+        model=openai("gpt-5.4-mini"),
         tools={
             "project_status": remote_tool(
                 name="project_status",

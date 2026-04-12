@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable
 import sys
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from pydantic import BaseModel
@@ -13,11 +14,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import (
+    FilePart,
     ModelCapabilities,
     ModelMessage,
     ReasoningConfig,
     ToolChoiceName,
     ToolExecutionOptions,
+    ValidationError,
     create_text_message,
     generate_grounded_text,
     generate_object,
@@ -183,6 +186,13 @@ class FakeGroundedModel:
         )
 
 
+class FakeFileLanguageModel(FakeLanguageModel):
+    capabilities = replace(FakeLanguageModel.capabilities, files=True)
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(messages=[create_text_message("assistant", "ok")], text="ok")
+
+
 class CoreTests(IsolatedAsyncioTestCase):
     def test_schema_adapter_supports_raw_json_schema(self) -> None:
         schema = {
@@ -263,6 +273,50 @@ class CoreTests(IsolatedAsyncioTestCase):
         final = await result.collect()
         self.assertEqual(final.text, "hello world")
         self.assertEqual(final.usage.total_tokens, 5)
+
+    async def test_generate_text_accepts_pdf_file_part_with_single_source(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[
+                ModelMessage(
+                    role="user",
+                    parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="statement.pdf")],
+                )
+            ],
+        )
+        self.assertEqual(result.text, "ok")
+
+    async def test_generate_text_rejects_file_part_with_multiple_sources(self) -> None:
+        with self.assertRaises(ValidationError) as context:
+            await generate_text(
+                model=FakeFileLanguageModel(),
+                messages=[
+                    ModelMessage(
+                        role="user",
+                        parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", file_id="file_123")],
+                    )
+                ],
+            )
+
+        self.assertIn("exactly one source", str(context.exception))
+
+    async def test_generate_text_accepts_non_pdf_file_parts(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[
+                ModelMessage(role="user", parts=[FilePart(data="hello", media_type="text/plain", filename="notes.txt")])
+            ],
+        )
+
+        self.assertEqual(result.text, "ok")
+
+    async def test_generate_text_allows_file_references_without_media_type(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[ModelMessage(role="user", parts=[FilePart(file_id="file_123", filename="statement.pdf")])],
+        )
+
+        self.assertEqual(result.text, "ok")
 
     async def test_stream_text_aggregates_usage_across_tool_steps(self) -> None:
         model = FakeStreamingToolModel()
