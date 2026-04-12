@@ -10,7 +10,8 @@ from urllib.parse import urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
 from ..runtime import with_retry
-from ..types import ModelCapabilities, RetryOptions, SpeechModel, SpeechOutput
+from ..types import ModelCapabilities, PortableSupport, RetryOptions, SpeechModel, SpeechOutput
+from .base import create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OPENAI_COMPAT_SPEECH_CAPABILITIES,
@@ -149,7 +150,7 @@ def create_qwen(
         tool_choice=False,
         parallel_tool_calls=False,
     )
-    provider = create_openai_compatible_provider(
+    native = create_openai_compatible_provider(
         provider_name="qwen",
         env_var="QWEN_API_KEY",
         api_key=resolved_key,
@@ -157,13 +158,30 @@ def create_qwen(
         fetch=requester,
         capabilities=capabilities,
     )
-    return replace(
-        provider,
+    native = replace(
+        native,
         speech_model_factory=lambda model_id: QwenSpeechModel(
             provider="qwen",
             model_id=model_id,
             api_key=resolved_key,
             base_url=base_url,
             fetch=requester,
+        ),
+    )
+    return create_provider_bundle(
+        name="qwen",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=False,
+            embeddings=True,
+            grounding=False,
+            retrieval=True,
+            transcription=False,
+            speech=True,
+            portable_badge=False,
+            tier="compatibility",
         ),
     )

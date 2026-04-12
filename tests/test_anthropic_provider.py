@@ -75,7 +75,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("claude-3-5-sonnet"),
+            model=provider.native.language_model("claude-3-5-sonnet"),
             prompt="double 2",
             max_steps=2,
             tools={
@@ -104,7 +104,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         provider = create_anthropic(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError):
             await generate_text(
-                model=provider("claude-sonnet-4-20250514"),
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
                 prompt="double 2",
                 tools={
                     "math": tool(
@@ -135,7 +135,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_anthropic(api_key="test", fetch=fetch)
-        model = provider("claude-sonnet-4-20250514")
+        model = provider.native.language_model("claude-sonnet-4-20250514")
         result = await model.generate(
             ModelGenerateInput(
                 messages=[
@@ -173,7 +173,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             messages=[ModelMessage(role="user", parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="stub.pdf")])],
         )
 
@@ -200,7 +200,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             messages=[ModelMessage(role="user", parts=[FilePart(url="https://example.com/doc.pdf", title="Doc")])],
         )
 
@@ -228,7 +228,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             messages=[ModelMessage(role="user", parts=[FilePart(file_id="file_123", filename="stub.pdf")])],
         )
 
@@ -254,7 +254,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             messages=[
                 ModelMessage(
                     role="user",
@@ -289,7 +289,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_anthropic(api_key="test", fetch=fetch)
-        model = provider("claude-sonnet-4-20250514")
+        model = provider.native.language_model("claude-sonnet-4-20250514")
         events = []
         async for event in await model.stream(
             ModelGenerateInput(
@@ -324,7 +324,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_anthropic(api_key="test", fetch=fetch)
-        model = provider("claude-sonnet-4-20250514")
+        model = provider.native.language_model("claude-sonnet-4-20250514")
         events = []
         async for event in await model.stream(ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="search")])])):
             events.append(event)
@@ -391,7 +391,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_anthropic(api_key="test", fetch=fetch)
-        await provider("claude-sonnet-4-20250514").generate(
+        await provider.native.language_model("claude-sonnet-4-20250514").generate(
             ModelGenerateInput(
                 messages=[ModelMessage(role="user", parts=[TextPart(text="return json")])],
                 structured_output=StructuredOutputConfig(
@@ -412,7 +412,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             input_examples=[{"q": "weather in NYC"}],
         )
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             prompt="lookup",
             tools={"lookup": tool_def},
         )
@@ -440,7 +440,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("claude-sonnet-4-20250514"),
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
             prompt="search and lookup",
             tools={
                 "lookup": tool(
@@ -502,7 +502,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_anthropic(api_key="test", fetch=fetch)
         result = await generate_grounded_text(
-            model=provider.grounded_language_model("claude-sonnet-4-20250514"),
+            model=provider.native.grounded_language_model("claude-sonnet-4-20250514"),
             prompt="What is the latest Mars rover update?",
         )
 

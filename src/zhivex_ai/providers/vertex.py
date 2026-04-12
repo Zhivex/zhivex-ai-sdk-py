@@ -8,8 +8,8 @@ from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import CountTokensResult, EmbedResult, EmbeddingModel, ModelCapabilities, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail
-from .base import ProviderAdapter
+from ..types import CountTokensResult, EmbedResult, EmbeddingModel, ModelCapabilities, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail
+from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
     GEMINI_CAPABILITIES,
@@ -19,6 +19,7 @@ from .gemini import (
     GeminiGroundedLanguageModel,
     GeminiLanguageModel,
     GeminiSpeechModel,
+    GeminiTranscriptionModel,
     _embedding_request_options,
     _gemini_realtime_build_audio,
     _gemini_realtime_build_text,
@@ -134,6 +135,10 @@ def create_vertex(
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
     class VertexSpeechModel(GeminiSpeechModel):
+        def _url(self, action: str) -> str:  # type: ignore[override]
+            return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
+
+    class VertexTranscriptionModel(GeminiTranscriptionModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
@@ -254,7 +259,7 @@ def create_vertex(
         ) -> RealtimeTokenResult:
             return await unsupported_browser_token(config=config, options=options)
 
-    return ProviderAdapter(
+    native = ProviderAdapter(
         name="vertex",
         language_model_factory=lambda model_id: VertexLanguageModel(
             provider="vertex",
@@ -277,6 +282,13 @@ def create_vertex(
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
         ),
+        transcription_model_factory=lambda model_id: VertexTranscriptionModel(
+            provider="vertex",
+            model_id=model_id,
+            api_key="unused",
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+        ),
         grounded_language_model_factory=lambda model_id: VertexGroundedLanguageModel(
             provider="vertex",
             model_id=model_id,
@@ -291,4 +303,21 @@ def create_vertex(
             fetch=wrapped_fetch,
         ),
         realtime_model_factory=lambda model_id: VertexRealtimeModel(model_id),
+    )
+    return create_provider_bundle(
+        name="vertex",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=True,
+            grounding=True,
+            retrieval=True,
+            transcription=True,
+            speech=True,
+            portable_badge=True,
+            tier="portable",
+        ),
     )

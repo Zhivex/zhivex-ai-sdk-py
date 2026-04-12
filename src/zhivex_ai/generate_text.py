@@ -24,6 +24,7 @@ from .types import (
     GenerateTextOutput,
     GenerateTextStep,
     LanguageModel,
+    PortableRetrievalConfig,
     ModelGenerateInput,
     ModelMessage,
     ReasoningConfig,
@@ -95,6 +96,46 @@ def normalize_messages(
     if prompt:
         built.append(create_text_message("user", prompt))
     return built
+
+
+def _is_portable_model(model: Any) -> bool:
+    return bool(getattr(model, "portable", False))
+
+
+def _validate_portable_provider_options(model: Any, provider_options: dict[str, Any] | None) -> None:
+    if _is_portable_model(model) and provider_options is not None:
+        raise ValidationError(
+            "Portable foundation APIs do not accept provider_options. "
+            "Use `provider.native.*` models when you need provider-specific configuration."
+        )
+
+
+def _apply_retrieval(
+    messages: list[ModelMessage],
+    retrieval: PortableRetrievalConfig | None,
+) -> list[ModelMessage]:
+    if retrieval is None:
+        return messages
+    if not retrieval.documents:
+        raise ValidationError('The "retrieval.documents" field must include at least one document.')
+    if retrieval.max_documents <= 0:
+        raise ValidationError('The "retrieval.max_documents" field must be positive.')
+    if retrieval.max_document_chars <= 0:
+        raise ValidationError('The "retrieval.max_document_chars" field must be positive.')
+    selected = retrieval.documents[: retrieval.max_documents]
+    sections: list[str] = []
+    for index, document in enumerate(selected, start=1):
+        excerpt = document.text.strip()[: retrieval.max_document_chars]
+        sections.append(
+            f"[Document {index}] id={document.document_id}"
+            + (f" title={document.title}" if document.title else "")
+            + f"\n{excerpt}"
+        )
+    retrieval_message = create_text_message(
+        "system",
+        "Use the following retrieved context when it is relevant.\n\n" + "\n\n".join(sections),
+    )
+    return [retrieval_message, *messages]
 
 
 def _to_request(
@@ -305,6 +346,7 @@ async def generate_text(
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
     provider_options: dict[str, Any] | None = None,
+    retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
     max_retries: int | None = None,
@@ -312,7 +354,9 @@ async def generate_text(
 ) -> GenerateTextOutput:
     steps_limit = max(1, max_steps or 1)
     all_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    all_messages = _apply_retrieval(all_messages, retrieval)
     validate_message_parts(model, all_messages)
+    _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
@@ -448,6 +492,7 @@ def stream_text(
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
     provider_options: dict[str, Any] | None = None,
+    retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
     max_retries: int | None = None,
@@ -455,7 +500,9 @@ def stream_text(
     on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> _StreamTextResult:
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    base_messages = _apply_retrieval(base_messages, retrieval)
     validate_message_parts(model, base_messages)
+    _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
     if not model.capabilities.streaming:
         raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .providers.base import resolve_provider_adapter
 from .errors import ProviderHTTPError, ZhivexAIError
 from .generate_object import generate_object, stream_object
 from .generate_text import generate_text, stream_text
@@ -104,7 +105,7 @@ def _messages_require_vision(messages: list[GatewayMessage]) -> bool:
 
 
 def _target_supports_vision(adapter: Any, target: GatewayModelTarget) -> bool:
-    capabilities = adapter.language_model(target.model_id).capabilities
+    capabilities = resolve_provider_adapter(adapter).language_model(target.model_id).capabilities
     return capabilities.vision and supports_vision_input(target.provider, target.model_id)
 
 
@@ -165,7 +166,7 @@ def _order_targets(mode: GatewayRoutingMode, intent: GatewayTaskIntent, primary:
 def _supports_required_capabilities(adapter: Any, target: GatewayModelTarget, required: dict[str, bool] | None) -> bool:
     if not required:
         return True
-    capabilities = adapter.language_model(target.model_id).capabilities
+    capabilities = resolve_provider_adapter(adapter).language_model(target.model_id).capabilities
     mapping = {"structuredOutput": "structured_output", "jsonMode": "json_mode"}
     for key, value in required.items():
         if value is not True:
@@ -382,7 +383,7 @@ def create_gateway(config: GatewayConfig):
                 routing_mode=routing_mode,
                 task_intent=task_intent,
                 run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_text(
-                    model=adapter.language_model(target.model_id),
+                    model=resolve_provider_adapter(adapter).language_model(target.model_id),
                     messages=gateway_messages_to_model_messages(messages, system_prompt),
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -426,7 +427,7 @@ def create_gateway(config: GatewayConfig):
                     routing_mode=routing_mode,
                     task_intent=task_intent,
                     run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_text(
-                        model=adapter.language_model(target.model_id),
+                        model=resolve_provider_adapter(adapter).language_model(target.model_id),
                         messages=gateway_messages_to_model_messages(messages, system_prompt),
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -493,7 +494,7 @@ def create_gateway(config: GatewayConfig):
                 routing_mode=routing_mode,
                 task_intent=task_intent,
                 run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_object(
-                    model=adapter.language_model(target.model_id),
+                    model=resolve_provider_adapter(adapter).language_model(target.model_id),
                     messages=gateway_messages_to_model_messages(messages, system_prompt),
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -557,7 +558,7 @@ def create_gateway(config: GatewayConfig):
                     routing_mode=routing_mode,
                     task_intent=task_intent,
                     run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_object(
-                        model=adapter.language_model(target.model_id),
+                        model=resolve_provider_adapter(adapter).language_model(target.model_id),
                         messages=gateway_messages_to_model_messages(messages, system_prompt),
                         temperature=temperature,
                         max_tokens=max_tokens,

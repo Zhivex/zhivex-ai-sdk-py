@@ -20,5 +20,5 @@ class AzureOpenAIProviderTests(TestCase):
             api_version="2024-10-21",
         )
 
-        model = provider("gpt-4o-mini")
+        model = provider.native.language_model("gpt-4o-mini")
         self.assertEqual(model.base_url, "https://example.openai.azure.com/openai/v1")

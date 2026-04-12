@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from .._http import Fetcher
+from ..types import PortableSupport
+from .base import create_provider_bundle
 from .openai_compat import create_openai_compatible_provider
 
 
@@ -10,7 +12,7 @@ def create_openrouter(
     base_url: str = "https://openrouter.ai/api/v1",
     fetch: Fetcher | None = None,
 ):
-    return create_openai_compatible_provider(
+    native = create_openai_compatible_provider(
         provider_name="openrouter",
         env_var="OPENROUTER_API_KEY",
         api_key=api_key,
@@ -18,4 +20,21 @@ def create_openrouter(
         fetch=fetch,
         supports_speech=True,
         speech_transport="chat_audio",
+    )
+    return create_provider_bundle(
+        name="openrouter",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=True,
+            grounding=False,
+            retrieval=True,
+            transcription=False,
+            speech=True,
+            portable_badge=False,
+            tier="native-only",
+        ),
     )

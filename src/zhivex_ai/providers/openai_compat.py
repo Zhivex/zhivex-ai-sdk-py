@@ -765,8 +765,6 @@ class OpenAICompatibleFilesClient(FilesClient):
         purpose: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ProviderFile:
-        if media_type != "application/pdf":
-            raise ValidationError('This SDK currently supports only PDF uploads with media_type="application/pdf".')
         response = await self.fetch(
             f"{self.base_url}/files",
             headers=self._headers(json_content=False),
@@ -804,6 +802,18 @@ class OpenAICompatibleFilesClient(FilesClient):
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         return _normalize_openai_file(await response.json(), provider=self.provider)
+
+    async def download(self, file_id: str) -> bytes:
+        response = await self.fetch(
+            f"{self.base_url}/files/{file_id}/content",
+            method="GET",
+            headers=self._headers(json_content=False),
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise _parse_json_error(self.provider, response.status_code, await response.text())
+        return await response.read()
 
     async def delete(self, file_id: str) -> bool:
         response = await self.fetch(
@@ -1295,12 +1305,13 @@ class OpenAICompatibleChatSpeechModel(_BaseOpenAICompatible, SpeechModel):
 @dataclass(slots=True)
 class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_GROUNDED_CAPABILITIES)
+    default_web_search_tool: dict[str, Any] = field(default_factory=lambda: {"type": "web_search"})
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
         provider_options = deepcopy(input.provider_options or {})
         web_search_tool = provider_options.pop("web_search", None)
         if web_search_tool is None:
-            web_search_tool = {"type": "web_search"}
+            web_search_tool = deepcopy(self.default_web_search_tool)
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses",
@@ -1803,6 +1814,7 @@ def create_openai_compatible_provider(
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
+    default_grounding_tool: dict[str, Any] | None = None,
     files_client_factory: Callable[[], FilesClient] | None = None,
     responses_client_factory: Callable[[], ResponsesClient] | None = None,
     conversations_client_factory: Callable[[], ConversationsClient] | None = None,
@@ -1884,6 +1896,7 @@ def create_openai_compatible_provider(
                 fetch=requester,
                 auth_header=auth_header,
                 auth_prefix=auth_prefix,
+                default_web_search_tool=deepcopy(default_grounding_tool) if default_grounding_tool is not None else {"type": "web_search"},
             ))
             if supports_grounding
             else None

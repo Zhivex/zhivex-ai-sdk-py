@@ -12,6 +12,7 @@ MessageRole = Literal["system", "user", "assistant", "tool"]
 FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "error", "unknown"]
 StructuredOutputMode = Literal["auto", "native", "prompted"]
 ToolChoiceMode = Literal["none", "auto", "required"]
+PortableProviderTier = Literal["portable", "native-only", "compatibility"]
 
 
 @dataclass(slots=True)
@@ -19,6 +20,70 @@ class TokenUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+
+
+@dataclass(slots=True)
+class PortableSupport:
+    text_generation: bool = False
+    streaming: bool = False
+    structured_output: bool = False
+    tools: bool = False
+    embeddings: bool = False
+    grounding: bool = False
+    retrieval: bool = False
+    transcription: bool = False
+    speech: bool = False
+    portable_badge: bool = False
+    tier: PortableProviderTier = "native-only"
+
+
+@dataclass(slots=True)
+class NativeSupport:
+    text_generation: bool = False
+    streaming: bool = False
+    tools: bool = False
+    structured_output: bool = False
+    embeddings: bool = False
+    grounding: bool = False
+    transcription: bool = False
+    speech: bool = False
+    realtime: bool = False
+    files: bool = False
+    file_search: bool = False
+    responses: bool = False
+    conversations: bool = False
+
+
+@dataclass(slots=True)
+class PortableGroundingConfig:
+    max_sources: int | None = None
+
+
+@dataclass(slots=True)
+class PortableDocument:
+    document_id: str
+    text: str
+    title: str | None = None
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PortableRetrievalConfig:
+    documents: list[PortableDocument] = field(default_factory=list)
+    max_documents: int = 5
+    max_document_chars: int = 4_000
+
+
+@dataclass(slots=True)
+class PortableTranscriptionConfig:
+    prompt: str | None = None
+    language: str | None = None
+
+
+@dataclass(slots=True)
+class PortableSpeechConfig:
+    voice: str | None = None
+    audio_format: str | None = None
 
 
 @dataclass(slots=True)

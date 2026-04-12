@@ -632,7 +632,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="hello",
             tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})},
             provider_options={"tools": [{"type": "web_search"}]},
@@ -673,7 +673,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="weather?",
             provider_options={"tools": [{"type": "web_search"}]},
         )
@@ -712,7 +712,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="draw a square",
             provider_options={"tools": [{"type": "image_generation"}]},
         )
@@ -752,7 +752,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="plot a chart",
             provider_options={"tools": [openai_code_interpreter_tool()]},
         )
@@ -805,7 +805,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="inspect tools",
             provider_options={"tools": [openai_code_interpreter_tool(), openai_computer_use_tool(), openai_file_search_tool(vector_store_ids=["vs_1"])]},
         )
@@ -984,7 +984,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openai(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("gpt-5.4-mini"),
+            model=provider.native.language_model("gpt-5.4-mini"),
             prompt="hello",
             provider_options=openai_response_options(
                 tools=[openai_file_search_tool(vector_store_ids=["vs_123"])],
@@ -1059,7 +1059,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         provider = create_openrouter(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError):
             await generate_text(
-                model=provider("openai/o4-mini"),
+                model=provider.native.language_model("openai/o4-mini"),
                 prompt="hello",
                 tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})},
                 tool_choice="required",
@@ -1096,7 +1096,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_openrouter(api_key="test", fetch=fetch)
         result = await generate_speech(
-            model=provider.speech_model("openai/gpt-4o-mini-tts"),
+            model=provider.native.speech_model("openai/gpt-4o-mini-tts"),
             input="hello",
             voice="alloy",
         )
@@ -1127,7 +1127,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         provider = create_qwen(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError):
             await generate_text(
-                model=provider("qwen-plus"),
+                model=provider.native.language_model("qwen-plus"),
                 prompt="hello",
                 tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True})},
             )
@@ -1168,7 +1168,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_qwen(api_key="test", fetch=fetch)
         result = await generate_speech(
-            model=provider.speech_model("qwen3-tts-flash"),
+            model=provider.native.speech_model("qwen3-tts-flash"),
             input="hello",
         )
 

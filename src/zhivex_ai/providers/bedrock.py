@@ -30,8 +30,9 @@ from ..types import (
     TokenUsage,
     ToolCall,
     ToolExecutionResult,
+    PortableSupport,
 )
-from .base import ProviderAdapter
+from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 
 BEDROCK_CAPABILITIES = ModelCapabilities(
@@ -264,12 +265,29 @@ def create_bedrock(
                 )
 
         resolved_client = MissingSDKClient()
-    return ProviderAdapter(
+    native = ProviderAdapter(
         name="bedrock",
         language_model_factory=lambda model_id: BedrockLanguageModel(provider="bedrock", model_id=model_id, client=resolved_client),
         realtime_model_factory=lambda model_id: BedrockRealtimeModel(
             provider="bedrock",
             model_id=model_id,
             connection_factory=realtime_connection_factory,
+        ),
+    )
+    return create_provider_bundle(
+        name="bedrock",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=False,
+            structured_output=False,
+            tools=False,
+            embeddings=False,
+            grounding=False,
+            retrieval=True,
+            transcription=False,
+            speech=False,
+            portable_badge=False,
+            tier="native-only",
         ),
     )

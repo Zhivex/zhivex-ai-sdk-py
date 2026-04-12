@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -27,6 +28,7 @@ from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
     AudioFrame,
+    AudioInput,
     CodeExecutionResultPart,
     CountTokensClient,
     CountTokensResult,
@@ -78,8 +80,11 @@ from ..types import (
     ToolChoiceName,
     ToolCallPart,
     ToolExecutionResult,
+    TranscriptionModel,
+    TranscriptionOutput,
+    PortableSupport,
 )
-from .base import ProviderAdapter
+from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 
 GEMINI_CAPABILITIES = ModelCapabilities(
@@ -128,6 +133,12 @@ GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+)
+
+GEMINI_TRANSCRIPTION_CAPABILITIES = replace(
+    GEMINI_SPEECH_CAPABILITIES,
+    audio_input=True,
+    audio_output=False,
 )
 
 GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
@@ -1591,6 +1602,74 @@ class GeminiSpeechModel(SpeechModel):
 
 
 @dataclass(slots=True)
+class GeminiTranscriptionModel(TranscriptionModel):
+    provider: str
+    model_id: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_TRANSCRIPTION_CAPABILITIES)
+
+    def _url(self, action: str) -> str:
+        separator = "&" if "?" in action else "?"
+        return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
+
+    async def transcribe(
+        self,
+        *,
+        audio: AudioInput,
+        prompt: str | None = None,
+        language: str | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> TranscriptionOutput:
+        prompt_text = prompt or "Transcribe the provided audio."
+        if language:
+            prompt_text = f"{prompt_text} Use language code {language}."
+        audio_data = audio.data
+        if isinstance(audio_data, str):
+            encoded_audio = audio_data
+        elif isinstance(audio_data, memoryview):
+            encoded_audio = base64.b64encode(audio_data.tobytes()).decode("ascii")
+        else:
+            encoded_audio = base64.b64encode(bytes(audio_data)).decode("ascii")
+        response = await with_retry(
+            lambda: self.fetch(
+                self._url("generateContent"),
+                headers={"content-type": "application/json"},
+                json_body=drop_none(
+                    {
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {"text": prompt_text},
+                                    {"inlineData": {"mimeType": audio.media_type, "data": encoded_audio}},
+                                ],
+                            }
+                        ],
+                        **dict(provider_options or {}),
+                    }
+                ),
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        candidate = (payload.get("candidates") or [None])[0] or {}
+        parts = ((candidate.get("content") or {}).get("parts") or [])
+        text = "".join(str(part.get("text") or "") for part in parts if isinstance(part, dict))
+        return TranscriptionOutput(text=text, raw_response=payload)
+
+
+@dataclass(slots=True)
 class GeminiGroundedLanguageModel(GroundedLanguageModel):
     provider: str
     model_id: str
@@ -1827,12 +1906,15 @@ def create_gemini(
         raise ConfigurationError("Missing Gemini API key.")
     requester = fetch or default_fetch
     base = base_url.rstrip("/")
-    return ProviderAdapter(
+    native = ProviderAdapter(
         name="gemini",
         language_model_factory=lambda model_id: GeminiLanguageModel(
             provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
         ),
         embedding_model_factory=lambda model_id: GeminiEmbeddingModel(
+            provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
+        ),
+        transcription_model_factory=lambda model_id: GeminiTranscriptionModel(
             provider="gemini", model_id=model_id, api_key=resolved_key, base_url=base, fetch=requester
         ),
         grounded_language_model_factory=lambda model_id: GeminiGroundedLanguageModel(
@@ -1867,5 +1949,22 @@ def create_gemini(
             api_key=resolved_key,
             base_url=base,
             fetch=requester,
+        ),
+    )
+    return create_provider_bundle(
+        name="gemini",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=True,
+            grounding=True,
+            retrieval=True,
+            transcription=True,
+            speech=True,
+            portable_badge=True,
+            tier="portable",
         ),
     )

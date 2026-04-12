@@ -8,6 +8,8 @@ from typing import Any
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError
 from ..realtime import RealtimeConnectionFactory
+from ..types import PortableSupport
+from .base import create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OpenAICompatibleConversationsClient,
@@ -380,7 +382,7 @@ def create_openai(
         raise ConfigurationError("Missing openai API key.")
     requester = fetch or default_fetch
     base = base_url.rstrip("/")
-    return create_openai_compatible_provider(
+    native = create_openai_compatible_provider(
         provider_name="openai",
         env_var="OPENAI_API_KEY",
         api_key=resolved_key,
@@ -412,5 +414,22 @@ def create_openai(
             api_key=resolved_key,
             base_url=base,
             fetch=requester,
+        ),
+    )
+    return create_provider_bundle(
+        name="openai",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=True,
+            grounding=True,
+            retrieval=True,
+            transcription=True,
+            speech=True,
+            portable_badge=True,
+            tier="portable",
         ),
     )

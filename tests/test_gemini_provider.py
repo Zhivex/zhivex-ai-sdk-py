@@ -190,7 +190,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gemini-2.5-flash"),
+            model=provider.native.language_model("gemini-2.5-flash"),
             prompt="weather",
             tools={"weather": tool(name="weather", schema=dict[str, str], execute=lambda input: {"ok": True})},
             tool_choice=ToolChoiceName(tool_name="weather"),
@@ -310,7 +310,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         result = await generate_text(
-            model=provider("gemini-2.5-flash"),
+            model=provider.native.language_model("gemini-2.5-flash"),
             prompt="latest news",
             provider_options={"google_search": True},
         )
@@ -333,7 +333,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider("gemini-3-flash-preview"),
+            model=provider.native.language_model("gemini-3-flash-preview"),
             prompt="Research this",
             provider_options={
                 "google_search": {"excludeDomains": ["example.com"]},

@@ -12,7 +12,7 @@ It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 - one agent runtime with executable handoffs, shared sessions, memory summaries, approval policies, tool registries, and traces
 - one normalized foundation layer for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
 - thin provider adapters instead of provider-specific app logic everywhere
-- portable application code that can switch models and vendors with minimal changes
+- portable application code across the portable tier, with explicit native escape hatches for provider-specific features
 
 ## Why Zhivex AI SDK
 
@@ -43,32 +43,55 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 
 ## Supported Providers
 
-| Provider | Text | Streaming | Tools | Structured Output | Embeddings | Audio In | Audio Out | Grounded Text | Realtime |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
-| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
-| Anthropic | Yes | Yes | Yes | Yes | No | No | No | Yes | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
-| Vertex AI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental |
-| Bedrock | Yes | No | No | No | No | No | No | No | Experimental |
-| OpenRouter | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
-| Qwen | Yes | Yes | No | Yes | Yes | No | Yes | No | No |
-| Kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
-| Ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
+Provider factories now return a `ProviderBundle` with two explicit namespaces:
+
+- `provider("model-id")` or `provider.portable.language_model("model-id")` for the strict portable contract
+- `provider.native.language_model("model-id")` for provider-specific options, hosted tools, and escape hatches
+
+Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
+
+This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
+
+### Portable Support
+
+| Provider | Tier | Portable Badge | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Retrieval | Transcription | Speech |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | native-only | No | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No |
+| azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
+| gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| kimi | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
+| ollama | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
+| openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| openrouter | native-only | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
+| qwen | compatibility | No | Yes | Yes | Yes | No | Yes | No | Yes | No | Yes |
+| vertex | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+
+### Native Extras
+
+| Provider | Files | File Search | Realtime | Responses | Conversations |
+| --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | No | No | No | No |
+| azure-openai | No | No | Yes | No | No |
+| bedrock | No | No | Yes | No | No |
+| gemini | Yes | Yes | Yes | No | No |
+| kimi | No | No | No | No | No |
+| ollama | No | No | No | No | No |
+| openai | Yes | No | Yes | Yes | Yes |
+| openrouter | No | No | No | No | No |
+| qwen | No | No | No | No | No |
+| vertex | No | No | Yes | No | No |
 
 ### Tool Calling Notes
 
-Tool support varies in practice even when the high-level SDK API is shared:
+Tool support now follows the same rule everywhere:
 
-- OpenAI and Azure OpenAI currently have the most robust tool-calling path in this SDK, including MCP-oriented schema normalization for strict-mode function tools.
-- OpenAI now also supports mixing local function tools with official hosted OpenAI tools by passing hosted tool definitions in `provider_options={"tools": [...]}`. The adapter merges both sets and ignores provider-managed tool calls in the local execution loop.
-- The OpenAI provider also exposes hosted-tool builders such as `openai_web_search_tool(...)`, `openai_file_search_tool(...)`, `openai_image_generation_tool(...)`, `openai_code_interpreter_tool(...)`, `openai_computer_use_tool(...)`, `openai_mcp_tool(...)`, `openai_shell_tool(...)`, `openai_apply_patch_tool(...)`, `openai_custom_tool(...)`, `openai_namespace_tool(...)`, and `openai_tool_search_tool(...)`, plus `openai_response_options(...)` for common Responses API fields.
-- Gemini and Vertex AI support function calling plus Gemini built-in tools. The SDK preserves Gemini thought signatures across tool loops, normalizes MCP schemas to the subset Gemini accepts, and maps built-in tools from `provider_options` such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use`.
-- The Gemini provider also exposes helper builders for hosted tools such as `gemini_google_search_tool(...)`, `gemini_google_maps_tool(...)`, `gemini_url_context_tool(...)`, `gemini_code_execution_tool(...)`, `gemini_file_search_tool(...)`, and `gemini_computer_use_tool(...)`.
-- Anthropic now supports native structured outputs, richer document inputs (`url`, inline text, uploaded `file_id`, citations metadata), the Files API, and grounded web search through `provider.grounded_language_model(...)`. When using extended thinking (`reasoning.budget_tokens`) the SDK still only allows `tool_choice="auto"` or `"none"` and preserves returned thinking blocks during tool loops.
-- OpenRouter supports the shared Responses-style adapter, but this SDK does not allow `tool_choice="required"` there because the current OpenRouter Responses docs only document `auto`, `none`, or forcing a named function.
-- Qwen is available for text generation through the OpenAI-compatible factory, but tool calling is not currently exposed through this SDK adapter because the implementation path here is Responses-based while the official Qwen docs for tools currently describe a different OpenAI-compatible flow.
-- Kimi and Ollama use the shared OpenAI-compatible adapter in this SDK. Basic compatibility may work, but provider-specific tool behavior can still differ from OpenAI depending on the upstream compatibility layer.
+- The portable layer accepts only the SDK-owned contract. It rejects `provider_options` and any provider-managed tool payloads.
+- Provider-specific hosted tools, raw Responses settings, Gemini built-in tools, and similar knobs must go through `provider.native.*`.
+- OpenAI and Azure OpenAI are the most complete portable implementations in this SDK today.
+- Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
+- Anthropic, Bedrock, and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
+- Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
 
 ## Installation
 
@@ -116,14 +139,14 @@ asyncio.run(main())
 ```python
 import asyncio
 
-from zhivex_ai import create_anthropic, generate_text
+from zhivex_ai import create_openai, generate_text
 
 
 async def main() -> None:
-    anthropic = create_anthropic()
+    openai = create_openai()
 
     result = await generate_text(
-        model=anthropic("claude-sonnet-4-20250514"),
+        model=openai("gpt-5.4-mini"),
         system="Be concise and technical.",
         prompt="What is a provider adapter?",
     )
@@ -246,7 +269,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Anthropic, Gemini, and Vertex grounding are explicit and opt-in:
+Anthropic grounding is currently native-only:
 
 ```python
 import asyncio
@@ -258,7 +281,7 @@ async def main() -> None:
     anthropic = create_anthropic()
 
     result = await generate_grounded_text(
-        model=anthropic.grounded_language_model("claude-sonnet-4-20250514"),
+        model=anthropic.native.grounded_language_model("claude-sonnet-4-20250514"),
         prompt="Find one recent fact about AI infrastructure.",
     )
 
@@ -331,7 +354,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Reusing a previously uploaded provider file:
+Reusing a previously uploaded provider file through a native-only provider:
 
 ```python
 import asyncio
@@ -342,7 +365,7 @@ from zhivex_ai import FilePart, ModelMessage, create_anthropic, generate_text
 async def main() -> None:
     anthropic = create_anthropic()
     result = await generate_text(
-        model=anthropic("claude-sonnet-4-20250514"),
+        model=anthropic.native.language_model("claude-sonnet-4-20250514"),
         messages=[
             ModelMessage(
                 role="user",
@@ -605,9 +628,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-If you want Gemini research with web search in an agent run, opt in explicitly:
+If you want Gemini research with provider-native web search in an agent run, put the agent on a native Gemini model first:
 
 ```python
+from zhivex_ai import create_gemini
+
+gemini = create_gemini()
+triage.model = gemini.native.language_model("gemini-3-flash-preview")
 result = await run_agent(
     agent=triage,
     prompt="Research the Apollo migration status.",
@@ -619,7 +646,7 @@ Built-in Gemini tools can also be configured directly:
 
 ```python
 result = await generate_text(
-    model=gemini("gemini-3-flash-preview"),
+    model=gemini.native.language_model("gemini-3-flash-preview"),
     prompt="Research this page and show your work.",
     provider_options={
         "google_search": {"excludeDomains": ["example.com"]},
@@ -682,15 +709,38 @@ The package currently exposes:
 - `create_kimi()`
 - `create_ollama()`
 
-OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama reuse the same normalized adapter model.
+Every factory now returns a `ProviderBundle`.
+
+Portable usage:
+
+- `provider("model-id")`
+- `provider.language_model("model-id")`
+- `provider.embedding_model(...)`
+- `provider.transcription_model(...)`
+- `provider.speech_model(...)`
+- `provider.grounded_language_model(...)`
+
+Native usage:
+
+- `provider.native.language_model("model-id")`
+- `provider.native.embedding_model(...)`
+- `provider.native.transcription_model(...)`
+- `provider.native.speech_model(...)`
+- `provider.native.grounded_language_model(...)`
+- `provider.native.realtime_model(...)`
+
+Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
+
+OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama still reuse the same normalized adapter model internally, but they no longer imply portable parity.
 
 Adapters may also expose optional factories such as:
 
-- `provider.embedding_model("text-embedding-3-small")`
-- `provider.transcription_model("gpt-4o-transcribe")`
-- `provider.speech_model("gpt-4o-mini-tts")`
-- `provider.grounded_language_model("gpt-5.4-mini")`
-- `provider.realtime_model("gpt-realtime")`
+- `provider.native.realtime_model("gpt-realtime")`
+- `provider.files()`
+- `provider.tokens()`
+- `provider.file_search_stores()`
+- `provider.responses()`
+- `provider.conversations()`
 
 OpenAI providers may additionally expose low-level lifecycle clients:
 
@@ -701,25 +751,22 @@ OpenAI helper builders cover the modern hosted-tool surface, including file sear
 
 ### Capability Matrix
 
-This table reflects the adapters currently exposed by this repository.
+The canonical matrix now lives in runtime metadata:
 
-| Provider | Text | Embeddings | Transcription | Speech | Grounded | Realtime |
-| --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
-| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | No | No | No | Yes | No |
-| Gemini | Yes | Yes | No | Yes | Yes | Yes |
-| Vertex | Yes | Yes | No | Yes | Yes | Yes |
-| Bedrock | Yes | No | No | No | No | Yes |
-| OpenRouter | Yes | Yes | No | Yes | No | No |
-| Qwen | Yes | Yes | No | Yes | No | No |
-| Kimi | Yes | Yes | No | No | No | No |
-| Ollama | Yes | Yes | No | No | No | No |
+- `provider.portable_support`
+- `provider.native_support`
+- `provider.tier`
+
+To regenerate the markdown tables used above:
+
+```bash
+uv run python scripts/generate_support_matrix.py
+```
 
 Notes:
 
-- "Grounded" means the adapter exposes `provider.grounded_language_model(...)`.
-- "Realtime" means the adapter exposes `provider.realtime_model(...)`.
+- `provider("model-id")` is shorthand for the portable namespace.
+- `provider.native.*` is the only place where provider-specific request shapes belong.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.

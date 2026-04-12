@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
     CountTokensClient,
     ConversationsClient,
@@ -10,11 +11,19 @@ from ..types import (
     FileSearchStoresClient,
     FilesClient,
     GroundedLanguageModel,
+    GroundedModelGenerateInput,
+    GroundedGenerateResult,
     LanguageModel,
+    GenerateResult,
+    ModelGenerateInput,
+    NativeSupport,
+    PortableSupport,
     RealtimeModel,
     ResponsesClient,
     SpeechModel,
+    SpeechOutput,
     TranscriptionModel,
+    TranscriptionOutput,
 )
 
 
@@ -117,3 +126,236 @@ class ProviderAdapter:
             model = factory(model_id)
             cache[model_id] = model
         return model
+
+
+@dataclass(slots=True)
+class PortableLanguageModel:
+    native_model: LanguageModel
+    provider: str
+    model_id: str
+    capabilities: object
+    portable: bool = True
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        if input.provider_options is not None:
+            raise ValidationError(
+                f'Portable model "{self.provider}/{self.model_id}" does not accept provider_options. '
+                "Use provider.native.language_model(...) when you need provider-specific configuration."
+            )
+        return await self.native_model.generate(input)
+
+    async def stream(self, input: ModelGenerateInput):
+        if input.provider_options is not None:
+            raise ValidationError(
+                f'Portable model "{self.provider}/{self.model_id}" does not accept provider_options. '
+                "Use provider.native.language_model(...) when you need provider-specific configuration."
+            )
+        return await self.native_model.stream(input)
+
+
+@dataclass(slots=True)
+class PortableGroundedLanguageModel:
+    native_model: GroundedLanguageModel
+    provider: str
+    model_id: str
+    capabilities: object
+    portable: bool = True
+
+    async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
+        if input.provider_options is not None:
+            raise ValidationError(
+                f'Portable grounded model "{self.provider}/{self.model_id}" does not accept provider_options. '
+                "Use provider.native.grounded_language_model(...) when you need provider-specific configuration."
+            )
+        return await self.native_model.generate(input)
+
+
+@dataclass(slots=True)
+class PortableEmbeddingModel:
+    native_model: EmbeddingModel
+    provider: str
+    model_id: str
+    capabilities: object
+    portable: bool = True
+
+    async def embed(self, values: list[str], options=None):
+        return await self.native_model.embed(values, options)
+
+
+@dataclass(slots=True)
+class PortableTranscriptionModel:
+    native_model: TranscriptionModel
+    provider: str
+    model_id: str
+    capabilities: object
+    portable: bool = True
+
+    async def transcribe(
+        self,
+        *,
+        audio,
+        prompt: str | None = None,
+        language: str | None = None,
+        provider_options=None,
+        options=None,
+    ) -> TranscriptionOutput:
+        if provider_options is not None:
+            raise ValidationError(
+                f'Portable transcription model "{self.provider}/{self.model_id}" does not accept provider_options. '
+                "Use provider.native.transcription_model(...) when you need provider-specific configuration."
+            )
+        return await self.native_model.transcribe(audio=audio, prompt=prompt, language=language, provider_options=None, options=options)
+
+
+@dataclass(slots=True)
+class PortableSpeechModel:
+    native_model: SpeechModel
+    provider: str
+    model_id: str
+    capabilities: object
+    portable: bool = True
+
+    async def generate_speech(
+        self,
+        *,
+        input: str,
+        voice: str | None = None,
+        provider_options=None,
+        options=None,
+    ) -> SpeechOutput:
+        if provider_options is not None:
+            raise ValidationError(
+                f'Portable speech model "{self.provider}/{self.model_id}" does not accept provider_options. '
+                "Use provider.native.speech_model(...) when you need provider-specific configuration."
+            )
+        return await self.native_model.generate_speech(input=input, voice=voice, provider_options=None, options=options)
+
+
+@dataclass(slots=True)
+class PortableProviderNamespace:
+    name: str
+    native_adapter: ProviderAdapter
+    portable_support: PortableSupport
+
+    def _unsupported(self) -> UnsupportedFeatureError:
+        return UnsupportedFeatureError(
+            f'Provider "{self.name}" does not satisfy the portable contract. '
+            'Use the explicit native namespace (`provider.native`) for provider-specific access.'
+        )
+
+    def _ensure_portable(self) -> None:
+        if not self.portable_support.portable_badge:
+            raise self._unsupported()
+
+    def __call__(self, model_id: str) -> PortableLanguageModel:
+        return self.language_model(model_id)
+
+    def language_model(self, model_id: str) -> PortableLanguageModel:
+        self._ensure_portable()
+        model = self.native_adapter.language_model(model_id)
+        return PortableLanguageModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+
+    def embedding_model(self, model_id: str) -> PortableEmbeddingModel:
+        self._ensure_portable()
+        model = self.native_adapter.embedding_model(model_id)
+        return PortableEmbeddingModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+
+    def grounded_language_model(self, model_id: str) -> PortableGroundedLanguageModel:
+        self._ensure_portable()
+        model = self.native_adapter.grounded_language_model(model_id)
+        return PortableGroundedLanguageModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+
+    def transcription_model(self, model_id: str) -> PortableTranscriptionModel:
+        self._ensure_portable()
+        model = self.native_adapter.transcription_model(model_id)
+        return PortableTranscriptionModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+
+    def speech_model(self, model_id: str) -> PortableSpeechModel:
+        self._ensure_portable()
+        model = self.native_adapter.speech_model(model_id)
+        return PortableSpeechModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+
+
+@dataclass(slots=True)
+class ProviderBundle:
+    name: str
+    portable: PortableProviderNamespace
+    native: ProviderAdapter
+    portable_support: PortableSupport
+    native_support: NativeSupport
+    tier: str
+
+    def __call__(self, model_id: str) -> PortableLanguageModel:
+        return self.portable(model_id)
+
+    def language_model(self, model_id: str) -> PortableLanguageModel:
+        return self.portable.language_model(model_id)
+
+    def embedding_model(self, model_id: str) -> PortableEmbeddingModel:
+        return self.portable.embedding_model(model_id)
+
+    def grounded_language_model(self, model_id: str) -> PortableGroundedLanguageModel:
+        return self.portable.grounded_language_model(model_id)
+
+    def transcription_model(self, model_id: str) -> PortableTranscriptionModel:
+        return self.portable.transcription_model(model_id)
+
+    def speech_model(self, model_id: str) -> PortableSpeechModel:
+        return self.portable.speech_model(model_id)
+
+    def realtime_model(self, model_id: str) -> RealtimeModel:
+        return self.native.realtime_model(model_id)
+
+    def files(self) -> FilesClient:
+        return self.native.files()
+
+    def tokens(self) -> CountTokensClient:
+        return self.native.tokens()
+
+    def file_search_stores(self) -> FileSearchStoresClient:
+        return self.native.file_search_stores()
+
+    def responses(self) -> ResponsesClient:
+        return self.native.responses()
+
+    def conversations(self) -> ConversationsClient:
+        return self.native.conversations()
+
+
+def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
+    language_model = adapter.language_model_factory("")
+    return NativeSupport(
+        text_generation=True,
+        streaming=bool(language_model.capabilities.streaming),
+        tools=bool(language_model.capabilities.tools),
+        structured_output=bool(language_model.capabilities.structured_output),
+        embeddings=adapter.embedding_model_factory is not None,
+        grounding=adapter.grounded_language_model_factory is not None,
+        transcription=adapter.transcription_model_factory is not None,
+        speech=adapter.speech_model_factory is not None,
+        realtime=adapter.realtime_model_factory is not None,
+        files=adapter.files_client_factory is not None,
+        file_search=adapter.file_search_stores_client_factory is not None,
+        responses=adapter.responses_client_factory is not None,
+        conversations=adapter.conversations_client_factory is not None,
+    )
+
+
+def create_provider_bundle(
+    *,
+    name: str,
+    native: ProviderAdapter,
+    portable_support: PortableSupport,
+) -> ProviderBundle:
+    return ProviderBundle(
+        name=name,
+        portable=PortableProviderNamespace(name=name, native_adapter=native, portable_support=portable_support),
+        native=native,
+        portable_support=portable_support,
+        native_support=build_native_support(native),
+        tier=portable_support.tier,
+    )
+
+
+def resolve_provider_adapter(provider: ProviderAdapter | ProviderBundle) -> ProviderAdapter:
+    return provider.native if isinstance(provider, ProviderBundle) else provider

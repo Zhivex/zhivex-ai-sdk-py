@@ -35,9 +35,10 @@ from ..types import (
     ToolCall,
     ToolCallPart,
     ToolChoiceName,
+    PortableSupport,
 )
 from ._payload import drop_none
-from .base import ProviderAdapter
+from .base import ProviderAdapter, create_provider_bundle
 
 ANTHROPIC_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -933,7 +934,7 @@ def create_anthropic(
         raise ConfigurationError("Missing Anthropic API key.")
     requester = fetch or default_fetch
     resolved_betas = _coerce_beta_headers(beta_headers)
-    return ProviderAdapter(
+    native = ProviderAdapter(
         name="anthropic",
         language_model_factory=lambda model_id: AnthropicLanguageModel(
             provider="anthropic",
@@ -959,5 +960,22 @@ def create_anthropic(
             anthropic_version=anthropic_version,
             fetch=requester,
             beta_headers=list(resolved_betas),
+        ),
+    )
+    return create_provider_bundle(
+        name="anthropic",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=False,
+            grounding=True,
+            retrieval=True,
+            transcription=False,
+            speech=False,
+            portable_badge=False,
+            tier="native-only",
         ),
     )
