@@ -128,6 +128,146 @@ class FilesClient(Protocol):
     async def delete(self, file_id: str) -> bool: ...
 
 
+@dataclass(slots=True)
+class TokenCountDetail:
+    modality: str | None = None
+    token_count: int | None = None
+    billable_characters: int | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CountTokensResult:
+    total_tokens: int | None = None
+    cached_content_token_count: int | None = None
+    total_billable_characters: int | None = None
+    details: list[TokenCountDetail] = field(default_factory=list)
+    raw_response: Any = None
+
+
+class CountTokensClient(Protocol):
+    async def count(
+        self,
+        *,
+        model_id: str,
+        prompt: str | None = None,
+        messages: list["ModelMessage"] | None = None,
+        system: str | None = None,
+        tools: dict[str, "ToolDefinition"] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> CountTokensResult: ...
+
+
+@dataclass(slots=True)
+class FileSearchStore:
+    name: str
+    display_name: str | None = None
+    create_time: str | None = None
+    update_time: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FileSearchStoreListResult:
+    stores: list[FileSearchStore] = field(default_factory=list)
+    next_page_token: str | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class FileSearchDocument:
+    name: str
+    display_name: str | None = None
+    custom_metadata: list[dict[str, Any]] = field(default_factory=list)
+    state: str | None = None
+    size_bytes: int | None = None
+    media_type: str | None = None
+    create_time: str | None = None
+    update_time: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FileSearchDocumentListResult:
+    documents: list[FileSearchDocument] = field(default_factory=list)
+    next_page_token: str | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class FileSearchOperation:
+    name: str
+    done: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+    response: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    raw_response: Any = None
+
+
+class FileSearchStoresClient(Protocol):
+    async def create(
+        self,
+        *,
+        display_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> FileSearchStore: ...
+
+    async def list(
+        self,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> FileSearchStoreListResult: ...
+
+    async def get(self, name: str) -> FileSearchStore: ...
+
+    async def delete(self, name: str, *, force: bool = False) -> bool: ...
+
+    async def upload(
+        self,
+        *,
+        file_search_store_name: str,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str | None = None,
+        display_name: str | None = None,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchOperation: ...
+
+    async def import_file(
+        self,
+        *,
+        file_search_store_name: str,
+        file_name: str,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchOperation: ...
+
+    async def list_documents(
+        self,
+        *,
+        file_search_store_name: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> FileSearchDocumentListResult: ...
+
+    async def get_document(self, name: str) -> FileSearchDocument: ...
+
+    async def delete_document(self, name: str) -> bool: ...
+
+    async def get_operation(self, name: str) -> FileSearchOperation: ...
+
+    async def wait_operation(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+    ) -> FileSearchOperation: ...
+
+
 class ResponsesClient(Protocol):
     async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
 

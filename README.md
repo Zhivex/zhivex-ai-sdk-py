@@ -64,6 +64,7 @@ Tool support varies in practice even when the high-level SDK API is shared:
 - OpenAI now also supports mixing local function tools with official hosted OpenAI tools by passing hosted tool definitions in `provider_options={"tools": [...]}`. The adapter merges both sets and ignores provider-managed tool calls in the local execution loop.
 - The OpenAI provider also exposes hosted-tool builders such as `openai_web_search_tool(...)`, `openai_file_search_tool(...)`, `openai_image_generation_tool(...)`, `openai_code_interpreter_tool(...)`, `openai_computer_use_tool(...)`, `openai_mcp_tool(...)`, `openai_shell_tool(...)`, `openai_apply_patch_tool(...)`, `openai_custom_tool(...)`, `openai_namespace_tool(...)`, and `openai_tool_search_tool(...)`, plus `openai_response_options(...)` for common Responses API fields.
 - Gemini and Vertex AI support function calling plus Gemini built-in tools. The SDK preserves Gemini thought signatures across tool loops, normalizes MCP schemas to the subset Gemini accepts, and maps built-in tools from `provider_options` such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use`.
+- The Gemini provider also exposes helper builders for hosted tools such as `gemini_google_search_tool(...)`, `gemini_google_maps_tool(...)`, `gemini_url_context_tool(...)`, `gemini_code_execution_tool(...)`, `gemini_file_search_tool(...)`, and `gemini_computer_use_tool(...)`.
 - Anthropic now supports native structured outputs, richer document inputs (`url`, inline text, uploaded `file_id`, citations metadata), the Files API, and grounded web search through `provider.grounded_language_model(...)`. When using extended thinking (`reasoning.budget_tokens`) the SDK still only allows `tool_choice="auto"` or `"none"` and preserves returned thinking blocks during tool loops.
 - OpenRouter supports the shared Responses-style adapter, but this SDK does not allow `tool_choice="required"` there because the current OpenRouter Responses docs only document `auto`, `none`, or forcing a named function.
 - Qwen is available for text generation through the OpenAI-compatible factory, but tool calling is not currently exposed through this SDK adapter because the implementation path here is Responses-based while the official Qwen docs for tools currently describe a different OpenAI-compatible flow.
@@ -390,6 +391,51 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Counting tokens before sending a request:
+
+```python
+import asyncio
+
+from zhivex_ai import create_gemini
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    counts = await gemini.tokens().count(
+        model_id="gemini-2.5-flash",
+        prompt="Summarize this in one line.",
+    )
+
+    print(counts.total_tokens)
+
+
+asyncio.run(main())
+```
+
+Managing Gemini File Search stores:
+
+```python
+import asyncio
+
+from zhivex_ai import create_gemini
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    store = await gemini.file_search_stores().create(display_name="Docs")
+    operation = await gemini.file_search_stores().upload(
+        file_search_store_name=store.name,
+        data=b"%PDF-1.4...",
+        filename="manual.pdf",
+        media_type="application/pdf",
+    )
+
+    await gemini.file_search_stores().wait_operation(operation.name)
+
+
+asyncio.run(main())
+```
+
 Passing inline audio to Gemini text generation:
 
 ```python
@@ -676,6 +722,8 @@ Notes:
 - "Realtime" means the adapter exposes `provider.realtime_model(...)`.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
+- `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
+- `create_gemini().file_search_stores()` exposes Gemini File Search store management.
 - `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
 ## Why not use provider SDKs directly?

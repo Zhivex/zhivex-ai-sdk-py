@@ -21,6 +21,7 @@ from zhivex_ai import (
     ToolChoiceName,
     create_gemini,
     create_vertex,
+    gemini_google_search_tool,
     generate_grounded_text,
     generate_speech,
     generate_text,
@@ -353,6 +354,9 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertNotIn("code_execution", requests[0])
         self.assertNotIn("built_in_tools", requests[0])
 
+    async def test_gemini_hosted_tool_builder_is_exported(self) -> None:
+        self.assertEqual(gemini_google_search_tool(), {"google_search": {}})
+
     async def test_gemini_grounded_language_model_returns_sources(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -445,6 +449,195 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.supports[0].source_indices, [0])
         self.assertIn("/publishers/google/models/gemini-2.5-flash:generateContent", requests[0]["url"])
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+
+    async def test_gemini_counts_tokens(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "totalTokens": 42,
+                    "cachedContentTokenCount": 3,
+                    "totalBillableCharacters": 128,
+                    "promptTokensDetails": [
+                        {"modality": "TEXT", "tokenCount": 42, "billableCharacters": 128}
+                    ],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await provider.tokens().count(
+            model_id="gemini-2.5-flash",
+            prompt="Count me",
+            provider_options={"google_search": True},
+        )
+
+        self.assertEqual(result.total_tokens, 42)
+        self.assertEqual(result.cached_content_token_count, 3)
+        self.assertEqual(result.total_billable_characters, 128)
+        self.assertEqual(result.details[0].modality, "TEXT")
+        self.assertEqual(requests[0]["method"], "POST")
+        self.assertIn(":countTokens?key=test", requests[0]["url"])
+        self.assertEqual(
+            requests[0]["json"]["generateContentRequest"]["tools"],
+            [{"googleSearch": {}}],
+        )
+        self.assertNotIn("google_search", requests[0]["json"]["generateContentRequest"])
+
+    async def test_vertex_counts_tokens(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "totalTokens": 27,
+                    "promptTokensDetails": [
+                        {"modality": "TEXT", "tokenCount": 27}
+                    ],
+                },
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        result = await provider.tokens().count(
+            model_id="gemini-2.5-flash",
+            prompt="Count me too",
+            provider_options={"google_search": True},
+        )
+
+        self.assertEqual(result.total_tokens, 27)
+        self.assertEqual(result.details[0].token_count, 27)
+        self.assertEqual(requests[0]["method"], "POST")
+        self.assertIn("/publishers/google/models/gemini-2.5-flash:countTokens", requests[0]["url"])
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+        self.assertEqual(requests[0]["json"]["tools"], [{"googleSearch": {}}])
+        self.assertNotIn("google_search", requests[0]["json"])
+
+    async def test_gemini_file_search_store_client_crud_and_operations(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            if method == "POST" and "/fileSearchStores?key=" in url:
+                return FakeResponse(status_code=200, payload={"name": "fileSearchStores/alpha", "displayName": "Alpha"})
+            if method == "GET" and "/fileSearchStores?key=" in url and "pageSize=10" in url:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "fileSearchStores": [{"name": "fileSearchStores/alpha", "displayName": "Alpha"}],
+                        "nextPageToken": "next-store",
+                    },
+                )
+            if method == "GET" and "/fileSearchStores/alpha?key=" in url:
+                return FakeResponse(status_code=200, payload={"name": "fileSearchStores/alpha", "displayName": "Alpha"})
+            if method == "DELETE" and "/fileSearchStores/alpha?key=" in url:
+                return FakeResponse(status_code=200, payload={})
+            if "upload/v1beta/fileSearchStores/alpha:uploadToFileSearchStore" in url:
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/store"})
+            if url == "https://upload.example.com/store":
+                return FakeResponse(status_code=200, payload={"name": "operations/upload-1", "done": False})
+            if method == "POST" and "/fileSearchStores/alpha:importFile?key=" in url:
+                return FakeResponse(status_code=200, payload={"name": "operations/import-1", "done": False})
+            if method == "GET" and "/fileSearchStores/alpha/documents?key=" in url:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "documents": [
+                            {
+                                "name": "fileSearchStores/alpha/documents/doc-1",
+                                "displayName": "manual.pdf",
+                                "mimeType": "application/pdf",
+                                "state": "ACTIVE",
+                            }
+                        ],
+                        "nextPageToken": "next-doc",
+                    },
+                )
+            if method == "GET" and "/fileSearchStores/alpha/documents/doc-1?key=" in url:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "name": "fileSearchStores/alpha/documents/doc-1",
+                        "displayName": "manual.pdf",
+                        "mimeType": "application/pdf",
+                        "state": "ACTIVE",
+                    },
+                )
+            if method == "DELETE" and "/fileSearchStores/alpha/documents/doc-1?key=" in url:
+                return FakeResponse(status_code=200, payload={})
+            if method == "GET" and "/operations/upload-1?key=" in url:
+                poll_count = sum(1 for request in requests if request["method"] == "GET" and "/operations/upload-1?key=" in request["url"])
+                return FakeResponse(
+                    status_code=200,
+                    payload={"name": "operations/upload-1", "done": poll_count >= 2, "response": {"done": True}},
+                )
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        stores = provider.file_search_stores()
+
+        created = await stores.create(display_name="Alpha")
+        listed = await stores.list(page_size=10)
+        fetched = await stores.get("fileSearchStores/alpha")
+        uploaded = await stores.upload(
+            file_search_store_name="fileSearchStores/alpha",
+            data=b"%PDF-1.4",
+            filename="manual.pdf",
+            media_type="application/pdf",
+        )
+        imported = await stores.import_file(
+            file_search_store_name="fileSearchStores/alpha",
+            file_name="files/123",
+        )
+        documents = await stores.list_documents(file_search_store_name="fileSearchStores/alpha")
+        document = await stores.get_document("fileSearchStores/alpha/documents/doc-1")
+        waited = await stores.wait_operation("operations/upload-1", poll_interval_ms=1, timeout_ms=50)
+        deleted_document = await stores.delete_document("fileSearchStores/alpha/documents/doc-1")
+        deleted_store = await stores.delete("fileSearchStores/alpha")
+
+        self.assertEqual(created.name, "fileSearchStores/alpha")
+        self.assertEqual(listed.stores[0].display_name, "Alpha")
+        self.assertEqual(listed.next_page_token, "next-store")
+        self.assertEqual(fetched.display_name, "Alpha")
+        self.assertEqual(uploaded.name, "operations/upload-1")
+        self.assertFalse(uploaded.done)
+        self.assertEqual(imported.name, "operations/import-1")
+        self.assertEqual(documents.documents[0].media_type, "application/pdf")
+        self.assertEqual(documents.next_page_token, "next-doc")
+        self.assertEqual(document.state, "ACTIVE")
+        self.assertTrue(waited.done)
+        self.assertTrue(deleted_document)
+        self.assertTrue(deleted_store)
 
     async def test_gemini_files_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []

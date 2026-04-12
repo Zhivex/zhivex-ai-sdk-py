@@ -5,15 +5,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .._http import Fetcher, default_fetch
-from ..errors import ConfigurationError
+from ..errors import ConfigurationError, ProviderHTTPError
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import EmbedResult, EmbeddingModel, ModelCapabilities, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult
+from ..types import CountTokensResult, EmbedResult, EmbeddingModel, ModelCapabilities, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail
 from .base import ProviderAdapter
+from ._payload import drop_none
 from .gemini import (
     GEMINI_CAPABILITIES,
     GEMINI_GROUNDED_CAPABILITIES,
     GEMINI_REALTIME_CAPABILITIES,
+    GeminiCountTokensClient,
     GeminiGroundedLanguageModel,
     GeminiLanguageModel,
     GeminiSpeechModel,
@@ -141,6 +143,70 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+    class VertexCountTokensClient(GeminiCountTokensClient):
+        def _url(self, model_id: str) -> str:  # type: ignore[override]
+            return f"{resolved_base.rstrip('/')}/publishers/google/models/{model_id}:countTokens"
+
+        async def count(self, **kwargs: Any) -> CountTokensResult:  # type: ignore[override]
+            model_id = kwargs["model_id"]
+            prompt = kwargs.get("prompt")
+            messages = kwargs.get("messages")
+            system = kwargs.get("system")
+            tools = kwargs.get("tools")
+            provider_options = kwargs.get("provider_options")
+            options = kwargs.get("options")
+            from .gemini import (
+                _build_messages_for_request,
+                _map_messages,
+                _map_tools,
+                _provider_options_without_mapped_tools,
+                _system_instruction,
+            )
+
+            built_messages = _build_messages_for_request(prompt=prompt, messages=messages, system=system)
+            request = drop_none(
+                {
+                    "contents": _map_messages(built_messages),
+                    "systemInstruction": _system_instruction(built_messages),
+                    "tools": _map_tools(tools, provider_options),
+                    **(_provider_options_without_mapped_tools(provider_options) or {}),
+                }
+            )
+            response = await with_retry(
+                lambda: wrapped_fetch(
+                    self._url(model_id),
+                    method="POST",
+                    headers={"content-type": "application/json"},
+                    json_body=request,
+                    timeout_ms=options.timeout_ms if options else None,
+                ),
+                max_retries=options.max_retries if options and options.max_retries is not None else 0,
+                retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+            )
+            if response.status_code >= 400:
+                raise ProviderHTTPError(
+                    f"Vertex request failed with status {response.status_code}.",
+                    response.status_code,
+                    response_body=await response.text(),
+                )
+            payload = await response.json()
+            return CountTokensResult(
+                total_tokens=payload.get("totalTokens"),
+                cached_content_token_count=payload.get("cachedContentTokenCount"),
+                total_billable_characters=payload.get("totalBillableCharacters"),
+                details=[
+                    TokenCountDetail(
+                        modality=item.get("modality"),
+                        token_count=item.get("tokenCount"),
+                        billable_characters=item.get("billableCharacters"),
+                        provider_metadata=dict(item),
+                    )
+                    for item in payload.get("promptTokensDetails") or []
+                    if isinstance(item, dict)
+                ],
+                raw_response=payload,
+            )
+
     class VertexRealtimeModel:
         provider = "vertex"
         capabilities = GEMINI_REALTIME_CAPABILITIES
@@ -214,6 +280,12 @@ def create_vertex(
         grounded_language_model_factory=lambda model_id: VertexGroundedLanguageModel(
             provider="vertex",
             model_id=model_id,
+            api_key="unused",
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+        ),
+        count_tokens_client_factory=lambda: VertexCountTokensClient(
+            provider="vertex",
             api_key="unused",
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,

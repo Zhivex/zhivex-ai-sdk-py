@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from ..types import (
+    CountTokensClient,
     ConversationsClient,
     EmbeddingModel,
+    FileSearchStoresClient,
     FilesClient,
     GroundedLanguageModel,
     LanguageModel,
@@ -26,6 +28,8 @@ class ProviderAdapter:
     grounded_language_model_factory: Callable[[str], GroundedLanguageModel] | None = None
     realtime_model_factory: Callable[[str], RealtimeModel] | None = None
     files_client_factory: Callable[[], FilesClient] | None = None
+    count_tokens_client_factory: Callable[[], CountTokensClient] | None = None
+    file_search_stores_client_factory: Callable[[], FileSearchStoresClient] | None = None
     responses_client_factory: Callable[[], ResponsesClient] | None = None
     conversations_client_factory: Callable[[], ConversationsClient] | None = None
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
@@ -35,6 +39,8 @@ class ProviderAdapter:
     _grounded_language_model_cache: dict[str, GroundedLanguageModel] = field(default_factory=dict, init=False, repr=False)
     _realtime_model_cache: dict[str, RealtimeModel] = field(default_factory=dict, init=False, repr=False)
     _files_client: FilesClient | None = field(default=None, init=False, repr=False)
+    _count_tokens_client: CountTokensClient | None = field(default=None, init=False, repr=False)
+    _file_search_stores_client: FileSearchStoresClient | None = field(default=None, init=False, repr=False)
     _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
 
@@ -75,6 +81,20 @@ class ProviderAdapter:
         if self._files_client is None:
             self._files_client = self.files_client_factory()
         return self._files_client
+
+    def tokens(self) -> CountTokensClient:
+        if self.count_tokens_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a token counting client.')
+        if self._count_tokens_client is None:
+            self._count_tokens_client = self.count_tokens_client_factory()
+        return self._count_tokens_client
+
+    def file_search_stores(self) -> FileSearchStoresClient:
+        if self.file_search_stores_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose file search stores.')
+        if self._file_search_stores_client is None:
+            self._file_search_stores_client = self.file_search_stores_client_factory()
+        return self._file_search_stores_client
 
     def responses(self) -> ResponsesClient:
         if self.responses_client_factory is None:

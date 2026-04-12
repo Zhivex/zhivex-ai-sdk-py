@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from copy import deepcopy
@@ -27,9 +28,17 @@ from ..schema import create_schema_adapter
 from ..types import (
     AudioFrame,
     CodeExecutionResultPart,
+    CountTokensClient,
+    CountTokensResult,
     EmbedResult,
     EmbeddingModel,
     FilePart,
+    FileSearchDocument,
+    FileSearchDocumentListResult,
+    FileSearchOperation,
+    FileSearchStore,
+    FileSearchStoreListResult,
+    FileSearchStoresClient,
     FilesClient,
     GenerateResult,
     GeneratedCodePart,
@@ -64,6 +73,7 @@ from ..types import (
     StreamToolCallEvent,
     TextPart,
     TokenUsage,
+    TokenCountDetail,
     ToolCall,
     ToolChoiceName,
     ToolCallPart,
@@ -157,6 +167,44 @@ _BUILT_IN_TOOL_NAME_MAP = {
     "computer_use": "computerUse",
     "computeruse": "computerUse",
 }
+
+
+def gemini_hosted_tool(tool_type: str, /, **config: Any) -> dict[str, Any]:
+    return {tool_type: drop_none(deepcopy(config)) if config else {}}
+
+
+def gemini_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
+    return gemini_hosted_tool("google_search", excludeDomains=list(exclude_domains or []) if exclude_domains else None, **extra)
+
+
+def gemini_google_maps_tool(**config: Any) -> dict[str, Any]:
+    return gemini_hosted_tool("google_maps", **config)
+
+
+def gemini_url_context_tool(**config: Any) -> dict[str, Any]:
+    return gemini_hosted_tool("url_context", **config)
+
+
+def gemini_code_execution_tool(**config: Any) -> dict[str, Any]:
+    return gemini_hosted_tool("code_execution", **config)
+
+
+def gemini_computer_use_tool(**config: Any) -> dict[str, Any]:
+    return gemini_hosted_tool("computer_use", **config)
+
+
+def gemini_file_search_tool(
+    *,
+    file_search_store_names: list[str],
+    filters: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    return gemini_hosted_tool(
+        "file_search",
+        fileSearchStoreNames=list(file_search_store_names),
+        filters=deepcopy(filters) if filters is not None else None,
+        **extra,
+    )
 
 
 def _system_instruction(messages: list[ModelMessage]) -> dict[str, Any] | None:
@@ -536,6 +584,46 @@ def _parse_timestamp_ms(value: Any) -> int | None:
         return None
 
 
+def _normalize_file_search_store(payload: dict[str, Any]) -> FileSearchStore:
+    return FileSearchStore(
+        name=str(payload.get("name") or ""),
+        display_name=payload.get("displayName"),
+        create_time=payload.get("createTime"),
+        update_time=payload.get("updateTime"),
+        metadata=dict(payload),
+    )
+
+
+def _normalize_file_search_document(payload: dict[str, Any]) -> FileSearchDocument:
+    size_bytes = payload.get("sizeBytes")
+    try:
+        parsed_size = int(size_bytes) if size_bytes is not None else None
+    except (TypeError, ValueError):
+        parsed_size = None
+    return FileSearchDocument(
+        name=str(payload.get("name") or ""),
+        display_name=payload.get("displayName"),
+        custom_metadata=list(payload.get("customMetadata") or []),
+        state=payload.get("state"),
+        size_bytes=parsed_size,
+        media_type=payload.get("mimeType"),
+        create_time=payload.get("createTime"),
+        update_time=payload.get("updateTime"),
+        metadata=dict(payload),
+    )
+
+
+def _normalize_file_search_operation(payload: dict[str, Any]) -> FileSearchOperation:
+    return FileSearchOperation(
+        name=str(payload.get("name") or ""),
+        done=bool(payload.get("done")),
+        metadata=dict(payload.get("metadata") or {}),
+        response=dict(payload.get("response") or {}) if isinstance(payload.get("response"), dict) else payload.get("response"),
+        error=dict(payload.get("error") or {}) if isinstance(payload.get("error"), dict) else payload.get("error"),
+        raw_response=payload,
+    )
+
+
 def _embedding_request_options(options: Any) -> dict[str, Any]:
     task_type = _provider_option_value(options, "task_type", "taskType")
     title = _provider_option_value(options, "title")
@@ -553,6 +641,22 @@ def _embedding_request_options(options: Any) -> dict[str, Any]:
             "titles": titles,
         }
     )
+
+
+def _build_messages_for_request(
+    *,
+    prompt: str | None = None,
+    messages: list[ModelMessage] | None = None,
+    system: str | None = None,
+) -> list[ModelMessage]:
+    if prompt is not None and messages is not None:
+        raise ValidationError('Pass either "prompt" or "messages", but not both.')
+    built = list(messages or [])
+    if system:
+        built.insert(0, ModelMessage(role="system", parts=[TextPart(text=system)]))
+    if prompt:
+        built.append(ModelMessage(role="user", parts=[TextPart(text=prompt)]))
+    return built
 
 
 def _normalize_gemini_file(payload: dict[str, Any], *, provider: str) -> ProviderFile:
@@ -670,6 +774,11 @@ class GeminiFilesClient(FilesClient):
             )
         return _normalize_gemini_file(await response.json(), provider=self.provider)
 
+    async def download(self, file_id: str) -> bytes:
+        raise UnsupportedFeatureError(
+            f'Provider "{self.provider}" does not support downloading uploaded files through the Files API.'
+        )
+
     async def delete(self, file_id: str) -> bool:
         response = await self.fetch(
             self._json_url(f"/files/{file_id}"),
@@ -685,6 +794,368 @@ class GeminiFilesClient(FilesClient):
                 response_body=await response.text(),
             )
         return True
+
+
+@dataclass(slots=True)
+class GeminiCountTokensClient(CountTokensClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _url(self, model_id: str) -> str:
+        return f"{self.base_url}/models/{model_id}:countTokens?key={self.api_key}"
+
+    async def count(
+        self,
+        *,
+        model_id: str,
+        prompt: str | None = None,
+        messages: list[ModelMessage] | None = None,
+        system: str | None = None,
+        tools: dict[str, Any] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> CountTokensResult:
+        built_messages = _build_messages_for_request(prompt=prompt, messages=messages, system=system)
+        request = drop_none(
+            {
+                "contents": _map_messages(built_messages),
+                "systemInstruction": _system_instruction(built_messages),
+                "tools": _map_tools(tools, provider_options),
+                **(_provider_options_without_mapped_tools(provider_options) or {}),
+            }
+        )
+        response = await with_retry(
+            lambda: self.fetch(
+                self._url(model_id),
+                method="POST",
+                headers={"content-type": "application/json"},
+                json_body={"generateContentRequest": request},
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return CountTokensResult(
+            total_tokens=payload.get("totalTokens"),
+            cached_content_token_count=payload.get("cachedContentTokenCount"),
+            total_billable_characters=payload.get("totalBillableCharacters"),
+            details=[
+                TokenCountDetail(
+                    modality=item.get("modality"),
+                    token_count=item.get("tokenCount"),
+                    billable_characters=item.get("billableCharacters"),
+                    provider_metadata=dict(item),
+                )
+                for item in payload.get("promptTokensDetails") or []
+                if isinstance(item, dict)
+            ],
+            raw_response=payload,
+        )
+
+
+@dataclass(slots=True)
+class GeminiFileSearchStoresClient(FileSearchStoresClient):
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _json_url(self, path: str) -> str:
+        return f"{self.base_url}{path}?key={self.api_key}"
+
+    def _upload_url(self, store_name: str) -> str:
+        return f"{self.base_url.replace('/v1beta', '')}/upload/v1beta/{store_name}:uploadToFileSearchStore?key={self.api_key}"
+
+    async def create(
+        self,
+        *,
+        display_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> FileSearchStore:
+        body = dict(metadata or {})
+        if display_name is not None:
+            body["displayName"] = display_name
+        response = await self.fetch(
+            self._json_url("/fileSearchStores"),
+            method="POST",
+            headers={"content-type": "application/json"},
+            json_body=body or {},
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_file_search_store(await response.json())
+
+    async def list(
+        self,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> FileSearchStoreListResult:
+        url = self._json_url("/fileSearchStores")
+        params = []
+        if page_size is not None:
+            params.append(f"pageSize={page_size}")
+        if page_token is not None:
+            params.append(f"pageToken={page_token}")
+        if params:
+            url = f"{url}&{'&'.join(params)}"
+        response = await self.fetch(
+            url,
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return FileSearchStoreListResult(
+            stores=[_normalize_file_search_store(item) for item in payload.get("fileSearchStores") or []],
+            next_page_token=payload.get("nextPageToken"),
+            raw_response=payload,
+        )
+
+    async def get(self, name: str) -> FileSearchStore:
+        response = await self.fetch(
+            self._json_url(f"/{name}"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_file_search_store(await response.json())
+
+    async def delete(self, name: str, *, force: bool = False) -> bool:
+        url = self._json_url(f"/{name}")
+        if force:
+            url = f"{url}&force=true"
+        response = await self.fetch(
+            url,
+            method="DELETE",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return True
+
+    async def upload(
+        self,
+        *,
+        file_search_store_name: str,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        media_type: str | None = None,
+        display_name: str | None = None,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchOperation:
+        raw = _normalize_binary(data)
+        metadata_body = drop_none(
+            {
+                "displayName": display_name or filename,
+                "customMetadata": deepcopy(custom_metadata),
+                "chunkingConfig": deepcopy(chunking_config),
+                "mimeType": media_type,
+            }
+        )
+        start = await self.fetch(
+            self._upload_url(file_search_store_name),
+            method="POST",
+            headers={
+                "content-type": "application/json",
+                "x-goog-upload-protocol": "resumable",
+                "x-goog-upload-command": "start",
+                "x-goog-upload-header-content-length": str(len(raw)),
+                **({"x-goog-upload-header-content-type": media_type} if media_type else {}),
+            },
+            json_body=metadata_body,
+            timeout_ms=None,
+        )
+        if start.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {start.status_code}.",
+                start.status_code,
+                response_body=await start.text(),
+            )
+        upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
+        if not upload_url:
+            raise ValidationError('Provider "gemini" did not return an upload URL for File Search.')
+        finalize = await self.fetch(
+            str(upload_url),
+            method="POST",
+            headers={
+                "content-length": str(len(raw)),
+                "x-goog-upload-offset": "0",
+                "x-goog-upload-command": "upload, finalize",
+            },
+            json_body=None,
+            body=raw,
+            timeout_ms=None,
+        )
+        if finalize.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {finalize.status_code}.",
+                finalize.status_code,
+                response_body=await finalize.text(),
+            )
+        return _normalize_file_search_operation(await finalize.json())
+
+    async def import_file(
+        self,
+        *,
+        file_search_store_name: str,
+        file_name: str,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchOperation:
+        response = await self.fetch(
+            self._json_url(f"/{file_search_store_name}:importFile"),
+            method="POST",
+            headers={"content-type": "application/json"},
+            json_body=drop_none(
+                {
+                    "fileName": file_name,
+                    "customMetadata": deepcopy(custom_metadata),
+                    "chunkingConfig": deepcopy(chunking_config),
+                }
+            ),
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_file_search_operation(await response.json())
+
+    async def list_documents(
+        self,
+        *,
+        file_search_store_name: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> FileSearchDocumentListResult:
+        url = self._json_url(f"/{file_search_store_name}/documents")
+        params = []
+        if page_size is not None:
+            params.append(f"pageSize={page_size}")
+        if page_token is not None:
+            params.append(f"pageToken={page_token}")
+        if params:
+            url = f"{url}&{'&'.join(params)}"
+        response = await self.fetch(
+            url,
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return FileSearchDocumentListResult(
+            documents=[_normalize_file_search_document(item) for item in payload.get("documents") or []],
+            next_page_token=payload.get("nextPageToken"),
+            raw_response=payload,
+        )
+
+    async def get_document(self, name: str) -> FileSearchDocument:
+        response = await self.fetch(
+            self._json_url(f"/{name}"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_file_search_document(await response.json())
+
+    async def delete_document(self, name: str) -> bool:
+        response = await self.fetch(
+            self._json_url(f"/{name}"),
+            method="DELETE",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return True
+
+    async def get_operation(self, name: str) -> FileSearchOperation:
+        response = await self.fetch(
+            self._json_url(f"/{name}"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_file_search_operation(await response.json())
+
+    async def wait_operation(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 500,
+        timeout_ms: int | None = None,
+    ) -> FileSearchOperation:
+        deadline = None if timeout_ms is None else (asyncio.get_running_loop().time() + timeout_ms / 1000)
+        while True:
+            operation = await self.get_operation(name)
+            if operation.done:
+                return operation
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f'Waiting for file search operation "{name}" timed out.')
+            await asyncio.sleep(max(poll_interval_ms, 1) / 1000)
 
 
 def _gemini_realtime_url(base_url: str, api_key: str, provider_options: dict[str, Any] | None = None) -> str:
@@ -1382,6 +1853,17 @@ def create_gemini(
         ),
         files_client_factory=lambda: GeminiFilesClient(
             provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        count_tokens_client_factory=lambda: GeminiCountTokensClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        file_search_stores_client_factory=lambda: GeminiFileSearchStoresClient(
             api_key=resolved_key,
             base_url=base,
             fetch=requester,
