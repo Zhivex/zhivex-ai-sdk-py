@@ -47,6 +47,7 @@ class ProviderSupportTests(TestCase):
             ]
         )
         tiers = {row.provider: (row.tier, row.portable_badge) for row in rows}
+        native = {row.provider: row.native_support for row in rows}
 
         self.assertEqual(tiers["openai"], ("portable", True))
         self.assertEqual(tiers["azure-openai"], ("portable", True))
@@ -58,6 +59,11 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["qwen"], ("compatibility", False))
         self.assertEqual(tiers["kimi"], ("compatibility", False))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
+        self.assertTrue(native["openai"].images)
+        self.assertTrue(native["openai"].uploads)
+        self.assertTrue(native["openai"].moderations)
+        self.assertTrue(native["openai"].batches)
+        self.assertTrue(native["anthropic"].files)
 
         markdown = render_provider_support_markdown(rows)
         self.assertIn("### Portable Support", markdown)

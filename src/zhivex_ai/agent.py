@@ -187,6 +187,61 @@ class ApprovalPolicy(Protocol):
 
 
 @dataclass(slots=True)
+class GuardrailResult:
+    tripwire_triggered: bool = False
+    reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class InputGuardrailRequest:
+    run_id: str
+    session_id: str
+    agent_name: str
+    prompt: str | None = None
+    messages: list[ModelMessage] = field(default_factory=list)
+    context: AgentContext | None = None
+
+
+@dataclass(slots=True)
+class OutputGuardrailRequest:
+    run_id: str
+    session_id: str
+    agent_name: str
+    text: str = ""
+    messages: list[ModelMessage] = field(default_factory=list)
+    result: GenerateTextOutput | None = None
+    context: AgentContext | None = None
+
+
+class InputGuardrail(Protocol):
+    async def __call__(self, request: InputGuardrailRequest) -> GuardrailResult | bool: ...
+
+
+class OutputGuardrail(Protocol):
+    async def __call__(self, request: OutputGuardrailRequest) -> GuardrailResult | bool: ...
+
+
+class GuardrailTripwireTriggered(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: Literal["input", "output"],
+        guardrail_name: str,
+        reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.stage = stage
+        self.guardrail_name = guardrail_name
+        self.reason = reason
+        self.metadata = dict(metadata or {})
+        message = f'Agent {stage} guardrail "{guardrail_name}" triggered.'
+        if reason:
+            message = f"{message} {reason}"
+        super().__init__(message)
+
+
+@dataclass(slots=True)
 class SummaryConfig:
     max_messages: int = 12
     preserve_recent_messages: int = 8
@@ -657,6 +712,8 @@ class Agent:
     memory: AgentMemory | None = None
     checkpoint_store: AgentCheckpointStore | None = None
     approval_policy: ApprovalPolicy | None = None
+    input_guardrails: list[InputGuardrail] = field(default_factory=list)
+    output_guardrails: list[OutputGuardrail] = field(default_factory=list)
     run_limits: RunLimits = field(default_factory=RunLimits)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -726,6 +783,16 @@ class AgentToolResultEvent:
 
 
 @dataclass(slots=True)
+class AgentGuardrailEvent:
+    type: str = "guardrail"
+    stage: Literal["input", "output"] = "input"
+    guardrail_name: str = ""
+    triggered: bool = False
+    reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class AgentCheckpointEvent:
     type: str = "checkpoint"
     checkpoint: AgentCheckpoint | None = None
@@ -787,6 +854,7 @@ AgentEvent: TypeAlias = (
     | AgentToolCallEvent
     | AgentToolApprovalEvent
     | AgentToolResultEvent
+    | AgentGuardrailEvent
     | AgentCheckpointEvent
     | AgentSummaryUpdateEvent
     | AgentHandoffRequestedEvent
@@ -817,6 +885,7 @@ class AgentTrace:
     segments: list[AgentTraceSegment] = field(default_factory=list)
     tool_call_count: int = 0
     approval_count: int = 0
+    guardrail_trigger_count: int = 0
     checkpoint_count: int = 0
     handoff_count: int = 0
 
@@ -1558,6 +1627,37 @@ def _build_run_messages(
     return built
 
 
+def _guardrail_name(guardrail: Any) -> str:
+    if hasattr(guardrail, "__name__"):
+        return str(getattr(guardrail, "__name__"))
+    return guardrail.__class__.__name__
+
+
+def _normalize_guardrail_result(value: GuardrailResult | bool | None) -> GuardrailResult:
+    if isinstance(value, GuardrailResult):
+        return value
+    if isinstance(value, bool):
+        return GuardrailResult(tripwire_triggered=value)
+    if value is None:
+        return GuardrailResult(tripwire_triggered=False)
+    raise TypeError("Guardrails must return GuardrailResult, bool, or None.")
+
+
+def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMessage]:
+    messages = list(result.messages)
+    if messages:
+        return messages
+    if result.steps:
+        collected: list[ModelMessage] = []
+        for step in result.steps:
+            collected.extend(_response_messages(step))
+        if collected:
+            return collected
+    if result.text:
+        return [create_text_message("assistant", result.text)]
+    return []
+
+
 def _resolve_tool_registry(agent: Agent, extra_tools: ToolSet | ToolRegistry | None) -> ToolRegistry:
     base = agent.tools if isinstance(agent.tools, ToolRegistry) else ToolRegistry(agent.tools)
     return base.merge(extra_tools)
@@ -1847,6 +1947,128 @@ class AgentRuntime:
             trace.finished_at_ms = _now_ms()
             raise
 
+    async def _run_input_guardrails(
+        self,
+        *,
+        agent: Agent,
+        run_id: str,
+        session_id: str,
+        prompt: str | None,
+        messages: list[ModelMessage],
+        context: AgentContext,
+        trace: AgentTrace,
+        emit: Callable[[AgentEvent], Awaitable[None]],
+    ) -> None:
+        request = InputGuardrailRequest(
+            run_id=run_id,
+            session_id=session_id,
+            agent_name=agent.name,
+            prompt=prompt,
+            messages=list(messages),
+            context=context,
+        )
+        for guardrail in agent.input_guardrails:
+            name = _guardrail_name(guardrail)
+            span = self._start_span(
+                "zhivex.agent.guardrail",
+                {
+                    "guardrail.name": name,
+                    "guardrail.stage": "input",
+                    "agent.name": agent.name,
+                    "run.id": run_id,
+                },
+            )
+            try:
+                outcome = _normalize_guardrail_result(await _maybe_await(guardrail(request)))
+            except Exception as error:
+                self._finish_span(span, error=error)
+                raise
+            self._finish_span(
+                span,
+                attributes={
+                    "guardrail.triggered": outcome.tripwire_triggered,
+                },
+            )
+            await emit(
+                AgentGuardrailEvent(
+                    stage="input",
+                    guardrail_name=name,
+                    triggered=outcome.tripwire_triggered,
+                    reason=outcome.reason,
+                    metadata=dict(outcome.metadata),
+                )
+            )
+            if outcome.tripwire_triggered:
+                trace.guardrail_trigger_count += 1
+                raise GuardrailTripwireTriggered(
+                    stage="input",
+                    guardrail_name=name,
+                    reason=outcome.reason,
+                    metadata=outcome.metadata,
+                )
+
+    async def _run_output_guardrails(
+        self,
+        *,
+        agent: Agent,
+        run_id: str,
+        session_id: str,
+        result: GenerateTextOutput | None,
+        text: str,
+        messages: list[ModelMessage],
+        context: AgentContext,
+        trace: AgentTrace,
+        emit: Callable[[AgentEvent], Awaitable[None]],
+    ) -> None:
+        request = OutputGuardrailRequest(
+            run_id=run_id,
+            session_id=session_id,
+            agent_name=agent.name,
+            text=text,
+            messages=list(messages),
+            result=result,
+            context=context,
+        )
+        for guardrail in agent.output_guardrails:
+            name = _guardrail_name(guardrail)
+            span = self._start_span(
+                "zhivex.agent.guardrail",
+                {
+                    "guardrail.name": name,
+                    "guardrail.stage": "output",
+                    "agent.name": agent.name,
+                    "run.id": run_id,
+                },
+            )
+            try:
+                outcome = _normalize_guardrail_result(await _maybe_await(guardrail(request)))
+            except Exception as error:
+                self._finish_span(span, error=error)
+                raise
+            self._finish_span(
+                span,
+                attributes={
+                    "guardrail.triggered": outcome.tripwire_triggered,
+                },
+            )
+            await emit(
+                AgentGuardrailEvent(
+                    stage="output",
+                    guardrail_name=name,
+                    triggered=outcome.tripwire_triggered,
+                    reason=outcome.reason,
+                    metadata=dict(outcome.metadata),
+                )
+            )
+            if outcome.tripwire_triggered:
+                trace.guardrail_trigger_count += 1
+                raise GuardrailTripwireTriggered(
+                    stage="output",
+                    guardrail_name=name,
+                    reason=outcome.reason,
+                    metadata=outcome.metadata,
+                )
+
     async def _run_single(
         self,
         *,
@@ -1883,6 +2105,16 @@ class AgentRuntime:
             memory_summary=session.summary,
             metadata=dict(agent.metadata),
             handoff_path=list(trace.orchestration_path),
+        )
+        await self._run_input_guardrails(
+            agent=agent,
+            run_id=run_id,
+            session_id=session.id,
+            prompt=prompt,
+            messages=built_messages,
+            context=context,
+            trace=trace,
+            emit=emit,
         )
         registry = _resolve_tool_registry(agent, tools)
         merged_tools = self._wrap_agent_tools(
@@ -1968,6 +2200,17 @@ class AgentRuntime:
         if not emitted_live_events:
             for tool_result in result.tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
+        await self._run_output_guardrails(
+            agent=agent,
+            run_id=run_id,
+            session_id=session.id,
+            result=result,
+            text=segment_text,
+            messages=_assistant_messages_from_result(result),
+            context=context,
+            trace=trace,
+            emit=emit,
+        )
 
         transcript = list(session.messages)
         if messages is not None:
@@ -2470,6 +2713,22 @@ def stream_live_agent(
             metadata=dict(agent.metadata),
             handoff_path=list(trace.orchestration_path),
         )
+        input_messages = _build_run_messages(
+            agent=agent,
+            session=resolved_session,
+            prompt=prompt,
+            messages=messages,
+        )
+        await resolved_runtime._run_input_guardrails(
+            agent=agent,
+            run_id=run_id,
+            session_id=resolved_session.id,
+            prompt=prompt,
+            messages=input_messages,
+            context=context,
+            trace=trace,
+            emit=emit_agent,
+        )
         wrapped_tools = resolved_runtime._wrap_agent_tools(
             agent=agent,
             registry=registry_instance,
@@ -2579,6 +2838,17 @@ def stream_live_agent(
                 last_assistant_text = "".join(assistant_buffer)
                 if last_assistant_text:
                     transcript.append(create_text_message("assistant", last_assistant_text))
+            await resolved_runtime._run_output_guardrails(
+                agent=agent,
+                run_id=run_id,
+                session_id=resolved_session.id,
+                result=None,
+                text=last_assistant_text,
+                messages=[create_text_message("assistant", last_assistant_text)] if last_assistant_text else [],
+                context=context,
+                trace=trace,
+                emit=emit_agent,
+            )
         except Exception as error:
             if not live_session_future.done():
                 live_session_future.set_exception(error)

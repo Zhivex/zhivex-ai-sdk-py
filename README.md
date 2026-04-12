@@ -27,7 +27,7 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 
 ## Highlights
 
-- Agent runtime with executable handoffs, registry-based orchestration, transcript + summary memory, permission-aware tool execution, and traces
+- Agent runtime with executable handoffs, input/output guardrails, registry-based orchestration, transcript + summary memory, permission-aware tool execution, and traces
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
@@ -69,18 +69,18 @@ This matrix is generated from runtime support metadata via `scripts/generate_sup
 
 ### Native Extras
 
-| Provider | Files | File Search | Realtime | Responses | Conversations |
-| --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | No | No | No | No |
-| azure-openai | No | No | Yes | No | No |
-| bedrock | No | No | Yes | No | No |
-| gemini | Yes | Yes | Yes | No | No |
-| kimi | No | No | No | No | No |
-| ollama | No | No | No | No | No |
-| openai | Yes | No | Yes | Yes | Yes |
-| openrouter | No | No | No | No | No |
-| qwen | No | No | No | No | No |
-| vertex | No | No | Yes | No | No |
+| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Realtime | Responses | Conversations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | No | No | No | No | No | No | No | No |
+| azure-openai | No | No | No | No | No | No | Yes | No | No |
+| bedrock | No | No | No | No | No | No | Yes | No | No |
+| gemini | Yes | Yes | No | No | No | No | Yes | No | No |
+| kimi | No | No | No | No | No | No | No | No | No |
+| ollama | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| openrouter | No | No | No | No | No | No | No | No | No |
+| qwen | No | No | No | No | No | No | No | No | No |
+| vertex | No | No | No | No | No | No | Yes | No | No |
 
 ### Tool Calling Notes
 
@@ -459,6 +459,56 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Managing OpenAI Vector Stores / File Search stores:
+
+```python
+import asyncio
+
+from zhivex_ai import create_openai
+
+
+async def main() -> None:
+    openai = create_openai()
+    store = await openai.file_search_stores().create(display_name="Docs")
+    operation = await openai.file_search_stores().upload(
+        file_search_store_name=store.name,
+        data=b"%PDF-1.4...",
+        filename="manual.pdf",
+        media_type="application/pdf",
+        custom_metadata=[{"key": "lang", "value": "en"}],
+    )
+
+    await openai.file_search_stores().wait_operation(operation.name)
+
+
+asyncio.run(main())
+```
+
+Using OpenAI uploads and images:
+
+```python
+import asyncio
+
+from zhivex_ai import create_openai
+
+
+async def main() -> None:
+    openai = create_openai()
+    file = await openai.uploads().upload_bytes(
+        data=b'{"messages":[{"role":"user","content":"hello"}]}\n',
+        filename="batch.jsonl",
+        mime_type="application/jsonl",
+        purpose="batch",
+    )
+    image = await openai.images().generate(prompt="A paper sketch of a transit map", model="gpt-image-1")
+
+    print(file.id)
+    print(image.images[0].b64_json is not None)
+
+
+asyncio.run(main())
+```
+
 Passing inline audio to Gemini text generation:
 
 ```python
@@ -737,6 +787,8 @@ Adapters may also expose optional factories such as:
 
 - `provider.native.realtime_model("gpt-realtime")`
 - `provider.files()`
+- `provider.images()`
+- `provider.uploads()`
 - `provider.tokens()`
 - `provider.file_search_stores()`
 - `provider.responses()`
@@ -746,6 +798,11 @@ OpenAI providers may additionally expose low-level lifecycle clients:
 
 - `provider.responses()` for raw Responses API operations such as `create`, `create_background`, `retrieve`, `wait`, `cancel`, `compact`, and `list_input_items`
 - `provider.conversations()` for raw Conversations API operations such as `create`, `retrieve`, `update`, `create_item`, and `list_items`
+- `provider.file_search_stores()` for Vector Store / File Search lifecycle operations such as `create`, `update`, `search`, `upload`, `list_documents`, `get_operation`, and `wait_operation`
+- `provider.images()` for standalone image generation and edit flows
+- `provider.uploads()` for multi-part uploads that complete into reusable OpenAI Files
+- `provider.moderations()` for raw Moderations API requests
+- `provider.batches()` for raw Batch API lifecycle operations such as `create`, `retrieve`, `list`, and `cancel`
 
 OpenAI helper builders cover the modern hosted-tool surface, including file search filters, code-interpreter containers, shell environments, MCP servers, inline skills, skill references, custom tools, namespaces, and tool search.
 
@@ -769,8 +826,13 @@ Notes:
 - `provider.native.*` is the only place where provider-specific request shapes belong.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
+- `create_anthropic().tokens()` exposes Anthropic message token counting.
+- `anthropic_web_search_tool(...)`, `anthropic_mcp_server(...)`, and `anthropic_code_execution_tool(...)` build the current hosted-tool payloads for Claude-native runs.
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
+- `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
+- `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.
+- `create_vertex().realtime_model(...).create_browser_token()` is intentionally unsupported. Vertex realtime sessions use server-side authentication instead of OpenAI/Gemini-style ephemeral browser tokens in this SDK.
 - `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
 ## Why not use provider SDKs directly?
@@ -838,7 +900,9 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `create_otel_agent_observer()`
 - `load_agent_session(...)`
 - `ApprovalDecision`, `ToolApprovalRequest`
+- `GuardrailResult`, `InputGuardrailRequest`, `OutputGuardrailRequest`
 - `permission_allowlist_approval_policy(...)`
+- input and output guardrails on `Agent(...)`
 - `handoff_to(...)`
 - `remote_tool(...)`
 - `discover_mcp_tools(...)`

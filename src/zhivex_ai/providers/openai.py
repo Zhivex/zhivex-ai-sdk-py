@@ -11,10 +11,15 @@ from ..realtime import RealtimeConnectionFactory
 from ..types import PortableSupport
 from .base import create_provider_bundle
 from .openai_compat import (
+    OpenAICompatibleBatchesClient,
     OPENAI_COMPAT_CAPABILITIES,
     OpenAICompatibleConversationsClient,
+    OpenAICompatibleFileSearchStoresClient,
     OpenAICompatibleFilesClient,
+    OpenAICompatibleImagesClient,
+    OpenAICompatibleModerationsClient,
     OpenAICompatibleResponsesClient,
+    OpenAICompatibleUploadsClient,
     create_openai_compatible_provider,
 )
 
@@ -396,6 +401,36 @@ def create_openai(
         browser_token_url=browser_token_url,
         realtime_connection_factory=realtime_connection_factory,
         files_client_factory=lambda: OpenAICompatibleFilesClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        images_client_factory=lambda: OpenAICompatibleImagesClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        uploads_client_factory=lambda: OpenAICompatibleUploadsClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        moderations_client_factory=lambda: OpenAICompatibleModerationsClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        batches_client_factory=lambda: OpenAICompatibleBatchesClient(
+            provider="openai",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        file_search_stores_client_factory=lambda: OpenAICompatibleFileSearchStoresClient(
             provider="openai",
             api_key=resolved_key,
             base_url=base,

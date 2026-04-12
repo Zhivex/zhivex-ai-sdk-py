@@ -119,6 +119,11 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["method"], "POST")
         self.assertIn("/v1alpha/authTokens?key=test", requests[0]["url"])
 
+    async def test_vertex_realtime_disables_browser_token_capability(self) -> None:
+        provider = create_vertex(access_token="token", project_id="proj", fetch=lambda **_: None)  # type: ignore[arg-type]
+        model = provider.realtime_model("gemini-live-2.5-flash")
+        self.assertFalse(model.capabilities.realtime_browser_tokens)
+
     async def test_vertex_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .._http import Fetcher, default_fetch
@@ -28,6 +28,8 @@ from .gemini import (
     _gemini_realtime_parse_event,
     _provider_option_value,
 )
+
+VERTEX_REALTIME_CAPABILITIES = replace(GEMINI_REALTIME_CAPABILITIES, realtime_browser_tokens=False)
 
 
 @dataclass(slots=True)
@@ -214,7 +216,7 @@ def create_vertex(
 
     class VertexRealtimeModel:
         provider = "vertex"
-        capabilities = GEMINI_REALTIME_CAPABILITIES
+        capabilities = VERTEX_REALTIME_CAPABILITIES
 
         def __init__(self, model_id: str) -> None:
             self.model_id = model_id

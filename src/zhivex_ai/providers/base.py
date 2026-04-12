@@ -5,6 +5,7 @@ from typing import Callable
 
 from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
+    BatchesClient,
     CountTokensClient,
     ConversationsClient,
     EmbeddingModel,
@@ -15,7 +16,9 @@ from ..types import (
     GroundedGenerateResult,
     LanguageModel,
     GenerateResult,
+    ImagesClient,
     ModelGenerateInput,
+    ModerationsClient,
     NativeSupport,
     PortableSupport,
     RealtimeModel,
@@ -24,6 +27,7 @@ from ..types import (
     SpeechOutput,
     TranscriptionModel,
     TranscriptionOutput,
+    UploadsClient,
 )
 
 
@@ -37,6 +41,10 @@ class ProviderAdapter:
     grounded_language_model_factory: Callable[[str], GroundedLanguageModel] | None = None
     realtime_model_factory: Callable[[str], RealtimeModel] | None = None
     files_client_factory: Callable[[], FilesClient] | None = None
+    images_client_factory: Callable[[], ImagesClient] | None = None
+    uploads_client_factory: Callable[[], UploadsClient] | None = None
+    moderations_client_factory: Callable[[], ModerationsClient] | None = None
+    batches_client_factory: Callable[[], BatchesClient] | None = None
     count_tokens_client_factory: Callable[[], CountTokensClient] | None = None
     file_search_stores_client_factory: Callable[[], FileSearchStoresClient] | None = None
     responses_client_factory: Callable[[], ResponsesClient] | None = None
@@ -48,6 +56,10 @@ class ProviderAdapter:
     _grounded_language_model_cache: dict[str, GroundedLanguageModel] = field(default_factory=dict, init=False, repr=False)
     _realtime_model_cache: dict[str, RealtimeModel] = field(default_factory=dict, init=False, repr=False)
     _files_client: FilesClient | None = field(default=None, init=False, repr=False)
+    _images_client: ImagesClient | None = field(default=None, init=False, repr=False)
+    _uploads_client: UploadsClient | None = field(default=None, init=False, repr=False)
+    _moderations_client: ModerationsClient | None = field(default=None, init=False, repr=False)
+    _batches_client: BatchesClient | None = field(default=None, init=False, repr=False)
     _count_tokens_client: CountTokensClient | None = field(default=None, init=False, repr=False)
     _file_search_stores_client: FileSearchStoresClient | None = field(default=None, init=False, repr=False)
     _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
@@ -90,6 +102,34 @@ class ProviderAdapter:
         if self._files_client is None:
             self._files_client = self.files_client_factory()
         return self._files_client
+
+    def images(self) -> ImagesClient:
+        if self.images_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose an images client.')
+        if self._images_client is None:
+            self._images_client = self.images_client_factory()
+        return self._images_client
+
+    def uploads(self) -> UploadsClient:
+        if self.uploads_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose an uploads client.')
+        if self._uploads_client is None:
+            self._uploads_client = self.uploads_client_factory()
+        return self._uploads_client
+
+    def moderations(self) -> ModerationsClient:
+        if self.moderations_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a moderations client.')
+        if self._moderations_client is None:
+            self._moderations_client = self.moderations_client_factory()
+        return self._moderations_client
+
+    def batches(self) -> BatchesClient:
+        if self.batches_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a batches client.')
+        if self._batches_client is None:
+            self._batches_client = self.batches_client_factory()
+        return self._batches_client
 
     def tokens(self) -> CountTokensClient:
         if self.count_tokens_client_factory is None:
@@ -309,6 +349,18 @@ class ProviderBundle:
     def files(self) -> FilesClient:
         return self.native.files()
 
+    def images(self) -> ImagesClient:
+        return self.native.images()
+
+    def uploads(self) -> UploadsClient:
+        return self.native.uploads()
+
+    def moderations(self) -> ModerationsClient:
+        return self.native.moderations()
+
+    def batches(self) -> BatchesClient:
+        return self.native.batches()
+
     def tokens(self) -> CountTokensClient:
         return self.native.tokens()
 
@@ -336,6 +388,10 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         realtime=adapter.realtime_model_factory is not None,
         files=adapter.files_client_factory is not None,
         file_search=adapter.file_search_stores_client_factory is not None,
+        images=adapter.images_client_factory is not None,
+        uploads=adapter.uploads_client_factory is not None,
+        moderations=adapter.moderations_client_factory is not None,
+        batches=adapter.batches_client_factory is not None,
         responses=adapter.responses_client_factory is not None,
         conversations=adapter.conversations_client_factory is not None,
     )

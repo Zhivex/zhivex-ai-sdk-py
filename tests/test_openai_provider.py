@@ -407,6 +407,326 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["body"]["data"]["purpose"], "assistants")
         self.assertIn("file", requests[0]["body"]["files"])
 
+    async def test_openai_file_search_stores_crud(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body, "body": body})
+            if method == "POST" and url.endswith("/vector_stores"):
+                return FakeResponse(status_code=200, payload={"id": "vs_1", "name": "Docs", "created_at": 123})
+            if method == "GET" and url.endswith("/vector_stores"):
+                return FakeResponse(status_code=200, payload={"data": [{"id": "vs_1", "name": "Docs", "created_at": 123}], "has_more": False})
+            if method == "GET" and url.endswith("/vector_stores/vs_1"):
+                return FakeResponse(status_code=200, payload={"id": "vs_1", "name": "Docs", "created_at": 123})
+            if method == "GET" and url.endswith("/vector_stores/vs_1/files"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "data": [
+                            {
+                                "id": "file_1",
+                                "vector_store_id": "vs_1",
+                                "status": "completed",
+                                "filename": "manual.pdf",
+                                "attributes": {"lang": "es"},
+                                "usage_bytes": 12,
+                                "created_at": 456,
+                            }
+                        ],
+                        "has_more": False,
+                    },
+                )
+            if method == "GET" and url.endswith("/vector_stores/vs_1/files/file_1"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "file_1",
+                        "vector_store_id": "vs_1",
+                        "status": "completed",
+                        "filename": "manual.pdf",
+                        "attributes": {"lang": "es"},
+                        "usage_bytes": 12,
+                        "created_at": 456,
+                    },
+                )
+            if method == "DELETE" and url.endswith("/vector_stores/vs_1/files/file_1"):
+                return FakeResponse(status_code=200, payload={"id": "file_1", "deleted": True})
+            if method == "DELETE" and url.endswith("/vector_stores/vs_1"):
+                return FakeResponse(status_code=200, payload={"id": "vs_1", "deleted": True})
+            return FakeResponse(status_code=404, payload={"error": "unexpected"})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stores = provider.file_search_stores()
+        created = await stores.create(display_name="Docs")
+        listed = await stores.list()
+        fetched = await stores.get("vs_1")
+        documents = await stores.list_documents(file_search_store_name="vs_1")
+        document = await stores.get_document("vector_stores/vs_1/files/file_1")
+        deleted_document = await stores.delete_document("vector_stores/vs_1/files/file_1")
+        deleted_store = await stores.delete("vs_1")
+
+        self.assertEqual(created.name, "vs_1")
+        self.assertEqual(listed.stores[0].display_name, "Docs")
+        self.assertEqual(fetched.display_name, "Docs")
+        self.assertEqual(documents.documents[0].name, "vector_stores/vs_1/files/file_1")
+        self.assertEqual(document.custom_metadata[0]["lang"], "es")
+        self.assertTrue(deleted_document)
+        self.assertTrue(deleted_store)
+
+    async def test_openai_file_search_store_upload_waits_on_document_status(self) -> None:
+        requests: list[dict[str, Any]] = []
+        poll_count = 0
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            nonlocal poll_count
+            requests.append({"url": url, "method": method, "json": json_body, "body": body})
+            if method == "POST" and url.endswith("/vector_stores/vs_1/files"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "file_1",
+                        "vector_store_id": "vs_1",
+                        "status": "in_progress",
+                        "attributes": {"lang": "es"},
+                    },
+                )
+            if method == "POST" and url.endswith("/files"):
+                return FakeResponse(status_code=200, payload={"id": "upload_1", "filename": "manual.pdf", "status": "processed"})
+            if method == "GET" and url.endswith("/vector_stores/vs_1/files/file_1"):
+                poll_count += 1
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "file_1",
+                        "vector_store_id": "vs_1",
+                        "status": "completed" if poll_count >= 2 else "in_progress",
+                        "filename": "manual.pdf",
+                        "attributes": {"lang": "es"},
+                    },
+                )
+            return FakeResponse(status_code=404, payload={"error": "unexpected"})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stores = provider.file_search_stores()
+        operation = await stores.upload(
+            file_search_store_name="vs_1",
+            data=b"%PDF-1.4",
+            filename="manual.pdf",
+            media_type="application/pdf",
+            custom_metadata=[{"key": "lang", "value": "es"}],
+        )
+        waited = await stores.wait_operation(operation.name, poll_interval_ms=0, timeout_ms=50)
+
+        self.assertEqual(operation.name, "vector_stores/vs_1/files/file_1")
+        self.assertFalse(operation.done)
+        self.assertTrue(waited.done)
+        self.assertEqual(requests[1]["json"]["attributes"]["lang"], "es")
+
+    async def test_openai_file_search_stores_update_and_search(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body, "body": body})
+            if url.endswith("/vector_stores/vs_1") and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "vs_1", "name": "Docs v2", "metadata": {"env": "prod"}})
+            if url.endswith("/vector_stores/vs_1/files/file_1") and method == "POST":
+                return FakeResponse(
+                    status_code=200,
+                    payload={"id": "file_1", "vector_store_id": "vs_1", "attributes": {"topic": "billing"}},
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "data": [
+                        {
+                            "file_id": "file_1",
+                            "filename": "guide.md",
+                            "score": 0.98,
+                            "content": [{"type": "text", "text": "return policy"}],
+                        }
+                    ]
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stores = provider.file_search_stores()
+
+        updated = await stores.update("vs_1", display_name="Docs v2", metadata={"env": "prod"})
+        document = await stores.update_document("vs_1/file_1", custom_metadata=[{"topic": "billing"}])
+        search = await stores.search(file_search_store_name="vs_1", query="return policy", max_num_results=3, rewrite_query=True)
+
+        self.assertEqual(updated.display_name, "Docs v2")
+        self.assertEqual(document.custom_metadata, [{"topic": "billing"}])
+        self.assertEqual(search.results[0]["filename"], "guide.md")
+        self.assertEqual(requests[0]["json"], {"name": "Docs v2", "metadata": {"env": "prod"}})
+        self.assertEqual(requests[1]["json"], {"attributes": {"topic": "billing"}})
+        self.assertEqual(requests[2]["json"], {"query": "return policy", "max_num_results": 3, "rewrite_query": True})
+
+    async def test_openai_images_client_generate_edit_and_variation(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "created": 1719184911,
+                    "data": [{"b64_json": base64.b64encode(b"png-bytes").decode("ascii"), "revised_prompt": "a cleaner skyline"}],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        generated = await provider.images().generate(prompt="city skyline", model="gpt-image-1")
+        edited = await provider.images().edit(
+            prompt="remove the clouds",
+            image=b"png",
+            image_filenames="skyline.png",
+            model="gpt-image-1",
+            mask=b"mask",
+        )
+        varied = await provider.images().variation(
+            image=b"png",
+            image_filename="skyline.png",
+            model="gpt-image-1",
+        )
+
+        self.assertEqual(generated.images[0].revised_prompt, "a cleaner skyline")
+        self.assertEqual(edited.images[0].b64_json, base64.b64encode(b"png-bytes").decode("ascii"))
+        self.assertEqual(varied.images[0].b64_json, base64.b64encode(b"png-bytes").decode("ascii"))
+        self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/images/generations")
+        self.assertEqual(requests[0]["json"]["prompt"], "city skyline")
+        self.assertEqual(requests[1]["url"], "https://api.openai.com/v1/images/edits")
+        files_payload = requests[1]["body"]["files"]
+        self.assertEqual(files_payload[0][0], "image[]")
+        self.assertEqual(files_payload[1][0], "mask")
+        self.assertEqual(requests[2]["url"], "https://api.openai.com/v1/images/variations")
+        self.assertEqual(requests[2]["body"]["files"]["image"][0], "skyline.png")
+
+    async def test_openai_uploads_client_uploads_bytes_in_parts(self) -> None:
+        requests: list[dict[str, Any]] = []
+        part_counter = 0
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            nonlocal part_counter
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
+            if url.endswith("/uploads"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={"id": "upload_1", "filename": "training.jsonl", "purpose": "fine-tune", "bytes": 10, "status": "pending"},
+                )
+            if url.endswith("/parts"):
+                part_counter += 1
+                return FakeResponse(
+                    status_code=200,
+                    payload={"id": f"part_{part_counter}", "upload_id": "upload_1", "created_at": 1719185911},
+                )
+            if url.endswith("/complete"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "upload_1",
+                        "status": "completed",
+                        "file": {"id": "file_1", "filename": "training.jsonl", "bytes": 10, "purpose": "fine-tune"},
+                    },
+                )
+            return FakeResponse(status_code=200, payload={"id": "upload_1", "status": "cancelled"})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        created_file = await provider.uploads().upload_bytes(
+            data=b"0123456789",
+            filename="training.jsonl",
+            mime_type="text/jsonl",
+            purpose="fine-tune",
+            part_size_bytes=4,
+        )
+
+        self.assertEqual(created_file.id, "file_1")
+        self.assertEqual(requests[0]["json"]["bytes"], 10)
+        self.assertEqual(requests[1]["body"]["files"]["data"][0], "training.jsonl.part-1")
+        self.assertEqual(requests[4]["json"]["part_ids"], ["part_1", "part_2", "part_3"])
+
+    async def test_openai_moderations_and_batches_clients(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body})
+            if url.endswith("/moderations"):
+                return FakeResponse(status_code=200, payload={"id": "mod_1", "results": [{"flagged": False}]})
+            if url.endswith("/batches") and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "batch_1", "status": "validating"})
+            if url.endswith("/batches/batch_1") and method == "GET":
+                return FakeResponse(status_code=200, payload={"id": "batch_1", "status": "completed"})
+            if "/batches?" in url:
+                return FakeResponse(status_code=200, payload={"data": [{"id": "batch_1", "status": "completed"}], "has_more": False})
+            return FakeResponse(status_code=200, payload={"id": "batch_1", "status": "cancelling"})
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        moderation = await provider.moderations().create({"model": "omni-moderation-latest", "input": "hello"})
+        created = await provider.batches().create({"input_file_id": "file_1", "endpoint": "/v1/responses", "completion_window": "24h"})
+        retrieved = await provider.batches().retrieve("batch_1")
+        listed = await provider.batches().list(limit=10)
+        cancelled = await provider.batches().cancel("batch_1")
+
+        self.assertFalse(moderation["results"][0]["flagged"])
+        self.assertEqual(created["id"], "batch_1")
+        self.assertEqual(retrieved["status"], "completed")
+        self.assertEqual(listed["data"][0]["id"], "batch_1")
+        self.assertEqual(cancelled["status"], "cancelling")
+
     async def test_openai_normalizes_mcp_tool_schema_for_strict_mode(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -682,6 +1002,48 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         assistant_messages = [message for message in result.messages if message.role == "assistant"]
         tool_calls = [part.tool_call for message in assistant_messages for part in message.parts if getattr(part, "type", None) == "tool-call"]
         self.assertTrue(any(call.provider_metadata.get("provider_managed") for call in tool_calls))
+
+    async def test_openai_normalizes_tool_search_provider_managed_calls(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "tool_search_call",
+                            "id": "ts_1",
+                            "status": "completed",
+                            "action": {"query": "filesystem"},
+                        },
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "found tools"}],
+                        },
+                    ],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("gpt-5.4-mini"),
+            prompt="find a tool",
+            provider_options={"tools": [openai_tool_search_tool(description="Find a tool")]},
+        )
+
+        assistant_messages = [message for message in result.messages if message.role == "assistant"]
+        tool_calls = [part.tool_call for message in assistant_messages for part in message.parts if getattr(part, "type", None) == "tool-call"]
+        self.assertTrue(any(call.name == "tool_search" for call in tool_calls))
 
     async def test_openai_maps_image_generation_outputs_to_image_parts(self) -> None:
         async def fetch(

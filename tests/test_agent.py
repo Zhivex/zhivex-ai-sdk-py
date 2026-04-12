@@ -13,9 +13,12 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    AgentGuardrailEvent,
     AgentRegistry,
     AgentToolApprovalEvent,
     AgentToolCallEvent,
+    GuardrailResult,
+    GuardrailTripwireTriggered,
     ModelCapabilities,
     ModelMessage,
     SummaryConfig,
@@ -168,6 +171,34 @@ class GeminiSearchOptInModel:
         return generator()
 
 
+class CountingEchoAgentModel(EchoAgentModel):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self.calls += 1
+        return await super().generate(input)
+
+
+class UnsafeStreamingAgentModel:
+    provider = "test"
+    model_id = "unsafe-stream"
+    capabilities = BASE_CAPABILITIES
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(messages=[create_text_message("assistant", "echo:unsafe")], text="echo:unsafe")
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            yield StreamTextDeltaEvent(text_delta="echo:unsafe")
+            yield StreamFinishEvent(
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+
+        return generator()
+
+
 class AgentRuntimeTests(IsolatedAsyncioTestCase):
     async def test_run_agent_persists_session_memory_and_summary(self) -> None:
         memory = create_in_memory_agent_memory_store(
@@ -295,6 +326,27 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertFalse(approvals[0].approved)
         self.assertEqual(observed_contexts, [])
 
+    async def test_run_agent_trips_input_guardrail_before_model_call(self) -> None:
+        model = CountingEchoAgentModel()
+
+        async def block_apollo(request) -> GuardrailResult:
+            if any("apollo" in "".join(part.text for part in message.parts if part.type == "text").lower() for message in request.messages):
+                return GuardrailResult(tripwire_triggered=True, reason="Apollo is blocked.")
+            return GuardrailResult(tripwire_triggered=False)
+
+        agent = Agent(
+            name="assistant",
+            instructions="Be concise.",
+            model=model,
+            input_guardrails=[block_apollo],
+        )
+
+        with self.assertRaises(GuardrailTripwireTriggered) as error:
+            await run_agent(agent=agent, prompt="Tell me about Apollo.")
+
+        self.assertEqual(error.exception.stage, "input")
+        self.assertEqual(model.calls, 0)
+
     async def test_run_agent_passes_google_search_provider_option_to_gemini(self) -> None:
         agent = Agent(
             name="researcher",
@@ -371,6 +423,32 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(tool_calls), 1)
         self.assertEqual(tool_calls[0].tool_call.name, "secret_lookup")
+
+    async def test_stream_agent_emits_guardrail_event_for_output_tripwire(self) -> None:
+        async def block_output(request) -> GuardrailResult:
+            return GuardrailResult(
+                tripwire_triggered="echo:unsafe" in request.text.lower(),
+                reason="Unsafe output blocked.",
+            )
+
+        agent = Agent(
+            name="assistant",
+            instructions="Be concise.",
+            model=UnsafeStreamingAgentModel(),
+            output_guardrails=[block_output],
+        )
+
+        stream = stream_agent(agent=agent, prompt="unsafe")
+        events = [event async for event in stream.event_stream()]
+
+        with self.assertRaises(GuardrailTripwireTriggered) as error:
+            await stream.collect()
+
+        guardrail_events = [event for event in events if isinstance(event, AgentGuardrailEvent)]
+        self.assertEqual(len(guardrail_events), 1)
+        self.assertEqual(guardrail_events[0].stage, "output")
+        self.assertTrue(guardrail_events[0].triggered)
+        self.assertEqual(error.exception.stage, "output")
 
     async def test_create_otel_agent_observer_uses_tracer(self) -> None:
         class FakeSpan:

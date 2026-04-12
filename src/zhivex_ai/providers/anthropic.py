@@ -14,6 +14,8 @@ from ..messages import normalize_finish_reason, serialize_json_value, validate_f
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    CountTokensClient,
+    CountTokensResult,
     FilePart,
     FilesClient,
     GenerateResult,
@@ -31,10 +33,13 @@ from ..types import (
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     TextPart,
+    TokenCountDetail,
     TokenUsage,
     ToolCall,
     ToolCallPart,
     ToolChoiceName,
+    ToolExecutionResult,
+    ToolResultPart,
     PortableSupport,
 )
 from ._payload import drop_none
@@ -110,6 +115,65 @@ def _merge_beta_headers(*values: str | list[str] | tuple[str, ...] | None) -> st
                 seen.add(item)
                 merged.append(item)
     return ",".join(merged) if merged else None
+
+
+def anthropic_web_search_tool(
+    *,
+    name: str = "web_search",
+    max_uses: int | None = None,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+    user_location: dict[str, Any] | None = None,
+    tool_type: str = _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE,
+    **extra: Any,
+) -> dict[str, Any]:
+    return drop_none(
+        {
+            "type": tool_type,
+            "name": name,
+            "max_uses": max_uses,
+            "allowed_domains": list(allowed_domains) if allowed_domains else None,
+            "blocked_domains": list(blocked_domains) if blocked_domains else None,
+            "user_location": deepcopy(user_location) if user_location is not None else None,
+            **deepcopy(extra),
+        }
+    )
+
+
+def anthropic_mcp_server(
+    *,
+    url: str,
+    name: str,
+    authorization_token: str | None = None,
+    enabled: bool | None = None,
+    allowed_tools: list[str] | None = None,
+    tool_configuration: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    config = deepcopy(tool_configuration) if tool_configuration is not None else {}
+    if enabled is not None:
+        config["enabled"] = enabled
+    if allowed_tools is not None:
+        config["allowed_tools"] = list(allowed_tools)
+    return drop_none(
+        {
+            "type": "url",
+            "server_name": name,
+            "url": url,
+            "authorization_token": authorization_token,
+            "tool_configuration": config or None,
+            **deepcopy(extra),
+        }
+    )
+
+
+def anthropic_code_execution_tool(
+    *,
+    name: str = "code_execution",
+    tool_type: str = "code_execution_20250825",
+    **extra: Any,
+) -> dict[str, Any]:
+    return drop_none({"type": tool_type, "name": name, **deepcopy(extra)})
 
 
 def _parse_response_error(provider: str, response: Any) -> ProviderHTTPError:
@@ -456,12 +520,14 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
             parts.append(_text_part_from_block(block))
         elif block_type in _ANTHROPIC_THINKING_BLOCK_TYPES:
             thinking_blocks.append(deepcopy(block))
-        elif block_type in {"tool_use", "server_tool_use"}:
+        elif block_type in {"tool_use", "server_tool_use", "mcp_tool_use"}:
             provider_metadata = {
                 "anthropic_tool_block_type": block_type,
-                "provider_managed": block_type == "server_tool_use",
+                "provider_managed": block_type in {"server_tool_use", "mcp_tool_use"},
                 "anthropic_raw_block": deepcopy(block),
             }
+            if block.get("server_name") is not None:
+                provider_metadata["server_name"] = block.get("server_name")
             if thinking_blocks and not attached_thinking:
                 provider_metadata["anthropic_thinking_blocks"] = deepcopy(thinking_blocks)
                 attached_thinking = True
@@ -472,6 +538,17 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
                         name=str(block.get("name") or ""),
                         input=serialize_json_value(block.get("input") or {}),
                         provider_metadata=provider_metadata,
+                        )
+                    )
+                )
+        elif block_type in {"mcp_tool_result", "web_search_tool_result"}:
+            parts.append(
+                ToolResultPart(
+                    tool_result=ToolExecutionResult(
+                        tool_call_id=str(block.get("tool_use_id") or block.get("id") or ""),
+                        tool_name=str(block.get("name") or block_type),
+                        output=serialize_json_value(block.get("content") or block),
+                        is_error=False,
                     )
                 )
             )
@@ -709,6 +786,77 @@ class _AnthropicBase:
 
 
 @dataclass(slots=True)
+class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
+    async def count(
+        self,
+        *,
+        model_id: str,
+        prompt: str | None = None,
+        messages: list[ModelMessage] | None = None,
+        system: str | None = None,
+        tools: dict[str, Any] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: Any = None,
+    ) -> CountTokensResult:
+        built_messages = messages
+        if built_messages is None:
+            content = prompt or ""
+            built_messages = [ModelMessage(role="user", parts=[TextPart(text=content)])]
+            if system:
+                built_messages.insert(0, ModelMessage(role="system", parts=[TextPart(text=system)]))
+        elif system:
+            built_messages = [ModelMessage(role="system", parts=[TextPart(text=system)]), *built_messages]
+        validate_message_parts(self, built_messages)
+        extracted_options, request_betas = _extract_provider_options(provider_options)
+        body_tools, extracted_options = _merge_tool_payloads(_map_tools(tools), extracted_options)
+        body = drop_none(
+            {
+                "model": model_id,
+                "system": _system_prompt_from_messages(built_messages),
+                "messages": _map_messages(built_messages),
+                "tools": body_tools,
+                **extracted_options,
+            }
+        )
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/messages/count_tokens",
+                headers=self._headers(
+                    self._message_beta_headers(
+                        messages=built_messages,
+                        provider_options=extracted_options,
+                        request_betas=request_betas,
+                    )
+                ),
+                json_body=body,
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                'Provider "anthropic" request failed.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return CountTokensResult(
+            total_tokens=payload.get("input_tokens"),
+            details=[
+                TokenCountDetail(
+                    modality="input",
+                    token_count=payload.get("input_tokens"),
+                    provider_metadata=dict(payload),
+                )
+            ]
+            if payload.get("input_tokens") is not None
+            else [],
+            raw_response=payload,
+        )
+
+
+@dataclass(slots=True)
 class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: ANTHROPIC_CAPABILITIES)
 
@@ -820,6 +968,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                 elif event.event == "content_block_start" and payload.get("content_block", {}).get("type") in {
                     "tool_use",
                     "server_tool_use",
+                    "mcp_tool_use",
                 }:
                     block = payload["content_block"]
                     tool_buffers[payload["index"]] = {
@@ -828,8 +977,9 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                         "input": "",
                         "provider_metadata": {
                             "anthropic_tool_block_type": block.get("type"),
-                            "provider_managed": block.get("type") == "server_tool_use",
+                            "provider_managed": block.get("type") in {"server_tool_use", "mcp_tool_use"},
                             "anthropic_raw_block": deepcopy(block),
+                            **({"server_name": block.get("server_name")} if block.get("server_name") is not None else {}),
                         },
                     }
                 elif event.event == "content_block_delta" and payload.get("delta", {}).get("type") == "input_json_delta":
@@ -955,6 +1105,15 @@ def create_anthropic(
             beta_headers=list(resolved_betas),
         ),
         files_client_factory=lambda: AnthropicFilesClient(
+            api_key=resolved_key,
+            base_url=base_url.rstrip("/"),
+            anthropic_version=anthropic_version,
+            fetch=requester,
+            beta_headers=list(resolved_betas),
+        ),
+        count_tokens_client_factory=lambda: AnthropicCountTokensClient(
+            provider="anthropic",
+            model_id="",
             api_key=resolved_key,
             base_url=base_url.rstrip("/"),
             anthropic_version=anthropic_version,

@@ -38,6 +38,7 @@ from ..types import (
     FileSearchDocument,
     FileSearchDocumentListResult,
     FileSearchOperation,
+    FileSearchSearchResult,
     FileSearchStore,
     FileSearchStoreListResult,
     FileSearchStoresClient,
@@ -959,6 +960,17 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
             )
         return _normalize_file_search_store(await response.json())
 
+    async def update(
+        self,
+        name: str,
+        *,
+        display_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        expires_after: dict[str, Any] | None = None,
+    ) -> FileSearchStore:
+        del display_name, metadata, expires_after
+        raise UnsupportedFeatureError('Provider "gemini" does not expose file search store update operations through this SDK.')
+
     async def delete(self, name: str, *, force: bool = False) -> bool:
         url = self._json_url(f"/{name}")
         if force:
@@ -1135,6 +1147,29 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
                 response_body=await response.text(),
             )
         return True
+
+    async def update_document(
+        self,
+        name: str,
+        *,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchDocument:
+        del name, custom_metadata, chunking_config
+        raise UnsupportedFeatureError('Provider "gemini" does not expose file search document update operations through this SDK.')
+
+    async def search(
+        self,
+        *,
+        file_search_store_name: str,
+        query: str | list[str],
+        filters: dict[str, Any] | None = None,
+        max_num_results: int | None = None,
+        ranking_options: dict[str, Any] | None = None,
+        rewrite_query: bool | None = None,
+    ) -> FileSearchSearchResult:
+        del file_search_store_name, query, filters, max_num_results, ranking_options, rewrite_query
+        raise UnsupportedFeatureError('Provider "gemini" does not expose a standalone file search query endpoint through this SDK.')
 
     async def get_operation(self, name: str) -> FileSearchOperation:
         response = await self.fetch(

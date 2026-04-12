@@ -50,6 +50,10 @@ class NativeSupport:
     realtime: bool = False
     files: bool = False
     file_search: bool = False
+    images: bool = False
+    uploads: bool = False
+    moderations: bool = False
+    batches: bool = False
     responses: bool = False
     conversations: bool = False
 
@@ -173,6 +177,49 @@ class ProviderFile:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class ProviderImage:
+    provider: str
+    b64_json: str | None = None
+    url: str | None = None
+    revised_prompt: str | None = None
+    media_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ImagesResult:
+    images: list[ProviderImage] = field(default_factory=list)
+    created_at: str | int | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class ProviderUploadPart:
+    provider: str
+    id: str
+    upload_id: str | None = None
+    created_at: str | int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ProviderUpload:
+    provider: str
+    id: str
+    filename: str | None = None
+    purpose: str | None = None
+    bytes: int | None = None
+    status: str | None = None
+    mime_type: str | None = None
+    created_at: str | int | None = None
+    expires_at: str | int | None = None
+    completed_at: str | int | None = None
+    cancelled_at: str | int | None = None
+    file: ProviderFile | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class FilesClient(Protocol):
     async def upload(
         self,
@@ -191,6 +238,122 @@ class FilesClient(Protocol):
     async def download(self, file_id: str) -> bytes: ...
 
     async def delete(self, file_id: str) -> bool: ...
+
+
+class ImagesClient(Protocol):
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        moderation: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult: ...
+
+    async def edit(
+        self,
+        *,
+        prompt: str,
+        image: bytes | bytearray | memoryview | list[bytes | bytearray | memoryview],
+        image_filenames: str | list[str] | None = None,
+        image_media_type: str | list[str] | None = None,
+        model: str | None = None,
+        mask: bytes | bytearray | memoryview | None = None,
+        mask_filename: str | None = None,
+        mask_media_type: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        moderation: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult: ...
+
+    async def variation(
+        self,
+        *,
+        image: bytes | bytearray | memoryview,
+        image_filename: str | None = None,
+        image_media_type: str | None = None,
+        model: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult: ...
+
+
+class UploadsClient(Protocol):
+    async def create(
+        self,
+        *,
+        filename: str,
+        bytes: int,
+        mime_type: str,
+        purpose: str,
+        expires_after: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProviderUpload: ...
+
+    async def add_part(
+        self,
+        *,
+        upload_id: str,
+        data: bytes | bytearray | memoryview,
+        filename: str | None = None,
+        media_type: str | None = None,
+    ) -> ProviderUploadPart: ...
+
+    async def complete(
+        self,
+        upload_id: str,
+        *,
+        part_ids: list[str],
+        md5: str | None = None,
+    ) -> ProviderUpload: ...
+
+    async def cancel(self, upload_id: str) -> ProviderUpload: ...
+
+    async def upload_bytes(
+        self,
+        *,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        mime_type: str,
+        purpose: str,
+        part_size_bytes: int = 64 * 1024 * 1024,
+        expires_after: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        md5: str | None = None,
+    ) -> ProviderFile: ...
+
+
+class ModerationsClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+
+class BatchesClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve(self, batch_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def cancel(self, batch_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
 
 
 @dataclass(slots=True)
@@ -270,6 +433,12 @@ class FileSearchOperation:
     raw_response: Any = None
 
 
+@dataclass(slots=True)
+class FileSearchSearchResult:
+    results: list[dict[str, Any]] = field(default_factory=list)
+    raw_response: Any = None
+
+
 class FileSearchStoresClient(Protocol):
     async def create(
         self,
@@ -288,6 +457,15 @@ class FileSearchStoresClient(Protocol):
     async def get(self, name: str) -> FileSearchStore: ...
 
     async def delete(self, name: str, *, force: bool = False) -> bool: ...
+
+    async def update(
+        self,
+        name: str,
+        *,
+        display_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        expires_after: dict[str, Any] | None = None,
+    ) -> FileSearchStore: ...
 
     async def upload(
         self,
@@ -321,6 +499,25 @@ class FileSearchStoresClient(Protocol):
     async def get_document(self, name: str) -> FileSearchDocument: ...
 
     async def delete_document(self, name: str) -> bool: ...
+
+    async def update_document(
+        self,
+        name: str,
+        *,
+        custom_metadata: list[dict[str, Any]] | None = None,
+        chunking_config: dict[str, Any] | None = None,
+    ) -> FileSearchDocument: ...
+
+    async def search(
+        self,
+        *,
+        file_search_store_name: str,
+        query: str | list[str],
+        filters: dict[str, Any] | None = None,
+        max_num_results: int | None = None,
+        ranking_options: dict[str, Any] | None = None,
+        rewrite_query: bool | None = None,
+    ) -> FileSearchSearchResult: ...
 
     async def get_operation(self, name: str) -> FileSearchOperation: ...
 

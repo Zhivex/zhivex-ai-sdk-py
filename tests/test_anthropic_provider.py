@@ -13,7 +13,17 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import FilePart, UnsupportedFeatureError, create_anthropic, generate_grounded_text, generate_text, tool
+from zhivex_ai import (
+    FilePart,
+    UnsupportedFeatureError,
+    anthropic_code_execution_tool,
+    anthropic_mcp_server,
+    anthropic_web_search_tool,
+    create_anthropic,
+    generate_grounded_text,
+    generate_text,
+    tool,
+)
 from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, StructuredOutputConfig, TextPart, ToolChoiceName
 
 
@@ -334,6 +344,37 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(events[0].tool_call.input, {"query": "latest mars news"})
         self.assertEqual(events[-1].usage.total_tokens, 10)
 
+    async def test_anthropic_stream_handles_mcp_tool_events(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'event: content_block_start\n'
+                    'data: {"index":1,"content_block":{"type":"mcp_tool_use","id":"mcp_1","name":"echo","server_name":"example-mcp"}}\n\n'
+                    'event: content_block_delta\n'
+                    'data: {"index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":\\"hi\\"}"}}\n\n'
+                    'event: content_block_stop\n'
+                    'data: {"index":1}\n\n'
+                    'event: message_stop\n'
+                    'data: {"stop_reason":"end_turn"}\n'
+                ),
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-sonnet-4-20250514")
+        events = []
+        async for event in await model.stream(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="search")])], provider_options={"mcp_servers": [anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")]})
+        ):
+            events.append(event)
+
+        self.assertEqual(events[0].tool_call.name, "echo")
+        self.assertTrue(events[0].tool_call.provider_metadata["provider_managed"])
+        self.assertEqual(events[0].tool_call.provider_metadata["server_name"], "example-mcp")
+        self.assertEqual(events[0].tool_call.input, {"value": "hi"})
+
     async def test_anthropic_files_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -510,3 +551,39 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "Latest rover update.")
         self.assertEqual(result.sources[0].url, "https://example.com/mars")
         self.assertTrue(any(source.snippet == "Rover update snippet" for source in result.sources))
+
+    async def test_anthropic_counts_tokens(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "headers": headers, "json": json_body})
+            return FakeResponse(status_code=200, payload={"input_tokens": 88})
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await provider.tokens().count(
+            model_id="claude-opus-4-20250514",
+            prompt="Can you write a formal proof?",
+        )
+
+        self.assertEqual(result.total_tokens, 88)
+        self.assertEqual(requests[0]["url"], "https://api.anthropic.com/v1/messages/count_tokens")
+        self.assertEqual(requests[0]["json"]["model"], "claude-opus-4-20250514")
+        self.assertEqual(requests[0]["json"]["messages"][0]["content"][0]["text"], "Can you write a formal proof?")
+
+    def test_anthropic_hosted_tool_builders(self) -> None:
+        web_search = anthropic_web_search_tool(max_uses=2, allowed_domains=["example.com"])
+        mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"])
+        code_execution = anthropic_code_execution_tool()
+
+        self.assertEqual(web_search["type"], "web_search_20250305")
+        self.assertEqual(web_search["max_uses"], 2)
+        self.assertEqual(mcp_server["server_name"], "example-mcp")
+        self.assertEqual(mcp_server["tool_configuration"]["allowed_tools"], ["echo"])
+        self.assertEqual(code_execution["type"], "code_execution_20250825")
