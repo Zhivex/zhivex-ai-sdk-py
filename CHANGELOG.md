@@ -35,12 +35,16 @@ Related documents:
 - Enforced CI quality gates for linting, type checking, coverage, build validation, and a minimum coverage floor of `80%`.
 - Expanded `mypy` coverage over core API-facing modules including `generate_text`, `generate_object`, `middleware`, and `transport`.
 - Documented the recommended local Ollama path with `provider.native.*`, the default compatibility token, and optional smoke-run configuration.
+- Added async context manager support to `ToolRegistry` and updated MCP guidance to close registries cleanly after use.
 
 ### Fixed
 
 - Fixed file-cache serialization so cached generate results round-trip correctly through the on-disk cache.
 - Fixed SSE response serialization for dataclass-backed UI message chunks.
 - Fixed request snapshotting in `generate_text()` so recorded step requests do not drift as later messages are appended.
+- Fixed `stream_agent()` so output guardrails can block streamed assistant text before it is emitted, while preserving live non-text agent events.
+- Fixed Postgres-backed agent stores to reject invalid `table_prefix` values early with a clear validation error.
+- Fixed agent tool-callable inspection to fall back gracefully when `inspect.signature()` is unavailable.
 
 ### Deprecated
 

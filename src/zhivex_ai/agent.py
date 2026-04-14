@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
@@ -62,6 +63,7 @@ from .types import (
 
 HANDOFF_MARKER = "__zhivex_agent_handoff__"
 SUMMARY_MARKER = "Conversation summary:\n"
+_POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _now_ms() -> int:
@@ -116,7 +118,10 @@ def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionConte
 
 @lru_cache(maxsize=256)
 def _tool_callable_mode(execute: Any) -> str:
-    signature = inspect.signature(execute)
+    try:
+        signature = inspect.signature(execute)
+    except (TypeError, ValueError):
+        return "single"
     parameters = list(signature.parameters.values())
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return "kwargs"
@@ -516,6 +521,12 @@ class ToolRegistry:
     def items(self) -> list[tuple[str, ToolDefinition]]:
         return list(self._tools.items())
 
+    async def __aenter__(self) -> "ToolRegistry":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> None:
+        await self.aclose()
+
     def merge(self, tools: ToolSet | "ToolRegistry" | None) -> "ToolRegistry":
         merged = ToolRegistry(self._tools, runtimes=self._runtimes)
         if isinstance(tools, ToolRegistry):
@@ -539,6 +550,14 @@ class ToolRegistry:
                 continue
             seen.add(marker)
             await runtime.aclose()
+
+
+def _validate_postgres_table_prefix(table_prefix: str) -> str:
+    if not _POSTGRES_IDENTIFIER_RE.match(table_prefix):
+        raise ValidationError(
+            'The "table_prefix" field must match the SQL identifier pattern [A-Za-z_][A-Za-z0-9_]*.'
+        )
+    return table_prefix
 
 
 def mcp_stdio_server(
@@ -1260,7 +1279,7 @@ class PostgresAgentMemoryStore:
     def __init__(self, dsn: str, *, summary_config: SummaryConfig | None = None, table_prefix: str = "zhivex_ai") -> None:
         self.summary_config = summary_config or SummaryConfig()
         self._dsn = dsn
-        self._table_prefix = table_prefix
+        self._table_prefix = _validate_postgres_table_prefix(table_prefix)
 
     def _table(self) -> str:
         return f"{self._table_prefix}_agent_memory"
@@ -1336,7 +1355,7 @@ class PostgresAgentMemoryStore:
 class PostgresAgentCheckpointStore:
     def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
         self._dsn = dsn
-        self._table_prefix = table_prefix
+        self._table_prefix = _validate_postgres_table_prefix(table_prefix)
 
     def _table(self) -> str:
         return f"{self._table_prefix}_agent_checkpoints"
@@ -2129,19 +2148,26 @@ class AgentRuntime:
                 "orchestration.depth": len(trace.orchestration_path) - 1,
             },
         )
+        buffer_live_text = live_stream and agent.model.capabilities.streaming and bool(agent.output_guardrails)
+        buffered_text_deltas: list[str] = []
         try:
-            emitted_live_events = False
+            emitted_live_text = False
+            emitted_live_tool_events = False
             if live_stream and agent.model.capabilities.streaming:
+
                 async def handle_stream_event(event: Any) -> None:
-                    nonlocal emitted_live_events
+                    nonlocal emitted_live_text, emitted_live_tool_events
                     if isinstance(event, StreamTextDeltaEvent):
-                        emitted_live_events = True
-                        await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
+                        if buffer_live_text:
+                            buffered_text_deltas.append(event.text_delta)
+                        else:
+                            emitted_live_text = True
+                            await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
                     elif isinstance(event, StreamToolCallEvent):
-                        emitted_live_events = True
+                        emitted_live_tool_events = True
                         await emit(AgentToolCallEvent(tool_call=event.tool_call))
                     elif isinstance(event, StreamToolResultEvent):
-                        emitted_live_events = True
+                        emitted_live_tool_events = True
                         await emit(AgentToolResultEvent(tool_result=event.tool_result))
 
                 streamed = stream_text(
@@ -2182,15 +2208,15 @@ class AgentRuntime:
             raise
         self._finish_span(span, attributes={"finish.reason": result.finish_reason})
 
-        if not emitted_live_events:
+        if not emitted_live_tool_events:
             for tool_call in _extract_tool_calls_from_steps(result.steps):
                 await emit(AgentToolCallEvent(tool_call=tool_call))
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
         segment_provider_finish_reason = _segment_provider_finish_reason(result)
-        if segment_text and not emitted_live_events:
+        if segment_text and not emitted_live_text and not buffer_live_text:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
-        if not emitted_live_events:
+        if not emitted_live_tool_events:
             for tool_result in result.tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
         await self._run_output_guardrails(
@@ -2204,6 +2230,12 @@ class AgentRuntime:
             trace=trace,
             emit=emit,
         )
+        if buffer_live_text:
+            if buffered_text_deltas:
+                for text_delta in buffered_text_deltas:
+                    await emit(AgentTextDeltaEvent(text_delta=text_delta))
+            elif segment_text:
+                await emit(AgentTextDeltaEvent(text_delta=segment_text))
 
         transcript = list(session.messages)
         if messages is not None:

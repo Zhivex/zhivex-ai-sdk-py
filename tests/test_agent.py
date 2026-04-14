@@ -199,6 +199,15 @@ class UnsafeStreamingAgentModel:
         return generator()
 
 
+class UninspectableToolCallable:
+    @property
+    def __signature__(self):
+        raise ValueError("signature unavailable")
+
+    def __call__(self, input: dict[str, str]) -> dict[str, str]:
+        return {"item": input["item"], "status": "ok"}
+
+
 class AgentRuntimeTests(IsolatedAsyncioTestCase):
     async def test_run_agent_persists_session_memory_and_summary(self) -> None:
         memory = create_in_memory_agent_memory_store(
@@ -448,7 +457,27 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(guardrail_events), 1)
         self.assertEqual(guardrail_events[0].stage, "output")
         self.assertTrue(guardrail_events[0].triggered)
+        self.assertFalse(any(event.type == "text-delta" for event in events))
         self.assertEqual(error.exception.stage, "output")
+
+    async def test_run_agent_executes_uninspectable_tool_callable(self) -> None:
+        agent = Agent(
+            name="assistant",
+            instructions="Use tools when needed.",
+            model=PermissionToolModel(),
+            tools={
+                "secret_lookup": tool(
+                    name="secret_lookup",
+                    schema=dict[str, str],
+                    execute=UninspectableToolCallable(),
+                )
+            },
+        )
+
+        result = await run_agent(agent=agent, prompt="help me plan", max_steps=2)
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(result.tool_results[0].output["status"], "ok")
 
     async def test_create_otel_agent_observer_uses_tracer(self) -> None:
         class FakeSpan:

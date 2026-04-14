@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (  # noqa: E402
     Agent,
     AgentMemoryState,
+    GuardrailResult,
     MCPServerConfig,
     StreamTextDeltaEvent,
     ToolExecutionContext,
@@ -214,6 +215,28 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
         self.assertEqual(chunks, ["alpha", " beta"])
         self.assertEqual(final.text, "alpha beta")
 
+    async def test_stream_agent_buffers_text_until_output_guardrails_pass(self) -> None:
+        async def allow_output(request) -> GuardrailResult:
+            return GuardrailResult(tripwire_triggered=False)
+
+        stream = stream_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Stream.",
+                model=IncrementalAgentModel(),
+                output_guardrails=[allow_output],
+            ),
+            prompt="hello",
+        )
+        events = [event async for event in stream.event_stream()]
+        final = await stream.collect()
+
+        event_types = [event.type for event in events]
+        chunks = [event.text_delta for event in events if event.type == "text-delta"]
+        self.assertEqual(chunks, ["alpha", " beta"])
+        self.assertLess(event_types.index("guardrail"), event_types.index("text-delta"))
+        self.assertEqual(final.text, "alpha beta")
+
     async def test_stream_agent_preserves_tool_event_order(self) -> None:
         stream = stream_agent(
             agent=Agent(
@@ -237,6 +260,36 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
         self.assertLess(event_types.index("tool-call"), event_types.index("tool-approval"))
         self.assertLess(event_types.index("tool-approval"), event_types.index("tool-result"))
         self.assertLess(event_types.index("tool-result"), event_types.index("text-delta"))
+
+    async def test_stream_agent_keeps_tool_events_live_with_output_guardrails(self) -> None:
+        async def allow_output(request) -> GuardrailResult:
+            return GuardrailResult(tripwire_triggered=False)
+
+        stream = stream_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use tools.",
+                model=StreamingToolAgentModel(),
+                output_guardrails=[allow_output],
+                tools={
+                    "lookup": tool(
+                        name="lookup",
+                        schema=dict[str, str],
+                        execute=lambda input: {"item": input["item"], "status": "ok"},
+                        permissions=["project:read"],
+                        requires_approval=True,
+                    )
+                },
+            ),
+            prompt="plan",
+        )
+        event_types = [event.type async for event in stream.event_stream()]
+        await stream.collect()
+
+        self.assertLess(event_types.index("tool-call"), event_types.index("tool-approval"))
+        self.assertLess(event_types.index("tool-approval"), event_types.index("tool-result"))
+        self.assertLess(event_types.index("tool-result"), event_types.index("guardrail"))
+        self.assertLess(event_types.index("guardrail"), event_types.index("text-delta"))
 
     async def test_sqlite_stores_persist_across_instances_and_resume_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -487,6 +540,90 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
                 else:
                     sys.modules[name] = module
 
+    async def test_tool_registry_supports_async_context_manager(self) -> None:
+        close_calls = {"count": 0}
+
+        class FakeTool:
+            def __init__(self, name: str, description: str) -> None:
+                self.name = name
+                self.description = description
+                self.inputSchema = {"type": "object"}
+
+        class FakeResult:
+            def __init__(self, tools=None, structured=None) -> None:
+                self.tools = tools or []
+                self.structuredContent = structured
+
+        class FakeClientSession:
+            def __init__(self, read_stream, write_stream) -> None:
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def initialize(self):
+                return None
+
+            async def list_tools(self):
+                return FakeResult(tools=[FakeTool("lookup", "Lookup")])
+
+            async def call_tool(self, name: str, arguments: dict[str, str]):
+                return FakeResult(structured={"tool": name, "arguments": arguments})
+
+        class FakeTransportContext:
+            async def __aenter__(self):
+                return ("read", "write")
+
+            async def __aexit__(self, exc_type, exc, tb):
+                close_calls["count"] += 1
+                return None
+
+        class FakeParams:
+            def __init__(self, command: str, args: list[str], env=None) -> None:
+                self.command = command
+                self.args = args
+                self.env = env
+
+        fake_mcp = types.ModuleType("mcp")
+        fake_mcp.ClientSession = FakeClientSession
+        fake_mcp_client = types.ModuleType("mcp.client")
+        fake_stdio = types.ModuleType("mcp.client.stdio")
+        fake_stdio.StdioServerParameters = FakeParams
+        fake_stdio.stdio_client = lambda params: FakeTransportContext()
+        fake_http = types.ModuleType("mcp.client.streamable_http")
+        fake_http.streamable_http_client = lambda url, headers=None, timeout=None: FakeTransportContext()
+
+        previous_modules = {
+            name: sys.modules.get(name)
+            for name in ("mcp", "mcp.client", "mcp.client.stdio", "mcp.client.streamable_http")
+        }
+        sys.modules["mcp"] = fake_mcp
+        sys.modules["mcp.client"] = fake_mcp_client
+        sys.modules["mcp.client.stdio"] = fake_stdio
+        sys.modules["mcp.client.streamable_http"] = fake_http
+        try:
+            async with await create_mcp_tool_registry(
+                mcp_stdio_server(name="file-system", command="demo-server"),
+            ) as registry:
+                lookup = registry.get("file_system_lookup")
+                self.assertIsNotNone(lookup)
+                result = await registry.execute(
+                    lookup,
+                    {"item": "apollo"},
+                    ToolExecutionContext(tool_name="file_system_lookup"),
+                )
+                self.assertEqual(result["tool"], "lookup")
+            self.assertGreaterEqual(close_calls["count"], 1)
+        finally:
+            for name, module in previous_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
     async def test_create_mcp_tool_registry_raises_on_name_collisions(self) -> None:
         class FakeTool:
             def __init__(self, name: str) -> None:
@@ -623,6 +760,26 @@ class FakeAsyncPGConnection:
 
 
 class PostgresStoreTests(IsolatedAsyncioTestCase):
+    def test_postgres_stores_accept_valid_table_prefix(self) -> None:
+        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_checkpoint_store
+
+        memory = create_postgres_agent_memory_store("postgres://example", table_prefix="agent_data")
+        checkpoints = create_postgres_checkpoint_store("postgres://example", table_prefix="agent_data")
+
+        self.assertEqual(memory._table(), "agent_data_agent_memory")
+        self.assertEqual(checkpoints._table(), "agent_data_agent_checkpoints")
+
+    def test_postgres_stores_reject_invalid_table_prefix(self) -> None:
+        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_checkpoint_store
+
+        invalid_prefixes = ["my-app", "bad prefix", "9agents", "agents;drop"]
+        for prefix in invalid_prefixes:
+            with self.subTest(prefix=prefix):
+                with self.assertRaises(ValidationError):
+                    create_postgres_agent_memory_store("postgres://example", table_prefix=prefix)
+                with self.assertRaises(ValidationError):
+                    create_postgres_checkpoint_store("postgres://example", table_prefix=prefix)
+
     async def test_postgres_stores_work_with_asyncpg_driver(self) -> None:
         FakeAsyncPGConnection.store = {"memory": {}, "checkpoints": []}
 

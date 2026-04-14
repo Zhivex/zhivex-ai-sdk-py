@@ -979,30 +979,29 @@ from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, mcp_stdio_
 
 
 async def main() -> None:
-    tools = await create_mcp_tool_registry(
+    async with await create_mcp_tool_registry(
         mcp_stdio_server(
             name="fs",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "."],
         )
-    )
+    ) as tools:
+        openai = create_openai()
+        agent = Agent(
+            name="assistant",
+            instructions="Use the filesystem MCP tools when needed.",
+            model=openai("gpt-5.4-mini"),
+            tools=tools,
+        )
 
-    openai = create_openai()
-    agent = Agent(
-        name="assistant",
-        instructions="Use the filesystem MCP tools when needed.",
-        model=openai("gpt-5.4-mini"),
-        tools=tools,
-    )
-
-    result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
-    print(result.text)
+        result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
+        print(result.text)
 
 
 asyncio.run(main())
 ```
 
-`discover_mcp_tools(...)` is still available when you want raw tool definitions or full control over prefixes and registry composition.
+`discover_mcp_tools(...)` is still available when you want raw tool definitions or full control over prefixes and registry composition. `ToolRegistry` also supports `async with` so MCP-backed runtimes can be closed cleanly after use.
 
 ## Examples
 
