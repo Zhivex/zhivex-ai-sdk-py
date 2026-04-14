@@ -35,9 +35,12 @@ dependencies = [
 dev = [
   "build>=1.2.0",
   "hatchling>=1.27.0",
+  "mypy>=1.10.0",
   "python-dotenv>=1.0.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "pytest-cov>=5.0.0",
+  "ruff>=0.6.0",
   "twine>=5.1.0"
 ]
 postgres = [
@@ -45,6 +48,10 @@ postgres = [
 ]
 mcp = [
   "mcp>=1.0.0"
+]
+api = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.31.0"
 ]
 
 [project.urls]
@@ -67,3 +74,27 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
+"examples/**/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.11"
+files = [
+  "src/zhivex_ai/__init__.py",
+  "src/zhivex_ai/errors.py",
+  "src/zhivex_ai/gateway.py",
+  "src/zhivex_ai/runtime.py",
+  "src/zhivex_ai/transport.py",
+]
+check_untyped_defs = true
+disallow_untyped_defs = false
+warn_return_any = false
+warn_unused_configs = true

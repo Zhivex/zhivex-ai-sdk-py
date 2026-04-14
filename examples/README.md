@@ -9,6 +9,7 @@ This folder contains runnable Python examples for the main public surfaces of th
 - `realtime/`: provider realtime sessions plus a live agent example.
 - `audio/`: transcription and speech generation.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, and model catalog helpers.
+- `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, and FastAPI reference APIs.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 
 ## Live Smoke
@@ -35,6 +36,12 @@ make dev
 ```
 
 Most examples require provider credentials in environment variables. The files show which provider setup they expect.
+
+The FastAPI examples also require:
+
+```bash
+pip install "zhivex-ai-sdk[api]"
+```
 
 Suggested order if you are new to the SDK:
 
@@ -99,6 +106,14 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/integrations/model_catalog.py
 ```
 
+FastAPI reference apps:
+
+```bash
+uvicorn examples.integrations.fastapi_chat_api:app --reload
+uvicorn examples.integrations.fastapi_streaming_api:app --reload
+uvicorn examples.integrations.fastapi_gateway_api:app --reload
+```
+
 ### Dev
 
 ```bash
@@ -112,6 +127,7 @@ Suggested order if you are new to the SDK:
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
+- The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
 - Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.
 - The Bedrock realtime example requires an injected AWS-signed websocket connection factory.
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.

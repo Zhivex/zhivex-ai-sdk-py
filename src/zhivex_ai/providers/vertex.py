@@ -26,7 +26,6 @@ from .gemini import (
     gemini_computer_use_tool,
     gemini_google_maps_tool,
     gemini_google_search_tool,
-    gemini_hosted_tool,
     gemini_url_context_tool,
     _extract_grounding_queries,
     _extract_grounding_sources,

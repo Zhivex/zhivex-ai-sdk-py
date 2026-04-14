@@ -8,10 +8,8 @@ from typing import Any
 from .types import (
     CodeExecutionResultPart,
     FilePart,
-    FinishReason,
     GeneratedCodePart,
     ImagePart,
-    MessageRole,
     ModelMessage,
     TextPart,
     ToolCall,

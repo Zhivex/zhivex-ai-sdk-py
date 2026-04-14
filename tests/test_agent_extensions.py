@@ -18,7 +18,6 @@ from zhivex_ai import (  # noqa: E402
     MCPServerConfig,
     StreamTextDeltaEvent,
     ToolExecutionContext,
-    ToolRegistry,
     create_agent_session,
     create_mcp_tool_registry,
     create_sqlite_agent_memory_store,

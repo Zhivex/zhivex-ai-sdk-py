@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
 from typing import Any
 
 from .errors import ParseError, UnsupportedFeatureError

@@ -24,7 +24,6 @@ from zhivex_ai import (  # noqa: E402
     RealtimeToolResultEvent,
     RealtimeTranscriptEvent,
     ToolExecutionResult,
-    ToolExecutionError,
     ToolDefinition,
     ToolCall,
     create_gemini,

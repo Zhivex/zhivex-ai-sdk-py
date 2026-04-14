@@ -24,7 +24,6 @@ from ..realtime import (
     encode_audio_frame,
     open_websocket_connection,
     tool_result_payload,
-    unsupported_browser_token,
 )
 from ..types import (
     AudioFrame,

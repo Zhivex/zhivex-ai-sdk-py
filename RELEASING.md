@@ -2,10 +2,20 @@
 
 This repository is set up for Python package publishing with `hatchling`.
 
+Related documents:
+
+- [README.md](./README.md)
+- [STABILITY.md](./STABILITY.md)
+- [VERSIONING.md](./VERSIONING.md)
+- [CHANGELOG.md](./CHANGELOG.md)
+
 ## 1. Prepare the release
 
 - Update `version` in `pyproject.toml`
 - Make sure `README.md` matches the published surface
+- Update `CHANGELOG.md`
+- Review `STABILITY.md` and `VERSIONING.md` if the public surface changed
+- Add migration notes when a release changes stable or beta behavior in a user-visible way
 - Run local validation:
 
 ```bash
@@ -69,3 +79,4 @@ If you want passwordless publishing from GitHub Actions:
 - If PyPI currently has `0.3.0`, the next public release should be `0.4.0`.
 - The package name on PyPI must be available. Confirm it before publishing.
 - Repository metadata and badges should point to `zhivex-ai-sdk-py`.
+- Do not publish a release that changes the documented stable surface without updating `CHANGELOG.md` and the release notes with migration guidance.

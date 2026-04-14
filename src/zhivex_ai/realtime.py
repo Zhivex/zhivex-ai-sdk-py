@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -18,7 +18,6 @@ from .types import (
     RealtimeSessionStartedEvent,
     RealtimeSessionConfig,
     RealtimeToolResultEvent,
-    ToolExecutionError,
     ToolExecutionResult,
 )
 

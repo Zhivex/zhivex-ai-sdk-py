@@ -116,10 +116,10 @@ def gateway_messages_to_model_messages(messages: list[GatewayMessage], system_pr
         from .messages import system
 
         mapped.append(system(system_prompt))
-    from .types import ImagePart, TextPart
+    from .types import ContentPart, ImagePart, TextPart
 
     for message in messages:
-        parts = [TextPart(text=message.content)]
+        parts: list[ContentPart] = [TextPart(text=message.content)]
         parts.extend(ImagePart(image=image.data_url, media_type=image.mime_type) for image in message.images)
         mapped.append(ModelMessage(role=message.role, parts=parts))
     return mapped

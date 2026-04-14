@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field

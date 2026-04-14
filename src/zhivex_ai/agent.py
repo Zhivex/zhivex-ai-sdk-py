@@ -6,24 +6,21 @@ import json
 import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from functools import lru_cache
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
 from ._http import default_fetch
 from ._serde import (
-    deserialize_mcp_server_config,
     deserialize_generate_result,
     deserialize_messages,
     deserialize_model_generate_input,
-    deserialize_tool_execution_result,
     serialize_mcp_server_config,
     serialize_generate_result,
     serialize_messages,
     serialize_model_generate_input,
     serialize_tool_execution_context,
-    serialize_tool_execution_result,
 )
 from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
@@ -49,14 +46,13 @@ from .types import (
     RealtimeToolCallEvent,
     RealtimeToolResultEvent,
     RealtimeTranscriptEvent,
-    StreamErrorEvent,
-    StreamFinishEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     StreamToolResultEvent,
     ToolChoiceName,
     ToolDefinition,
     ToolExecutionContext,
+    ToolExecutionError,
     ToolExecutionOptions,
     ToolExecutionResult,
     ToolSet,
@@ -1851,8 +1847,6 @@ class AgentRuntime:
         current_prompt = prompt
         current_messages = messages
         handoff_depth = 0
-        last_result: AgentRunResult | None = None
-
         try:
             while True:
                 trace.segments.append(AgentTraceSegment(agent_name=current_agent.name, started_at_ms=_now_ms()))
@@ -1878,7 +1872,6 @@ class AgentRuntime:
                     emit=publish,
                     live_stream=live_stream,
                 )
-                last_result = segment_result
                 trace.segments[-1].finished_at_ms = _now_ms()
                 await publish(
                     AgentDelegationFinishEvent(

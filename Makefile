@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test smoke compile check build release-check clean
+.PHONY: dev test test-cov lint typecheck smoke compile check build release-check clean
 
 dev:
 	uv venv .venv
@@ -9,13 +9,22 @@ dev:
 test:
 	$(PYTHON) -m pytest -q
 
+test-cov:
+	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=79 -q
+
+lint:
+	$(PYTHON) -m ruff check src tests examples
+
+typecheck:
+	$(PYTHON) -m mypy
+
 smoke:
 	$(PYTHON) scripts/run_live_smoke.py
 
 compile:
 	$(PYTHON) -m compileall src tests examples
 
-check: compile test
+check: compile lint typecheck test-cov
 
 build:
 	$(PYTHON) -m build --no-isolation --outdir dist

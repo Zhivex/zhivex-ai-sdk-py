@@ -7,6 +7,8 @@
 
 Zhivex AI SDK for Python is an async-first, agent-first SDK for building orchestrated AI systems across multiple providers.
 
+Production maturity plan: see [MATURITY_PLAN.md](./MATURITY_PLAN.md).
+
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
 - one agent runtime with executable handoffs, shared sessions, memory summaries, approval policies, tool registries, and traces
@@ -24,6 +26,14 @@ Modern AI apps usually start simple and then drift into provider lock-in:
 - local and routed setups add yet another layer
 
 Zhivex AI SDK gives you a common agent runtime and model contract so your application code can stay stable while providers change underneath.
+
+## Stability And Support
+
+Zhivex AI SDK is still published as an alpha package, but its public surface is now documented with explicit stability levels and versioning rules.
+
+Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface, and treat beta and experimental areas according to their compatibility guarantees.
+
+See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations and release communication.
 
 ## Highlights
 
@@ -49,6 +59,8 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 - `provider.native.language_model("model-id")` for provider-specific options, hosted tools, and escape hatches
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
+
+For production API work, the current tier-1 provider story for the stable surface is OpenAI, Azure OpenAI, Gemini, and Vertex. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 
@@ -104,6 +116,7 @@ Optional extras:
 ```bash
 pip install "zhivex-ai-sdk[postgres]"
 pip install "zhivex-ai-sdk[mcp]"
+pip install "zhivex-ai-sdk[api]"
 ```
 
 ## Quick Start
@@ -883,6 +896,8 @@ The Python SDK now includes helpers for UI and transport-oriented flows:
 - `to_ui_message_stream_response(...)`
 
 These are useful when wiring the SDK into web servers, SSE endpoints, or custom chat frontends.
+
+For production-style FastAPI integration patterns, see [PRODUCTION_APIS.md](./PRODUCTION_APIS.md) and the reference apps in [`examples/integrations/`](./examples/integrations/).
 
 ## Agents
 

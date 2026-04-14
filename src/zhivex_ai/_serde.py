@@ -13,7 +13,6 @@ from .types import (
     ModelGenerateInput,
     ModelMessage,
     RemoteHTTPToolConfig,
-    StreamToolResultEvent,
     StructuredOutputConfig,
     TokenUsage,
     ToolCall,
