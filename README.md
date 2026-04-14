@@ -887,6 +887,8 @@ Notes:
 - `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.
 - `create_openai().containers()` and `create_openai().skills()` expose the raw OpenAI Containers and Skills APIs.
 - `create_vertex().realtime_model(...).create_browser_token()` is intentionally unsupported. Vertex realtime sessions use server-side authentication instead of OpenAI/Gemini-style ephemeral browser tokens in this SDK.
+- OpenAI and Azure OpenAI browser bootstrap now follows the official `realtime/client_secrets` flow, while Gemini browser tokens still come from `v1alpha/authTokens`.
+- Realtime sessions emit `realtime-response-complete` when a model turn finishes and reserve `realtime-end` for actual session shutdown or transport closure.
 - `Gemini` and `Vertex` speech generation return PCM audio in the current examples, so the demo writes a `.wav` container around the bytes.
 
 ## Why not use provider SDKs directly?
@@ -968,7 +970,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
-This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, and traces without rewriting the lower-level loop yourself.
+This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, traces, durable Postgres-backed state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
 
 For new MCP integrations, prefer the higher-level helpers:
 

@@ -60,6 +60,7 @@ from ..types import (
     RealtimeConnectOptions,
     RealtimeGoAwayEvent,
     RealtimeModel,
+    RealtimeResponseCompletedEvent,
     RealtimeSession,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
@@ -1256,7 +1257,11 @@ def _gemini_realtime_url(base_url: str, api_key: str, provider_options: dict[str
     parsed = urlparse(base_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     query = dict((provider_options or {}).get("realtime_query") or {})
-    query.setdefault("key", api_key)
+    access_token = (provider_options or {}).get("access_token") or (provider_options or {}).get("accessToken")
+    if access_token:
+        query.setdefault("access_token", str(access_token))
+    else:
+        query.setdefault("key", api_key)
     return urlunparse((scheme, parsed.netloc, "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", "", urlencode(query), ""))
 
 
@@ -1268,6 +1273,16 @@ def _gemini_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]
     return _map_tools(config.tools, config.provider_options)
 
 
+def _gemini_realtime_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any] | None:
+    remaining = _provider_options_without_mapped_tools(provider_options) or {}
+    cleaned = {
+        key: value
+        for key, value in remaining.items()
+        if key not in {"headers", "realtime_url", "realtime_query", "access_token", "accessToken"}
+    }
+    return cleaned or None
+
+
 def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": f"models/{model_id}",
@@ -1277,7 +1292,7 @@ def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict
         }),
         "tools": _gemini_realtime_tools(config),
         "systemInstruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
-        **(_provider_options_without_mapped_tools(config.provider_options) or {}),
+        **(_gemini_realtime_provider_options(config.provider_options) or {}),
     }
     return {"setup": drop_none(payload)}
 
@@ -1383,8 +1398,10 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     provider_metadata=payload,
                 )
             )
+        if content.get("generationComplete") or content.get("generation_complete"):
+            events.append(RealtimeResponseCompletedEvent(reason="generation-complete", provider_metadata=payload))
         if content.get("turnComplete") or content.get("turn_complete"):
-            events.append(RealtimeSessionEndedEvent(reason="turn-complete", provider_metadata=payload))
+            events.append(RealtimeResponseCompletedEvent(reason="turn-complete", provider_metadata=payload))
         return events
     tool_call = payload.get("toolCall") or payload.get("tool_call")
     if isinstance(tool_call, dict):

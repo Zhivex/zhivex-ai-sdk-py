@@ -19,7 +19,9 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`
-- Agent runtime: `Agent`, `run_agent`, `stream_agent`, `resume_agent`
+- Agent runtime: `Agent`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`
+- Agent persistence: `create_postgres_agent_memory_store`, `create_postgres_checkpoint_store`
+- MCP helpers and registries: `discover_mcp_tools`, `mcp_stdio_server`, `mcp_http_server`, `create_mcp_tool_registry`
 - Gateway: `GatewayAttempt`, `GatewayConfig`, `GatewayError`, `GatewayImageAttachment`, `GatewayMessage`, `GatewayModelTarget`, `GatewayObjectResponse`, `GatewayResponse`, `create_gateway`
 - Core errors: `ProviderHTTPError`, `ConfigurationError`, `ValidationError`, `UnsupportedFeatureError`
 - HTTP and SSE helpers: `HTTPResponse`, `stream_sse`, `to_sse_response`, `to_sse_stream`, `to_text_stream`, `to_text_stream_response`, `to_ui_message_stream_response`
@@ -32,8 +34,6 @@ These APIs are supported and documented, but they may still change between minor
 
 - Middleware helpers
 - Model catalog helpers
-- Postgres-backed memory and checkpoint stores
-- MCP helpers and MCP-backed registries
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
 

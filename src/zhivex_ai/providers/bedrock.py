@@ -19,6 +19,7 @@ from ..types import (
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeModel,
+    RealtimeResponseCompletedEvent,
     RealtimeSession,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
@@ -120,7 +121,9 @@ def _bedrock_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                 )
             )
         ]
-    if event_type in {"session.ended", "turn.end"}:
+    if event_type == "turn.end":
+        return [RealtimeResponseCompletedEvent(reason=event_type, provider_metadata=payload)]
+    if event_type == "session.ended":
         return [RealtimeSessionEndedEvent(reason=event_type, provider_metadata=payload)]
     return []
 

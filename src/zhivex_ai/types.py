@@ -1286,6 +1286,13 @@ class RealtimeSessionEndedEvent:
 
 
 @dataclass(slots=True)
+class RealtimeResponseCompletedEvent:
+    type: Literal["realtime-response-complete"] = "realtime-response-complete"
+    reason: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RealtimeSessionResumptionEvent:
     type: Literal["realtime-session-resumption"] = "realtime-session-resumption"
     new_handle: str | None = None
@@ -1316,6 +1323,7 @@ RealtimeEvent: TypeAlias = (
     | RealtimeToolCallEvent
     | RealtimeToolResultEvent
     | RealtimeSessionEndedEvent
+    | RealtimeResponseCompletedEvent
     | RealtimeSessionResumptionEvent
     | RealtimeGoAwayEvent
     | RealtimeErrorEvent

@@ -16,9 +16,10 @@ from zhivex_ai import (  # noqa: E402
     AgentTextDeltaEvent,
     AudioFrame,
     ModelCapabilities,
+    RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
+    RealtimeResponseCompletedEvent,
     RealtimeSessionConfig,
-    RealtimeSessionEndedEvent,
     RealtimeTextDeltaEvent,
     RealtimeToolCallEvent,
     RealtimeToolResultEvent,
@@ -43,8 +44,10 @@ class FakeRealtimeConnection:
         self.sent.append(payload)
 
     async def recv_json(self) -> Any:
+        if self.closed:
+            return None
         if not self._incoming:
-            return {"type": "response.done"}
+            return None
         return self._incoming.pop(0)
 
     async def close(self) -> None:
@@ -94,6 +97,7 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
                 [
                     {"type": "conversation.item.input_audio_transcription.completed", "transcript": "hola"},
                     {"type": "response.text.delta", "delta": "mundo"},
+                    {"type": "response.output_audio.delta", "delta": "AQI="},
                     {"type": "response.output_item.done", "item": {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"q\":\"status\"}"}},
                     {"type": "response.done"},
                 ]
@@ -114,21 +118,31 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
 
         await session.send_audio(AudioFrame(data=b"\x00\x01", media_type="audio/pcm", is_final=True))
         await session.send_text("hi")
-        events = [event async for event in session.event_stream()]
+        events = []
+        async for event in session.event_stream():
+            events.append(event)
+            if isinstance(event, RealtimeResponseCompletedEvent):
+                break
+        await session.aclose()
 
         self.assertIn("/realtime?model=gpt-realtime", connection_meta[0]["url"])
+        self.assertNotIn("OpenAI-Beta", connection_meta[0]["headers"])
         self.assertEqual(connections[0].sent[0]["type"], "session.update")
         self.assertEqual(connections[0].sent[1]["type"], "input_audio_buffer.append")
         self.assertEqual(connections[0].sent[2]["type"], "input_audio_buffer.commit")
         self.assertEqual(connections[0].sent[3]["type"], "response.create")
         self.assertTrue(any(isinstance(event, RealtimeTranscriptEvent) and event.text == "hola" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeTextDeltaEvent) and event.text_delta == "mundo" for event in events))
+        self.assertTrue(any(isinstance(event, RealtimeAudioOutputEvent) and event.audio == b"\x01\x02" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeToolCallEvent) and event.tool_call.name == "lookup" for event in events))
-        self.assertTrue(any(isinstance(event, RealtimeSessionEndedEvent) for event in events))
+        self.assertTrue(any(isinstance(event, RealtimeResponseCompletedEvent) for event in events))
 
         token = await model.create_browser_token(RealtimeSessionConfig(voice="alloy"))
         self.assertEqual(token.value, "token-123")
-        self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/realtime/sessions")
+        self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/realtime/client_secrets")
+        self.assertEqual(requests[0]["json"]["session"]["type"], "realtime")
+        self.assertEqual(requests[0]["json"]["session"]["model"], "gpt-realtime")
+        self.assertEqual(requests[0]["json"]["session"]["audio"]["output"]["voice"], "alloy")
 
     async def test_gemini_realtime_normalizes_server_content(self) -> None:
         async def connection_factory(url: str, headers: dict[str, str], options: RealtimeConnectOptions | None):
@@ -153,12 +167,33 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
         session = await provider.realtime_model("gemini-live-2.5-flash").connect(
             RealtimeSessionConfig(output_audio_media_type="audio/pcm")
         )
-        events = [event async for event in session.event_stream()]
+        events = []
+        async for event in session.event_stream():
+            events.append(event)
+            if isinstance(event, RealtimeResponseCompletedEvent):
+                break
+        await session.aclose()
 
         self.assertTrue(any(isinstance(event, RealtimeTextDeltaEvent) and event.text_delta == "respuesta" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeToolCallEvent) and event.tool_call.name == "weather" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeTranscriptEvent) and event.text == "respuesta final" for event in events))
-        self.assertTrue(any(isinstance(event, RealtimeSessionEndedEvent) for event in events))
+        self.assertTrue(any(isinstance(event, RealtimeResponseCompletedEvent) for event in events))
+
+    async def test_gemini_realtime_accepts_ephemeral_access_token(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        async def connection_factory(url: str, headers: dict[str, str], options: RealtimeConnectOptions | None):
+            seen.append({"url": url, "headers": headers})
+            return FakeRealtimeConnection([])
+
+        provider = create_gemini(api_key="server-key", realtime_connection_factory=connection_factory)
+        session = await provider.realtime_model("gemini-live-2.5-flash").connect(
+            RealtimeSessionConfig(provider_options={"access_token": "authTokens/ephemeral"})
+        )
+        await session.aclose()
+
+        self.assertIn("access_token=authTokens%2Fephemeral", seen[0]["url"])
+        self.assertNotIn("key=server-key", seen[0]["url"])
 
 
 class FakeLiveSession:
@@ -187,7 +222,7 @@ class FakeLiveSession:
             yield RealtimeToolCallEvent(tool_call=ToolCall(id="call_1", name="weather", input={"city": "BA"}))
             yield RealtimeTextDeltaEvent(text_delta="Hace sol")
             yield RealtimeTranscriptEvent(text="Hace sol", role="assistant", is_final=True)
-            yield RealtimeSessionEndedEvent(reason="done")
+            yield RealtimeResponseCompletedEvent(reason="done")
 
         return generator()
 

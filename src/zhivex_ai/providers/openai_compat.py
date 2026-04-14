@@ -65,6 +65,7 @@ from ..types import (
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeModel,
+    RealtimeResponseCompletedEvent,
     RealtimeSession,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
@@ -2326,10 +2327,7 @@ def _openai_realtime_headers(
     extra_headers: dict[str, str] | None = None,
 ) -> dict[str, str]:
     value = api_key if not auth_prefix else f"{auth_prefix}{api_key}"
-    headers = {
-        auth_header: value,
-        "OpenAI-Beta": "realtime=v1",
-    }
+    headers = {auth_header: value}
     headers.update(dict(extra_headers or {}))
     return headers
 
@@ -2338,18 +2336,54 @@ def _openai_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]
     return _map_tools(config.tools)
 
 
-def _openai_realtime_session_payload(config: RealtimeSessionConfig) -> dict[str, Any]:
+def _openai_realtime_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any]:
+    if not provider_options:
+        return {}
+    return {
+        key: value
+        for key, value in provider_options.items()
+        if key not in {"headers", "realtime_url", "realtime_query", "expires_after"}
+    }
+
+
+def _openai_realtime_audio_format(media_type: str | None, sample_rate_hz: int | None) -> dict[str, Any] | None:
+    if media_type is None and sample_rate_hz is None:
+        return None
+    return drop_none({"type": media_type, "rate": sample_rate_hz})
+
+
+def _openai_realtime_session_config(config: RealtimeSessionConfig, *, model_id: str | None = None) -> dict[str, Any]:
+    audio = drop_none(
+        {
+            "input": drop_none(
+                {
+                    "format": _openai_realtime_audio_format(config.input_audio_media_type, config.input_sample_rate_hz),
+                    "turn_detection": config.turn_detection,
+                }
+            ),
+            "output": drop_none(
+                {
+                    "format": _openai_realtime_audio_format(config.output_audio_media_type, config.output_sample_rate_hz),
+                    "voice": config.voice,
+                }
+            ),
+        }
+    )
     session: dict[str, Any] = {
+        "type": "realtime",
+        "model": model_id,
         "instructions": config.instructions,
-        "voice": config.voice,
+        "output_modalities": ["audio"] if config.output_audio_media_type or config.voice else ["text"],
         "tools": _openai_realtime_tools(config),
         "tool_choice": _map_tool_choice(config.tool_choice, provider_name="openai") if config.tool_choice is not None else None,
-        "input_audio_format": config.input_audio_media_type,
-        "output_audio_format": config.output_audio_media_type,
-        "turn_detection": config.turn_detection,
-        **(config.provider_options or {}),
+        "audio": audio or None,
+        **_openai_realtime_provider_options(config.provider_options),
     }
-    return {"type": "session.update", "session": drop_none(session)}
+    return drop_none(session)
+
+
+def _openai_realtime_session_payload(config: RealtimeSessionConfig) -> dict[str, Any]:
+    return {"type": "session.update", "session": _openai_realtime_session_config(config)}
 
 
 def _openai_realtime_build_audio(frame: AudioFrame, config: RealtimeSessionConfig) -> list[dict[str, Any]]:
@@ -2408,7 +2442,7 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                 provider_metadata=payload,
             )
         ]
-    if event_type == "response.audio.delta":
+    if event_type in {"response.audio.delta", "response.output_audio.delta"}:
         delta = payload.get("delta")
         audio = base64.b64decode(delta) if isinstance(delta, str) and delta else b""
         return [
@@ -2433,7 +2467,11 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                 provider_metadata=payload,
             )
         ]
-    if event_type in {"response.audio_transcript.delta", "response.audio_transcription.delta"}:
+    if event_type in {
+        "response.audio_transcript.delta",
+        "response.audio_transcription.delta",
+        "response.output_audio_transcript.delta",
+    }:
         return [
             RealtimeTranscriptEvent(
                 text=str(payload.get("delta") or ""),
@@ -2444,7 +2482,12 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                 provider_metadata=payload,
             )
         ]
-    if event_type in {"response.audio_transcript.done", "response.output_text.done"}:
+    if event_type in {
+        "response.audio_transcript.done",
+        "response.audio_transcription.done",
+        "response.output_audio_transcript.done",
+        "response.output_text.done",
+    }:
         text = payload.get("transcript")
         if text is None:
             text = payload.get("text")
@@ -2473,7 +2516,9 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     )
                 )
             ]
-    if event_type in {"response.done", "response.completed", "response.incomplete", "response.failed", "session.closed"}:
+    if event_type in {"response.done", "response.completed", "response.incomplete", "response.failed"}:
+        return [RealtimeResponseCompletedEvent(reason=event_type, provider_metadata=payload)]
+    if event_type == "session.closed":
         return [RealtimeSessionEndedEvent(reason=event_type, provider_metadata=payload)]
     return []
 
@@ -3222,17 +3267,19 @@ class OpenAICompatibleRealtimeModel(_BaseOpenAICompatible, RealtimeModel):
         options: RealtimeConnectOptions | None = None,
     ) -> RealtimeTokenResult:
         resolved_config = config or RealtimeSessionConfig()
-        url = self.browser_token_url or f"{self.base_url}/realtime/sessions"
+        provider_options = dict(resolved_config.provider_options or {})
+        expires_after = provider_options.pop("expires_after", None)
+        url = self.browser_token_url or f"{self.base_url}/realtime/client_secrets"
         response = await with_retry(
             lambda: self.fetch(
                 url,
                 headers=self._headers(),
                 json_body=drop_none({
-                    "model": self.model_id,
-                    "voice": resolved_config.voice,
-                    "instructions": resolved_config.instructions,
-                    "tools": _openai_realtime_tools(resolved_config),
-                    **(resolved_config.provider_options or {}),
+                    "expires_after": expires_after,
+                    "session": _openai_realtime_session_config(
+                        replace(resolved_config, provider_options=provider_options or None),
+                        model_id=self.model_id,
+                    ),
                 }),
                 timeout_ms=options.timeout_ms if options else None,
             ),
@@ -3246,9 +3293,13 @@ class OpenAICompatibleRealtimeModel(_BaseOpenAICompatible, RealtimeModel):
         if isinstance(secret, dict):
             value = str(secret.get("value") or "")
             expires_at_ms = secret.get("expires_at_ms")
+            if expires_at_ms is None and secret.get("expires_at") is not None:
+                expires_at_ms = int(secret.get("expires_at")) * 1000
         else:
             value = str(payload.get("token") or payload.get("value") or "")
             expires_at_ms = payload.get("expires_at_ms")
+            if expires_at_ms is None and payload.get("expires_at") is not None:
+                expires_at_ms = int(payload.get("expires_at")) * 1000
         return RealtimeTokenResult(value=value, expires_at_ms=expires_at_ms, raw_response=payload)
 
 

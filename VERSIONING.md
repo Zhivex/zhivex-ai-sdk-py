@@ -40,6 +40,8 @@ When a stable API needs to change:
 
 Beta APIs are intended for early adoption with documented change management.
 
+The current beta-only areas are narrower than the full agent story. MCP helpers, MCP-backed registries, and Postgres-backed agent stores are now part of the documented stable surface and follow the stable-surface rules above.
+
 Experimental APIs are intended for evaluation. They should be consumed behind an application-owned abstraction if production teams need to try them before they graduate.
 
 ## Current maturity target

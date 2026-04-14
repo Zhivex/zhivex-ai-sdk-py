@@ -36,6 +36,7 @@ Related documents:
 - Expanded `mypy` coverage over core API-facing modules including `generate_text`, `generate_object`, `middleware`, and `transport`.
 - Documented the recommended local Ollama path with `provider.native.*`, the default compatibility token, and optional smoke-run configuration.
 - Added async context manager support to `ToolRegistry` and updated MCP guidance to close registries cleanly after use.
+- Promoted MCP helpers, MCP-backed registries, and Postgres-backed agent stores into the documented stable surface for production integrations.
 
 ### Fixed
 
@@ -45,6 +46,7 @@ Related documents:
 - Fixed `stream_agent()` so output guardrails can block streamed assistant text before it is emitted, while preserving live non-text agent events.
 - Fixed Postgres-backed agent stores to reject invalid `table_prefix` values early with a clear validation error.
 - Fixed agent tool-callable inspection to fall back gracefully when `inspect.signature()` is unavailable.
+- Fixed realtime/live voice adapters to distinguish turn completion from true session shutdown, align OpenAI and Azure browser bootstrap with `realtime/client_secrets`, support current OpenAI output-audio events, and accept Gemini ephemeral `access_token` connections.
 
 ### Deprecated
 

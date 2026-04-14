@@ -13,11 +13,14 @@ async def main() -> None:
             output_audio_media_type="audio/pcm",
         )
     )
-    await session.send_text("What is a realtime API?")
-    async for event in session.event_stream():
-        print(event)
-        if event.type == "realtime-end":
-            break
+    try:
+        await session.send_text("What is a realtime API?")
+        async for event in session.event_stream():
+            print(event)
+            if event.type in {"realtime-response-complete", "realtime-end"}:
+                break
+    finally:
+        await session.aclose()
 
 
 asyncio.run(main())

@@ -41,6 +41,7 @@ from .types import (
     RealtimeConnectOptions,
     RealtimeEvent,
     RealtimeModel,
+    RealtimeResponseCompletedEvent,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
     RealtimeTextDeltaEvent,
@@ -2857,7 +2858,7 @@ def stream_live_agent(
                     await emit_agent(AgentToolResultEvent(tool_result=tool_result))
                     await emit_live(RealtimeToolResultEvent(tool_result=tool_result))
                     continue
-                if isinstance(event, RealtimeSessionEndedEvent):
+                if isinstance(event, (RealtimeResponseCompletedEvent, RealtimeSessionEndedEvent)):
                     break
             if assistant_buffer and not last_assistant_text:
                 last_assistant_text = "".join(assistant_buffer)

@@ -23,7 +23,7 @@ async def main() -> None:
 
     provider = create_gemini(api_key=api_key)
     try:
-        session = await provider.realtime_model("gemini-3.1-flash-live-preview").connect(
+        session = await provider.realtime_model("gemini-2.5-flash-native-audio-preview-12-2025").connect(
             RealtimeSessionConfig(
                 instructions="Keep responses short.",
                 output_audio_media_type="audio/pcm",
@@ -31,11 +31,14 @@ async def main() -> None:
         )
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
-    await session.send_text("Explain what low latency means for voice assistants.")
-    async for event in session.event_stream():
-        print(event)
-        if event.type == "realtime-end":
-            break
+    try:
+        await session.send_text("Explain what low latency means for voice assistants.")
+        async for event in session.event_stream():
+            print(event)
+            if event.type in {"realtime-response-complete", "realtime-end"}:
+                break
+    finally:
+        await session.aclose()
 
 
 asyncio.run(main())
