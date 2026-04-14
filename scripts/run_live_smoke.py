@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import create_anthropic, create_gemini, create_openai, create_vertex, generate_text
+from zhivex_ai import create_anthropic, create_gemini, create_ollama, create_openai, create_vertex, generate_text
 from zhivex_ai.errors import ZhivexAIError
 
 
@@ -121,6 +121,25 @@ async def _run_vertex() -> tuple[str, bool, str]:
     return ("vertex", True, f"ok: {model}, tokens={token_count.total_tokens}")
 
 
+async def _run_ollama() -> tuple[str, bool, str]:
+    model = os.getenv("ZHIVEX_SMOKE_OLLAMA_MODEL")
+    base_url = os.getenv("ZHIVEX_SMOKE_OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    if not model:
+        return ("ollama", False, "skip: set ZHIVEX_SMOKE_OLLAMA_MODEL")
+    provider = create_ollama(base_url=base_url)
+    result = await generate_text(
+        model=provider.native.language_model(model),
+        prompt="Reply with exactly OLLAMA_SMOKE_OK.",
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if result.text.strip() != "OLLAMA_SMOKE_OK.":
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    return ("ollama", True, f"ok: {model} @ {base_url}")
+
+
 async def main() -> int:
     _load_dotenv_if_available()
     selected = _selected_providers()
@@ -133,6 +152,8 @@ async def main() -> int:
         checks.append(_run_anthropic)
     if _want("vertex", selected):
         checks.append(_run_vertex)
+    if _want("ollama", selected):
+        checks.append(_run_ollama)
 
     failures = 0
     for check in checks:

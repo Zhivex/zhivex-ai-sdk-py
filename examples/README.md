@@ -22,10 +22,12 @@ export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
 export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini`.
+It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`.
+Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 
 ## Run
 
@@ -62,6 +64,7 @@ Suggested order if you are new to the SDK:
 
 ```bash
 .venv/bin/python examples/text/openai_text.py
+.venv/bin/python examples/text/ollama_text.py
 .venv/bin/python examples/text/stream_text.py
 .venv/bin/python examples/text/stream_object.py
 .venv/bin/python examples/text/structured_output.py
@@ -127,6 +130,7 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 
 - OpenAI and Azure OpenAI currently expose the richest Python feature surface for grounded text and realtime session bootstrap.
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
+- `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
@@ -140,4 +144,4 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - Examples that read `.env` files use `python-dotenv` when available, but they still work if you export environment variables manually.
 - `transcribe_audio.py` expects a WAV file at `examples/audio/sample.wav`.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.
-- `make smoke` runs a stricter live pass against OpenAI, Gemini, Anthropic, and Vertex when the corresponding credentials and model IDs are configured.
+- `make smoke` runs a stricter live pass against OpenAI, Gemini, Anthropic, Vertex, and optional local Ollama when the corresponding model IDs are configured.

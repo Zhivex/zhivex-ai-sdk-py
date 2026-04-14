@@ -25,6 +25,7 @@ Related documents:
 - Production API guidance with FastAPI integration examples for direct, streaming, and gateway-backed APIs.
 - Observability guidance and examples for telemetry, request correlation, and gateway attempt hooks.
 - Contract coverage for the stable surface, provider support matrix, tier-1 provider assertions, and public package status.
+- Dedicated Ollama provider coverage for native text generation, streaming, structured output, tool calling, embeddings, and local smoke validation.
 
 ### Changed
 
@@ -33,6 +34,7 @@ Related documents:
 - Documented tier-1 providers for the stable production API story: OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex.
 - Enforced CI quality gates for linting, type checking, coverage, build validation, and a minimum coverage floor of `80%`.
 - Expanded `mypy` coverage over core API-facing modules including `generate_text`, `generate_object`, `middleware`, and `transport`.
+- Documented the recommended local Ollama path with `provider.native.*`, the default compatibility token, and optional smoke-run configuration.
 
 ### Fixed
 

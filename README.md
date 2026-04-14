@@ -116,6 +116,7 @@ Tool support now follows the same rule everywhere:
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
+- Ollama defaults to `base_url="http://localhost:11434/v1"` and `api_key="ollama"` for local compatibility setups. Use `provider.native.*` for Ollama examples and override `OLLAMA_API_KEY` only when you front it with a proxy or remote gateway that requires auth.
 
 ## Installation
 
@@ -809,6 +810,28 @@ Portable model construction fails fast when the provider does not hold the porta
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama still reuse the same normalized adapter model internally, but they no longer imply portable parity.
 
+Local Ollama usage follows the same native escape hatch:
+
+```python
+import asyncio
+
+from zhivex_ai import create_ollama, generate_text
+
+
+async def main() -> None:
+    provider = create_ollama(base_url="http://localhost:11434/v1")
+    result = await generate_text(
+        model=provider.native.language_model("llama3.2"),
+        prompt="Explain Zhivex AI SDK in one sentence.",
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+For local Ollama installs, `api_key="ollama"` is the default compatibility token and is usually sufficient. Set `OLLAMA_API_KEY` only when your Ollama endpoint is behind a proxy or hosted gateway that expects authentication.
+
 Adapters may also expose optional factories such as:
 
 - `provider.native.realtime_model("gpt-realtime")`
@@ -986,6 +1009,7 @@ asyncio.run(main())
 See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
 - Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py)
+- Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
 - Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
 - Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)
@@ -998,10 +1022,11 @@ export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
 export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 
 ## License
 
