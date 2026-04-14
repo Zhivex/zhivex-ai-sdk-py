@@ -117,6 +117,7 @@ Optional extras:
 pip install "zhivex-ai-sdk[postgres]"
 pip install "zhivex-ai-sdk[mcp]"
 pip install "zhivex-ai-sdk[api]"
+pip install "zhivex-ai-sdk[otel]"
 ```
 
 ## Quick Start
@@ -880,6 +881,8 @@ Zhivex AI SDK includes middleware helpers similar to the TypeScript SDK:
 - `create_circuit_breaker_middleware(...)`
 
 These let you keep cross-cutting concerns outside provider adapters and application prompts.
+
+For production logging, request correlation, gateway attempt tracing, and OpenTelemetry guidance, see [OBSERVABILITY.md](./OBSERVABILITY.md).
 
 ## UI And Transport
 

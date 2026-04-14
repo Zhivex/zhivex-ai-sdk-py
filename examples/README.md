@@ -10,6 +10,7 @@ This folder contains runnable Python examples for the main public surfaces of th
 - `audio/`: transcription and speech generation.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, and model catalog helpers.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, and FastAPI reference APIs.
+- `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, FastAPI reference APIs, and observability patterns.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 
 ## Live Smoke
@@ -104,6 +105,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/integrations/middleware.py
 .venv/bin/python examples/integrations/gateway_fallback.py
 .venv/bin/python examples/integrations/model_catalog.py
+.venv/bin/python examples/integrations/observability.py
 ```
 
 FastAPI reference apps:
@@ -128,6 +130,7 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
+- `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.
 - Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.
 - The Bedrock realtime example requires an injected AWS-signed websocket connection factory.
 - `resume_agent.py` and `mcp_tools.py` require optional extras if you want to run them against real backends.

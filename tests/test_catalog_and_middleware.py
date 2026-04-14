@@ -14,6 +14,7 @@ from zhivex_ai import (
     create_cached_generate_middleware,
     create_in_memory_generate_cache,
     create_model_catalog,
+    create_telemetry_middleware,
     create_text_message,
     default_model_catalog,
     wrap_language_model,
@@ -74,3 +75,23 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(first.text, "cached")
         self.assertEqual(second.text, "cached")
         self.assertEqual(model.calls, 1)
+
+    async def test_telemetry_middleware_emits_start_and_finish_events(self) -> None:
+        events: list[dict[str, object]] = []
+        model = CountingModel()
+        wrapped = wrap_language_model(
+            model,
+            [
+                create_telemetry_middleware(
+                    on_event=lambda event: events.append(event),
+                )
+            ],
+        )
+
+        result = await wrapped.generate(ModelGenerateInput(messages=[create_text_message("user", "hello")]))
+
+        self.assertEqual(result.text, "cached")
+        self.assertEqual([event["type"] for event in events], ["generate-start", "generate-finish"])
+        self.assertEqual(events[0]["model"].provider, "test")
+        self.assertEqual(events[1]["model"].model_id, "counting")
+        self.assertIn("latencyMs", events[1])

@@ -53,6 +53,10 @@ api = [
   "fastapi>=0.115.0",
   "uvicorn>=0.31.0"
 ]
+otel = [
+  "opentelemetry-api>=1.28.0",
+  "opentelemetry-sdk>=1.28.0"
+]
 
 [project.urls]
 Homepage = "https://github.com/Zhivex/zhivex-ai-sdk-py"

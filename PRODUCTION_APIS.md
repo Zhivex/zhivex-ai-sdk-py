@@ -7,6 +7,7 @@ Related examples:
 - [`examples/integrations/fastapi_chat_api.py`](./examples/integrations/fastapi_chat_api.py)
 - [`examples/integrations/fastapi_streaming_api.py`](./examples/integrations/fastapi_streaming_api.py)
 - [`examples/integrations/fastapi_gateway_api.py`](./examples/integrations/fastapi_gateway_api.py)
+- [OBSERVABILITY.md](./OBSERVABILITY.md)
 
 ## Install
 
