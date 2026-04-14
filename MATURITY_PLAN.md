@@ -6,7 +6,7 @@ This document turns the current "works well and tests pass" state of the SDK int
 
 - Package builds successfully and the test suite is green locally.
 - Core areas already exist: provider adapters, foundation APIs, agent runtime, gateway, middleware, transport helpers, and release automation.
-- The package still declares `Development Status :: 3 - Alpha`, so the technical baseline is ahead of the product maturity signal.
+- The package now declares `Development Status :: 4 - Beta`, so the product maturity signal is aligned with the documented public surface and current engineering gates.
 
 ## Product Goal
 
@@ -24,7 +24,7 @@ The first maturity milestone should explicitly define the stable product surface
 
 ### Proposed stable surface
 
-- `create_openai`, `create_azure_openai`, `create_gemini`, `create_vertex`
+- `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`
 - `generate_text`, `stream_text`
 - `generate_object`, `stream_object`
 - `generate_grounded_text`
@@ -196,6 +196,7 @@ Goal: narrow the support promise until the product story is honest and defendabl
 1. Define tier-1 providers.
    Proposed tier-1:
    - OpenAI
+   - Anthropic
    - Azure OpenAI
    - Gemini
    - Vertex
@@ -350,4 +351,4 @@ We can consider the SDK mature enough to market for final production APIs when a
 - production API examples exist and are maintained
 - observability guidance is built-in, not implied
 - release notes and migration paths exist
-- the package can honestly move from `Alpha` to `Beta`, and later to `Stable`
+- the package can honestly operate as a `Beta` release today and later graduate to `Stable`

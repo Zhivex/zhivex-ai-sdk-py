@@ -36,6 +36,7 @@ from .types import (
     StreamToolResultEvent,
     StreamTextDeltaEvent,
     ToolCall,
+    ToolChoice,
     ToolChoiceName,
     ToolExecutionError,
     ToolExecutionContext,
@@ -147,11 +148,11 @@ def _to_request(
     reasoning: ReasoningConfig | None,
     provider_options: dict[str, Any] | None,
     structured_output: Any,
-    tool_choice: str | ToolChoiceName | None,
+    tool_choice: ToolChoice | None,
     retry: RetryOptions,
 ) -> ModelGenerateInput:
     return ModelGenerateInput(
-        messages=messages,
+        messages=list(messages),
         tools=tools,
         tool_choice=tool_choice,
         temperature=temperature,
@@ -249,15 +250,15 @@ async def _execute_tools(
         return await _execute_tool(call, tools, timeout_ms=timeout_ms)
 
     if not parallel or len(tool_calls) <= 1:
-        results: list[ToolExecutionResult] = []
+        sequential_results: list[ToolExecutionResult] = []
         for call in tool_calls:
             result = await execute_single(call)
-            results.append(result)
+            sequential_results.append(result)
             if stop_on_error and result.is_error:
                 raise RuntimeError(
                     f'Tool "{result.tool_name}" failed: {(result.error.message if result.error else "Unknown tool error.")}'
                 )
-        return results
+        return sequential_results
 
     results: list[ToolExecutionResult | None] = [None] * len(tool_calls)
     cursor = 0
@@ -339,7 +340,7 @@ async def generate_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
-    tool_choice: str | ToolChoiceName | None = None,
+    tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,
@@ -485,7 +486,7 @@ def stream_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
-    tool_choice: str | ToolChoiceName | None = None,
+    tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,

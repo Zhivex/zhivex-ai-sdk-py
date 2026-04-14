@@ -71,7 +71,7 @@ jobs:
 
       - name: Run tests with coverage
         if: matrix.python-version == '3.11'
-        run: python -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=79 -q
+        run: python -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
 
       - name: Run tests
         if: matrix.python-version != '3.11'

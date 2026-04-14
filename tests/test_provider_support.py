@@ -22,7 +22,12 @@ from zhivex_ai import (
     create_qwen,
     create_vertex,
 )
-from zhivex_ai.provider_support import build_provider_support_rows, render_provider_support_markdown
+from zhivex_ai.provider_support import (
+    TIER_1_PROVIDERS,
+    build_provider_support_rows,
+    get_tier_1_provider_rows,
+    render_provider_support_markdown,
+)
 
 
 class _FakeBedrockClient:
@@ -50,10 +55,10 @@ class ProviderSupportTests(TestCase):
         native = {row.provider: row.native_support for row in rows}
 
         self.assertEqual(tiers["openai"], ("portable", True))
+        self.assertEqual(tiers["anthropic"], ("portable", True))
         self.assertEqual(tiers["azure-openai"], ("portable", True))
         self.assertEqual(tiers["gemini"], ("portable", True))
         self.assertEqual(tiers["vertex"], ("portable", True))
-        self.assertEqual(tiers["anthropic"], ("native-only", False))
         self.assertEqual(tiers["bedrock"], ("native-only", False))
         self.assertEqual(tiers["openrouter"], ("native-only", False))
         self.assertEqual(tiers["qwen"], ("compatibility", False))
@@ -68,16 +73,37 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["anthropic"].files)
 
         markdown = render_provider_support_markdown(rows)
+        self.assertIn("### Tier-1 Providers", markdown)
+        self.assertIn("- `openai`", markdown)
+        self.assertIn("- `vertex`", markdown)
         self.assertIn("### Portable Support", markdown)
         self.assertIn("| openai | portable | Yes |", markdown)
-        self.assertIn("| anthropic | native-only | No |", markdown)
+        self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
 
+    def test_tier_1_provider_contract_is_explicit(self) -> None:
+        rows = build_provider_support_rows(
+            [
+                create_openai(api_key="test"),
+                create_azure_openai(api_key="test", endpoint="https://example.openai.azure.com"),
+                create_anthropic(api_key="test"),
+                create_gemini(api_key="test"),
+                create_vertex(access_token="test", project_id="project"),
+            ]
+        )
+
+        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex"))
+        tier_1_rows = get_tier_1_provider_rows(rows)
+
+        self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))
+        self.assertTrue(all(row.tier == "portable" for row in tier_1_rows))
+        self.assertTrue(all(row.portable_badge for row in tier_1_rows))
+
     def test_non_portable_provider_rejects_portable_model_construction(self) -> None:
-        provider = create_anthropic(api_key="test")
+        provider = create_bedrock(client=_FakeBedrockClient())
 
         with self.assertRaises(UnsupportedFeatureError):
-            provider("claude-sonnet-4-20250514")
+            provider("anthropic.claude-sonnet-4")
 
-        native_model = provider.native.language_model("claude-sonnet-4-20250514")
-        self.assertEqual(native_model.provider, "anthropic")
+        native_model = provider.native.language_model("anthropic.claude-sonnet-4")
+        self.assertEqual(native_model.provider, "bedrock")

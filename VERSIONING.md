@@ -6,6 +6,7 @@ Related documents:
 
 - [README.md](./README.md)
 - [STABILITY.md](./STABILITY.md)
+- [SUPPORT.md](./SUPPORT.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 
 ## Policy
@@ -43,4 +44,4 @@ Experimental APIs are intended for evaluation. They should be consumed behind an
 
 ## Current maturity target
 
-This policy prepares the SDK for a future move from `Alpha` to `Beta` without changing the package classifier yet. The goal of this phase is to establish predictable expectations before tightening the technical gates further.
+This policy now governs the current `Beta` phase of the SDK. The goal of this phase is to keep the documented stable surface predictable while continuing to tighten provider contracts, support policy, and release discipline on the path toward a future stable release.

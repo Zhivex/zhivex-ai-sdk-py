@@ -1185,7 +1185,7 @@ def create_anthropic(
             retrieval=True,
             transcription=False,
             speech=False,
-            portable_badge=False,
-            tier="native-only",
+            portable_badge=True,
+            tier="portable",
         ),
     )

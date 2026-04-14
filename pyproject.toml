@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.4.0"
+version = "0.5.0"
 description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 keywords = ["ai", "agent", "agents", "llm", "sdk", "multi-agent", "tools", "orchestration"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -23,7 +23,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 authors = [
-  { name = "Miguel Ortiz" }
+  { name = "Zhivex" }
 ]
 dependencies = [
   "httpx>=0.27.0",
@@ -95,6 +95,9 @@ files = [
   "src/zhivex_ai/__init__.py",
   "src/zhivex_ai/errors.py",
   "src/zhivex_ai/gateway.py",
+  "src/zhivex_ai/generate_object.py",
+  "src/zhivex_ai/generate_text.py",
+  "src/zhivex_ai/middleware.py",
   "src/zhivex_ai/runtime.py",
   "src/zhivex_ai/transport.py",
 ]

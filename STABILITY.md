@@ -14,7 +14,7 @@ Related documents:
 
 These APIs are the supported public contract for application code and production integrations:
 
-- Provider factories: `create_openai`, `create_azure_openai`, `create_gemini`, `create_vertex`
+- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
@@ -52,8 +52,13 @@ Experimental areas may change faster than the rest of the SDK. Production adopte
 The current tier-1 provider story for the stable surface is:
 
 - OpenAI
+- Anthropic
 - Azure OpenAI
 - Gemini
 - Vertex
+
+In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, and support-matrix contract checks.
+
+Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 
 Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind.

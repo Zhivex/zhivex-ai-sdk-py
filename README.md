@@ -29,11 +29,11 @@ Zhivex AI SDK gives you a common agent runtime and model contract so your applic
 
 ## Stability And Support
 
-Zhivex AI SDK is still published as an alpha package, but its public surface is now documented with explicit stability levels and versioning rules.
+Zhivex AI SDK is now published as a beta package with a documented stable surface, explicit stability levels, and versioning rules for downstream integrators.
 
-Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface, and treat beta and experimental areas according to their compatibility guarantees.
+Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations and release communication.
+See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
 ## Highlights
 
@@ -60,15 +60,25 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
 
-For production API work, the current tier-1 provider story for the stable surface is OpenAI, Azure OpenAI, Gemini, and Vertex. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
+For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
+
+### Tier-1 Providers
+
+These providers back the stable surface for production API work in this SDK today:
+
+- `openai`
+- `anthropic`
+- `azure-openai`
+- `gemini`
+- `vertex`
 
 ### Portable Support
 
 | Provider | Tier | Portable Badge | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Retrieval | Transcription | Speech |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | native-only | No | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No |
+| anthropic | portable | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No |
 | azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
 | gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -100,9 +110,11 @@ Tool support now follows the same rule everywhere:
 
 - The portable layer accepts only the SDK-owned contract. It rejects `provider_options` and any provider-managed tool payloads.
 - Provider-specific hosted tools, raw Responses settings, Gemini built-in tools, and similar knobs must go through `provider.native.*`.
-- OpenAI and Azure OpenAI are the most complete portable implementations in this SDK today.
+- Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
+- Anthropic is part of the tier-1 text-generation story in this SDK. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
+- OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
-- Anthropic, Bedrock, and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
+- Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
 
 ## Installation
@@ -283,7 +295,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Anthropic grounding is currently native-only:
+Anthropic grounding is also available on the portable tier:
 
 ```python
 import asyncio
@@ -295,7 +307,7 @@ async def main() -> None:
     anthropic = create_anthropic()
 
     result = await generate_grounded_text(
-        model=anthropic.native.grounded_language_model("claude-sonnet-4-20250514"),
+        model=anthropic.grounded_language_model("claude-sonnet-4-20250514"),
         prompt="Find one recent fact about AI infrastructure.",
     )
 
@@ -368,7 +380,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Reusing a previously uploaded provider file through a native-only provider:
+Reusing a previously uploaded Anthropic file through the native file flow:
 
 ```python
 import asyncio

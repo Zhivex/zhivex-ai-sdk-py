@@ -29,6 +29,7 @@ make dev
 For production-facing API servers:
 
 - import supported APIs from `zhivex_ai`
+- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex
 - validate request bodies with Pydantic
 - pass `timeout_ms` explicitly from the API layer into SDK calls
 - map SDK exceptions into stable HTTP error responses
@@ -76,4 +77,6 @@ When you want fallback routing in the API layer:
 - return the selected provider and model in the JSON response
 - treat routing as application policy, not client policy
 
-The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set.
+The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. Anthropic is now part of the tier-1 text-generation story as well.
+
+For the strongest compatibility story, prefer tier-1 providers for the API paths you want to treat as part of your long-term contract.

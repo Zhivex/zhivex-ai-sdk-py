@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from .providers.base import ProviderBundle
 from .types import NativeSupport, PortableProviderTier, PortableSupport
 
+TIER_1_PROVIDERS = ("openai", "anthropic", "azure-openai", "gemini", "vertex")
+
 
 @dataclass(slots=True)
 class ProviderSupportRow:
@@ -31,8 +33,14 @@ def build_provider_support_rows(providers: Mapping[str, ProviderBundle] | Iterab
     return sorted(rows, key=lambda row: row.provider)
 
 
+def get_tier_1_provider_rows(rows: Iterable[ProviderSupportRow]) -> list[ProviderSupportRow]:
+    row_map = {row.provider: row for row in rows}
+    return [row_map[provider] for provider in TIER_1_PROVIDERS if provider in row_map]
+
+
 def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
     materialized = list(rows)
+    tier_1_rows = get_tier_1_provider_rows(materialized)
     portable_headers = [
         "Provider",
         "Tier",
@@ -104,6 +112,12 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
     )
     return "\n".join(
         [
+            "### Tier-1 Providers",
+            "",
+            "These providers back the stable surface for production API work in this SDK today:",
+            "",
+            *[f"- `{row.provider}`" for row in tier_1_rows],
+            "",
             "### Portable Support",
             "",
             portable_table,

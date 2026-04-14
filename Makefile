@@ -10,7 +10,7 @@ test:
 	$(PYTHON) -m pytest -q
 
 test-cov:
-	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=79 -q
+	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
 
 lint:
 	$(PYTHON) -m ruff check src tests examples

@@ -16,12 +16,15 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (
     FilePart,
     UnsupportedFeatureError,
+    ValidationError,
     anthropic_code_execution_tool,
     anthropic_mcp_server,
     anthropic_web_search_tool,
     create_anthropic,
     generate_grounded_text,
+    generate_object,
     generate_text,
+    stream_text,
     tool,
 )
 from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, StructuredOutputConfig, TextPart, ToolChoiceName
@@ -52,6 +55,118 @@ class FakeResponse:
 
 
 class AnthropicProviderTests(IsolatedAsyncioTestCase):
+    async def test_anthropic_portable_generate_text_supports_tier_one_path(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "portable ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 2, "output_tokens": 2},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await generate_text(model=provider("claude-sonnet-4-20250514"), prompt="hello")
+
+        self.assertEqual(result.text, "portable ok")
+
+    async def test_anthropic_portable_streaming_and_structured_output_work(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            if stream:
+                return FakeResponse(
+                    status_code=200,
+                    body_text=(
+                        'event: content_block_delta\n'
+                        'data: {"delta":{"type":"text_delta","text":"hello "}}\n\n'
+                        'event: content_block_delta\n'
+                        'data: {"delta":{"type":"text_delta","text":"world"}}\n\n'
+                        'event: message_delta\n'
+                        'data: {"delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":2,"output_tokens":2}}\n\n'
+                        'event: message_stop\n'
+                        'data: {"stop_reason":"end_turn"}\n'
+                    ),
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": '{"answer":"portable json"}'}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 2, "output_tokens": 3},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+
+        streamed = stream_text(model=provider("claude-sonnet-4-20250514"), prompt="hello")
+        streamed_result = await streamed.collect()
+        structured = await generate_object(
+            model=provider("claude-sonnet-4-20250514"),
+            prompt="return json",
+            schema={"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]},
+        )
+
+        self.assertEqual(streamed_result.text, "hello world")
+        self.assertEqual(structured.object["answer"], "portable json")
+        self.assertEqual(requests[1]["output_config"]["format"]["type"], "json_schema")
+
+    async def test_anthropic_portable_grounded_generation_is_supported(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srv_1",
+                            "content": [
+                                {
+                                    "type": "web_search_result",
+                                    "url": "https://example.com/portable",
+                                    "title": "Portable Source",
+                                }
+                            ],
+                        },
+                        {"type": "text", "text": "grounded portable"},
+                    ],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 2, "output_tokens": 2},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await generate_grounded_text(
+            model=provider.grounded_language_model("claude-sonnet-4-20250514"),
+            prompt="find one fact",
+        )
+
+        self.assertEqual(result.text, "grounded portable")
+        self.assertEqual(result.sources[0].url, "https://example.com/portable")
+
+    async def test_anthropic_portable_models_reject_provider_options(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(status_code=200, payload={})
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+
+        with self.assertRaises(ValidationError):
+            await generate_text(
+                model=provider("claude-sonnet-4-20250514"),
+                prompt="hello",
+                provider_options={"tools": [anthropic_web_search_tool()]},
+            )
+
     async def test_anthropic_tool_call_roundtrip(self) -> None:
         requests: list[dict[str, Any]] = []
         calls = 0

@@ -14,6 +14,7 @@ import zhivex_ai
 
 STABLE_EXPORTS = {
     "create_openai",
+    "create_anthropic",
     "create_azure_openai",
     "create_gemini",
     "create_vertex",
@@ -64,16 +65,23 @@ class PublicContractTests(TestCase):
     def test_core_docs_link_to_each_other(self) -> None:
         readme = (ROOT / "README.md").read_text("utf-8")
         stability = (ROOT / "STABILITY.md").read_text("utf-8")
+        support = (ROOT / "SUPPORT.md").read_text("utf-8")
         versioning = (ROOT / "VERSIONING.md").read_text("utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text("utf-8")
 
         self.assertIn("[STABILITY.md](./STABILITY.md)", readme)
         self.assertIn("[VERSIONING.md](./VERSIONING.md)", readme)
+        self.assertIn("[SUPPORT.md](./SUPPORT.md)", readme)
         self.assertIn("[CHANGELOG.md](./CHANGELOG.md)", readme)
 
         self.assertIn("[README.md](./README.md)", stability)
         self.assertIn("[VERSIONING.md](./VERSIONING.md)", stability)
         self.assertIn("[CHANGELOG.md](./CHANGELOG.md)", stability)
+
+        self.assertIn("[README.md](./README.md)", support)
+        self.assertIn("[STABILITY.md](./STABILITY.md)", support)
+        self.assertIn("[VERSIONING.md](./VERSIONING.md)", support)
+        self.assertIn("[CHANGELOG.md](./CHANGELOG.md)", support)
 
         self.assertIn("[README.md](./README.md)", versioning)
         self.assertIn("[STABILITY.md](./STABILITY.md)", versioning)
@@ -86,3 +94,11 @@ class PublicContractTests(TestCase):
     def test_readme_keeps_realtime_marked_as_experimental(self) -> None:
         readme = (ROOT / "README.md").read_text("utf-8")
         self.assertIn("Experimental realtime/live voice sessions plus `stream_live_agent()`", readme)
+
+    def test_beta_package_signal_is_consistent_in_metadata_and_docs(self) -> None:
+        readme = (ROOT / "README.md").read_text("utf-8")
+        pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
+
+        self.assertIn("beta package", readme)
+        self.assertIn('version = "0.5.0"', pyproject)
+        self.assertIn('Development Status :: 4 - Beta', pyproject)
