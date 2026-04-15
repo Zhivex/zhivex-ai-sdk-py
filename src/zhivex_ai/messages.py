@@ -4,15 +4,18 @@ import json
 from dataclasses import is_dataclass
 from typing import Any
 
-from .errors import UnsupportedFeatureError
+from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
     ContentPart,
+    FilePart,
     FinishReason,
     GenerateResult,
     ImagePart,
     LanguageModel,
+    MCPToolConfig,
     MessageRole,
     ModelMessage,
+    RemoteHTTPToolConfig,
     TextPart,
     ToolCall,
     ToolCallPart,
@@ -63,6 +66,10 @@ def get_text_from_messages(messages: list[ModelMessage]) -> str:
     return "".join(get_text_from_parts(message.parts) for message in messages if message.role == "assistant")
 
 
+def get_text_from_result(result: GenerateResult) -> str:
+    return get_text_from_messages(result_messages(result))
+
+
 def _to_json_compatible(value: Any) -> Any:
     if is_dataclass(value):
         return {k: _to_json_compatible(v) for k, v in value.__dict__.items()}
@@ -84,12 +91,20 @@ def tool(
     description: str | None = None,
     schema: Any = None,
     execute: Any = None,
+    input_examples: list[Any] | None = None,
+    strict: bool | None = None,
+    defer_loading: bool | None = None,
+    eager_input_streaming: bool | None = None,
+    allowed_callers: list[str] | None = None,
+    cache_control: dict[str, Any] | None = None,
     tags: list[str] | None = None,
     requires_approval: bool | None = None,
     permissions: list[str] | None = None,
     source: ToolSource = "local",
     metadata: dict[str, Any] | None = None,
     supports_streaming: bool = False,
+    remote_config: RemoteHTTPToolConfig | None = None,
+    mcp_config: MCPToolConfig | None = None,
 ) -> ToolDefinition:
     if definition is not None:
         return definition
@@ -97,17 +112,60 @@ def tool(
         raise ValueError('Pass either an existing ToolDefinition or at least a "name".')
     if source == "local" and execute is None:
         raise ValueError('Local tools require an "execute" callable.')
+    if source == "remote" and remote_config is None:
+        raise ValueError('Remote tools require a "remote_config".')
+    if source == "mcp" and mcp_config is None:
+        raise ValueError('MCP tools require an "mcp_config".')
     return ToolDefinition(
         name=name,
         description=description,
         schema=schema,
         execute=execute,
+        input_examples=[serialize_json_value(item) for item in (input_examples or [])],
+        strict=strict,
+        defer_loading=defer_loading,
+        eager_input_streaming=eager_input_streaming,
+        allowed_callers=list(allowed_callers or []),
+        cache_control=serialize_json_value(cache_control) if cache_control is not None else None,
         tags=list(tags or []),
         requires_approval=requires_approval,
         permissions=list(permissions or []),
         source=source,
         metadata=dict(metadata or {}),
         supports_streaming=supports_streaming,
+        remote_config=remote_config,
+        mcp_config=mcp_config,
+    )
+
+
+def remote_tool(
+    *,
+    name: str,
+    url: str,
+    schema: Any,
+    description: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout_ms: int | None = None,
+    tags: list[str] | None = None,
+    requires_approval: bool | None = None,
+    permissions: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ToolDefinition:
+    return tool(
+        name=name,
+        description=description,
+        schema=schema,
+        execute=None,
+        tags=tags,
+        requires_approval=requires_approval,
+        permissions=permissions,
+        source="remote",
+        metadata=metadata,
+        remote_config=RemoteHTTPToolConfig(
+            url=url,
+            headers=dict(headers or {}),
+            timeout_ms=timeout_ms,
+        ),
     )
 
 
@@ -126,6 +184,29 @@ def normalize_finish_reason(reason: str | None) -> FinishReason | None:
     if lowered == "error":
         return "error"
     return "unknown"
+
+
+def validate_file_part(part: FilePart) -> None:
+    sources = [
+        name
+        for name, value in (
+            ("data", part.data),
+            ("text", part.text),
+            ("document_content", part.document_content),
+            ("file_id", part.file_id),
+            ("file_uri", part.file_uri),
+            ("url", part.url),
+        )
+        if value
+    ]
+    if len(sources) != 1:
+        raise ValidationError(
+            'FilePart requires exactly one source: "data", "text", "document_content", "file_id", "file_uri", or "url".'
+        )
+
+    media_type = (part.media_type or "").strip().lower()
+    if sources == ["data"] and not media_type:
+        raise ValidationError('Inline FilePart values require "media_type".')
 
 
 def result_messages(result: GenerateResult) -> list[ModelMessage]:
@@ -149,6 +230,8 @@ def validate_message_parts(model: LanguageModel, messages: list[ModelMessage]) -
                 raise UnsupportedFeatureError(
                     f'Model "{model.provider}/{model.model_id}" does not support file inputs.'
                 )
+            if part.type == "file":
+                validate_file_part(part)
             if part.type in {"tool-call", "tool-result"} and not model.capabilities.tools:
                 raise UnsupportedFeatureError(
                     f'Model "{model.provider}/{model.model_id}" does not support tool calling.'

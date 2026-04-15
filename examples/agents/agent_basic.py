@@ -1,4 +1,5 @@
 import asyncio
+from pydantic import BaseModel, ConfigDict
 
 from zhivex_ai import (
     Agent,
@@ -9,23 +10,28 @@ from zhivex_ai import (
 )
 
 
+class DelegateResearchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: str
+
+
 async def main() -> None:
     provider = create_openai()
     researcher = Agent(
         name="researcher",
         instructions="You are a concise research assistant. Answer delegated tasks directly.",
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
     )
     triage = Agent(
         name="triage",
         instructions="Delegate background research work to the researcher agent.",
-        model=provider("gpt-4o-mini"),
+        model=provider("gpt-5.4-mini"),
         tools={
             "delegate_research": tool(
                 name="delegate_research",
                 description="Delegates the current task to the researcher agent.",
-                schema=dict[str, str],
-                execute=lambda input: handoff_to("researcher", input=input["task"]),
+                schema=DelegateResearchInput,
+                execute=lambda input: handoff_to("researcher", input=input.task),
             )
         },
         subagents={"researcher": researcher},

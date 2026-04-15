@@ -84,6 +84,11 @@ class RateLimitedModel(WorkingModel):
         raise ProviderHTTPError("OpenAI request failed with status 429.", 429)
 
 
+class NonRetryableHTTPModel(WorkingModel):
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        raise ProviderHTTPError("OpenAI request failed with status 503.", 503, retryable=False)
+
+
 class StreamingModel(WorkingModel):
     async def stream(self, input: ModelGenerateInput):
         async def generator():
@@ -147,6 +152,34 @@ class GatewayTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts[0].provider, "openai")
         self.assertEqual(result.route_decision.ordered_targets[0].provider, "openai")
 
+    async def test_gateway_on_attempt_emits_structured_attempt_payloads(self) -> None:
+        attempt_events: list[dict[str, object]] = []
+
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: FailingModel()),
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: WorkingModel()),
+                },
+                max_retries=0,
+                on_attempt=lambda payload: attempt_events.append(payload),
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+        )
+
+        self.assertEqual(result.provider_used, "anthropic")
+        self.assertEqual(attempt_events[0]["provider"], "openai")
+        self.assertEqual(attempt_events[0]["retry"], 0)
+        self.assertEqual(attempt_events[0]["targetRank"], 0)
+        self.assertIn("latencyMs", attempt_events[1])
+        self.assertEqual(attempt_events[1]["ok"], False)
+        self.assertEqual(attempt_events[2]["provider"], "anthropic")
+
     async def test_gateway_skips_non_vision_targets_instead_of_dropping_images(self) -> None:
         gateway = create_gateway(
             GatewayConfig(
@@ -206,6 +239,23 @@ class GatewayTests(IsolatedAsyncioTestCase):
             )
         self.assertTrue(context.exception.retryable)
         self.assertIn("429", str(context.exception))
+
+    async def test_gateway_respects_explicit_non_retryable_http_error(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: NonRetryableHTTPModel()),
+                },
+                max_retries=0,
+            )
+        )
+        with self.assertRaises(GatewayError) as context:
+            await gateway.generate(
+                messages=[GatewayMessage(role="user", content="hello")],
+                primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+            )
+        self.assertFalse(context.exception.retryable)
+        self.assertIn("503", str(context.exception))
 
     async def test_gateway_stream_text_collects_result(self) -> None:
         gateway = create_gateway(

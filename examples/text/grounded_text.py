@@ -6,7 +6,7 @@ from zhivex_ai import create_openai, generate_grounded_text
 async def main() -> None:
     provider = create_openai()
     result = await generate_grounded_text(
-        model=provider.grounded_language_model("gpt-4o-search-preview"),
+        model=provider.grounded_language_model("gpt-5.4-mini"),
         prompt="Find one recent fact about Buenos Aires tech news.",
     )
 

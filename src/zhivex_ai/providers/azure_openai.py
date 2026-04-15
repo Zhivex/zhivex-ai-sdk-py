@@ -4,6 +4,9 @@ import os
 
 from .._http import Fetcher
 from ..errors import ConfigurationError
+from ..realtime import RealtimeConnectionFactory
+from ..types import PortableSupport
+from .base import create_provider_bundle
 from .openai_compat import create_openai_compatible_provider
 
 
@@ -13,6 +16,9 @@ def create_azure_openai(
     endpoint: str | None = None,
     api_version: str = "2024-10-21",
     fetch: Fetcher | None = None,
+    realtime_url: str | None = None,
+    browser_token_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
     resolved_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
     resolved_endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -22,7 +28,7 @@ def create_azure_openai(
         raise ConfigurationError("Missing Azure OpenAI endpoint.")
     # Azure OpenAI v1 uses versionless /openai/v1 endpoints and rejects api-version query params.
     base_url = f"{resolved_endpoint.rstrip('/')}/openai/v1"
-    return create_openai_compatible_provider(
+    native = create_openai_compatible_provider(
         provider_name="azure-openai",
         env_var="AZURE_OPENAI_API_KEY",
         api_key=resolved_key,
@@ -32,4 +38,26 @@ def create_azure_openai(
         auth_prefix="",
         supports_audio=True,
         supports_grounding=True,
+        supports_realtime=True,
+        realtime_url=realtime_url,
+        browser_token_url=browser_token_url,
+        realtime_connection_factory=realtime_connection_factory,
+        default_grounding_tool={"type": "web_search_preview"},
+    )
+    return create_provider_bundle(
+        name="azure-openai",
+        native=native,
+        portable_support=PortableSupport(
+            text_generation=True,
+            streaming=True,
+            structured_output=True,
+            tools=True,
+            embeddings=True,
+            grounding=True,
+            retrieval=True,
+            transcription=True,
+            speech=True,
+            portable_badge=True,
+            tier="portable",
+        ),
     )

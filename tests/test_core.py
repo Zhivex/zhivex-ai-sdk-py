@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable
 import sys
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from pydantic import BaseModel
@@ -13,18 +14,24 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import (
+    FilePart,
     ModelCapabilities,
     ModelMessage,
+    ParseError,
     ReasoningConfig,
     ToolChoiceName,
     ToolExecutionOptions,
+    UnsupportedFeatureError,
+    ValidationError,
     create_text_message,
     generate_grounded_text,
     generate_object,
     generate_text,
+    stream_object,
     stream_text,
     tool,
 )
+from zhivex_ai.schema import create_schema_adapter
 from zhivex_ai.types import (
     GenerateResult,
     ModelGenerateInput,
@@ -182,7 +189,50 @@ class FakeGroundedModel:
         )
 
 
+class FakeFileLanguageModel(FakeLanguageModel):
+    capabilities = replace(FakeLanguageModel.capabilities, files=True)
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(messages=[create_text_message("assistant", "ok")], text="ok")
+
+
+class FakePromptedObjectModel(FakeLanguageModel):
+    capabilities = replace(FakeLanguageModel.capabilities, structured_output=False)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_input: ModelGenerateInput | None = None
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self.last_input = input
+        return GenerateResult(text='{"city":"Madrid","forecast":"sunny"}')
+
+
+class FakeObjectStreamingModel(FakeLanguageModel):
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            yield StreamTextDeltaEvent(text_delta='{"city":"Madrid",')
+            yield StreamTextDeltaEvent(text_delta='"forecast":"sunny"}')
+            yield StreamFinishEvent(
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=4, output_tokens=4, total_tokens=8),
+            )
+
+        return generator()
+
+
 class CoreTests(IsolatedAsyncioTestCase):
+    def test_schema_adapter_supports_raw_json_schema(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+            "additionalProperties": False,
+        }
+        adapter = create_schema_adapter(schema)
+        self.assertEqual(adapter.json_schema(), schema)
+        self.assertEqual(adapter.validate_python({"city": "Madrid"}), {"city": "Madrid"})
+
     async def test_generate_text_executes_tools(self) -> None:
         model = FakeLanguageModel()
         result = await generate_text(
@@ -204,11 +254,79 @@ class CoreTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.usage.output_tokens, 6)
         self.assertEqual(result.usage.total_tokens, 24)
 
+    async def test_generate_text_returns_only_the_latest_assistant_reply(self) -> None:
+        class FinalReplyModel(FakeLanguageModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(text="new reply")
+
+        result = await generate_text(
+            model=FinalReplyModel(),
+            messages=[
+                create_text_message("user", "hi"),
+                create_text_message("assistant", "old reply"),
+                create_text_message("user", "what now?"),
+            ],
+        )
+
+        self.assertEqual(result.text, "new reply")
+
     async def test_generate_object_parses_schema(self) -> None:
         model = FakeLanguageModel()
         result = await generate_object(model=model, prompt="Return JSON", schema=Forecast)
         self.assertEqual(result.object.city, "Madrid")
         self.assertEqual(result.object.forecast, "sunny")
+
+    async def test_generate_object_ignores_prior_assistant_history_when_parsing(self) -> None:
+        class FinalJsonModel(FakeLanguageModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(text='{"city":"Madrid","forecast":"sunny"}')
+
+        result = await generate_object(
+            model=FinalJsonModel(),
+            messages=[
+                create_text_message("user", "hi"),
+                create_text_message("assistant", '{"city":"Paris","forecast":"rainy"}'),
+                create_text_message("user", "return Madrid weather"),
+            ],
+            schema=Forecast,
+        )
+
+        self.assertEqual(result.text, '{"city":"Madrid","forecast":"sunny"}')
+        self.assertEqual(result.object.city, "Madrid")
+        self.assertEqual(result.object.forecast, "sunny")
+
+    async def test_generate_object_auto_falls_back_to_prompted_mode(self) -> None:
+        model = FakePromptedObjectModel()
+
+        result = await generate_object(model=model, prompt="Return JSON", schema=Forecast)
+
+        self.assertEqual(result.object_mode, "prompted")
+        self.assertIsNotNone(model.last_input)
+        self.assertIsNone(model.last_input.structured_output)
+        self.assertIn("Return JSON", model.last_input.messages[-1].parts[0].text)
+        self.assertIn("Return only valid JSON matching the requested schema.", model.last_input.messages[-1].parts[0].text)
+
+    async def test_generate_object_rejects_native_mode_when_unsupported(self) -> None:
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_object(model=FakePromptedObjectModel(), prompt="Return JSON", schema=Forecast, mode="native")
+
+    async def test_generate_object_raises_parse_error_for_invalid_json(self) -> None:
+        class InvalidJsonModel(FakeLanguageModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(text="not-json")
+
+        with self.assertRaises(ParseError):
+            await generate_object(model=InvalidJsonModel(), prompt="Return JSON", schema=Forecast)
+
+    async def test_stream_object_emits_partial_and_complete_events(self) -> None:
+        result = stream_object(model=FakeObjectStreamingModel(), prompt="Return JSON", schema=Forecast)
+
+        partials = [item async for item in result.partial_object_stream()]
+        final = await result.collect()
+
+        self.assertEqual(partials[0]["city"], "Madrid")
+        self.assertEqual(final.object.city, "Madrid")
+        self.assertEqual(final.object_mode, "native")
 
     async def test_stream_text_collects_text(self) -> None:
         model = FakeLanguageModel()
@@ -216,6 +334,50 @@ class CoreTests(IsolatedAsyncioTestCase):
         final = await result.collect()
         self.assertEqual(final.text, "hello world")
         self.assertEqual(final.usage.total_tokens, 5)
+
+    async def test_generate_text_accepts_pdf_file_part_with_single_source(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[
+                ModelMessage(
+                    role="user",
+                    parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="statement.pdf")],
+                )
+            ],
+        )
+        self.assertEqual(result.text, "ok")
+
+    async def test_generate_text_rejects_file_part_with_multiple_sources(self) -> None:
+        with self.assertRaises(ValidationError) as context:
+            await generate_text(
+                model=FakeFileLanguageModel(),
+                messages=[
+                    ModelMessage(
+                        role="user",
+                        parts=[FilePart(data="JVBERi0xLjQK", media_type="application/pdf", file_id="file_123")],
+                    )
+                ],
+            )
+
+        self.assertIn("exactly one source", str(context.exception))
+
+    async def test_generate_text_accepts_non_pdf_file_parts(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[
+                ModelMessage(role="user", parts=[FilePart(data="hello", media_type="text/plain", filename="notes.txt")])
+            ],
+        )
+
+        self.assertEqual(result.text, "ok")
+
+    async def test_generate_text_allows_file_references_without_media_type(self) -> None:
+        result = await generate_text(
+            model=FakeFileLanguageModel(),
+            messages=[ModelMessage(role="user", parts=[FilePart(file_id="file_123", filename="statement.pdf")])],
+        )
+
+        self.assertEqual(result.text, "ok")
 
     async def test_stream_text_aggregates_usage_across_tool_steps(self) -> None:
         model = FakeStreamingToolModel()

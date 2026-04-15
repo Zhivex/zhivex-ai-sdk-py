@@ -36,14 +36,14 @@ def create_model_catalog(entries: list[ModelCatalogEntry]) -> ModelCatalog:
 
 default_model_catalog = create_model_catalog(
     [
-        ModelCatalogEntry("openai", "gpt-4o-mini", cost_per_1k_tokens=0.6, recommended_for=["chat", "tools", "speed"]),
-        ModelCatalogEntry("azure-openai", "gpt-4o-mini", cost_per_1k_tokens=0.6, recommended_for=["chat", "tools"]),
-        ModelCatalogEntry("anthropic", "claude-3-5-sonnet", cost_per_1k_tokens=3, recommended_for=["reasoning", "tools"]),
+        ModelCatalogEntry("openai", "gpt-5.4-mini", aliases=["gpt-4o-mini"], recommended_for=["chat", "tools", "speed"]),
+        ModelCatalogEntry("azure-openai", "gpt-5.4-mini", aliases=["gpt-4o-mini"], recommended_for=["chat", "tools"]),
+        ModelCatalogEntry("anthropic", "claude-sonnet-4-20250514", aliases=["claude-sonnet-4"], cost_per_1k_tokens=3, recommended_for=["reasoning", "tools"]),
         ModelCatalogEntry("gemini", "gemini-2.0-flash", cost_per_1k_tokens=0.35, recommended_for=["speed", "vision"]),
         ModelCatalogEntry("vertex", "gemini-2.0-flash", cost_per_1k_tokens=0.35, recommended_for=["speed", "vision"]),
         ModelCatalogEntry("qwen", "qwen-plus", cost_per_1k_tokens=0.8, recommended_for=["chat", "tools", "reasoning"]),
         ModelCatalogEntry("kimi", "kimi-k2-0905-preview", cost_per_1k_tokens=2, recommended_for=["reasoning", "tools"]),
-        ModelCatalogEntry("openrouter", "openai/gpt-4o-mini", cost_per_1k_tokens=0.7, recommended_for=["chat", "tools"]),
+        ModelCatalogEntry("openrouter", "openai/gpt-5.4-mini", aliases=["openai/gpt-4o-mini"], recommended_for=["chat", "tools"]),
         ModelCatalogEntry("bedrock", "anthropic.claude-3-5-sonnet", cost_per_1k_tokens=3, recommended_for=["reasoning"]),
         ModelCatalogEntry("ollama", "llama3.2", cost_per_1k_tokens=0, recommended_for=["chat", "speed"]),
     ]

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .providers.base import resolve_provider_adapter
 from .errors import ProviderHTTPError, ZhivexAIError
 from .generate_object import generate_object, stream_object
 from .generate_text import generate_text, stream_text
@@ -43,6 +44,7 @@ class GatewayAttempt:
     ok: bool
     latency_ms: int
     error_message: str | None = None
+    retryable: bool = False
 
 
 @dataclass(slots=True)
@@ -104,7 +106,7 @@ def _messages_require_vision(messages: list[GatewayMessage]) -> bool:
 
 
 def _target_supports_vision(adapter: Any, target: GatewayModelTarget) -> bool:
-    capabilities = adapter.language_model(target.model_id).capabilities
+    capabilities = resolve_provider_adapter(adapter).language_model(target.model_id).capabilities
     return capabilities.vision and supports_vision_input(target.provider, target.model_id)
 
 
@@ -114,10 +116,10 @@ def gateway_messages_to_model_messages(messages: list[GatewayMessage], system_pr
         from .messages import system
 
         mapped.append(system(system_prompt))
-    from .types import ImagePart, TextPart
+    from .types import ContentPart, ImagePart, TextPart
 
     for message in messages:
-        parts = [TextPart(text=message.content)]
+        parts: list[ContentPart] = [TextPart(text=message.content)]
         parts.extend(ImagePart(image=image.data_url, media_type=image.mime_type) for image in message.images)
         mapped.append(ModelMessage(role=message.role, parts=parts))
     return mapped
@@ -165,7 +167,7 @@ def _order_targets(mode: GatewayRoutingMode, intent: GatewayTaskIntent, primary:
 def _supports_required_capabilities(adapter: Any, target: GatewayModelTarget, required: dict[str, bool] | None) -> bool:
     if not required:
         return True
-    capabilities = adapter.language_model(target.model_id).capabilities
+    capabilities = resolve_provider_adapter(adapter).language_model(target.model_id).capabilities
     mapping = {"structuredOutput": "structured_output", "jsonMode": "json_mode"}
     for key, value in required.items():
         if value is not True:
@@ -201,7 +203,7 @@ def _normalize_error(error: Exception) -> GatewayError:
     if isinstance(error, asyncio.TimeoutError):
         return GatewayError("Gateway attempt timed out.", True)
     if isinstance(error, ProviderHTTPError):
-        return GatewayError(str(error), error.status in {408, 429} or error.status >= 500)
+        return GatewayError(str(error), error.retryable)
     if isinstance(error, OSError):
         return GatewayError(str(error), True)
     message = str(error).lower()
@@ -216,7 +218,7 @@ def _final_gateway_error(attempts: list[GatewayAttempt]) -> GatewayError:
     retryable = False
     for attempt in reversed(attempts):
         if not attempt.ok and attempt.error_message:
-            retryable = any(token in attempt.error_message.lower() for token in ("timed out", "429", "503", "connect"))
+            retryable = attempt.retryable
             break
     summary = "; ".join(
         f"{attempt.provider}/{attempt.model_id}: {attempt.error_message or 'unknown error'}"
@@ -239,6 +241,7 @@ def _attempt_payload(attempt: GatewayAttempt, retry: int, target_rank: int) -> d
         "ok": attempt.ok,
         "latencyMs": attempt.latency_ms,
         "errorMessage": attempt.error_message,
+        "retryable": attempt.retryable,
         "retry": retry,
         "targetRank": target_rank,
     }
@@ -321,7 +324,16 @@ def create_gateway(config: GatewayConfig):
                             error_message = (
                                 f'Gateway attempt timed out for "{target.provider}/{target.model_id}" after {timeout_ms} ms.'
                             )
-                        attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=latency_ms, error_message=str(normalized)))
+                        attempts.append(
+                            GatewayAttempt(
+                                provider=target.provider,
+                                model_id=target.model_id,
+                                ok=False,
+                                latency_ms=latency_ms,
+                                error_message=str(normalized),
+                                retryable=normalized.retryable,
+                            )
+                        )
                         attempts[-1].error_message = error_message
                         if config.on_attempt:
                             await _maybe_await(config.on_attempt(_attempt_payload(attempts[-1], retry, target_index)))
@@ -382,7 +394,7 @@ def create_gateway(config: GatewayConfig):
                 routing_mode=routing_mode,
                 task_intent=task_intent,
                 run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_text(
-                    model=adapter.language_model(target.model_id),
+                    model=resolve_provider_adapter(adapter).language_model(target.model_id),
                     messages=gateway_messages_to_model_messages(messages, system_prompt),
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -426,7 +438,7 @@ def create_gateway(config: GatewayConfig):
                     routing_mode=routing_mode,
                     task_intent=task_intent,
                     run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_text(
-                        model=adapter.language_model(target.model_id),
+                        model=resolve_provider_adapter(adapter).language_model(target.model_id),
                         messages=gateway_messages_to_model_messages(messages, system_prompt),
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -493,7 +505,7 @@ def create_gateway(config: GatewayConfig):
                 routing_mode=routing_mode,
                 task_intent=task_intent,
                 run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: generate_object(
-                    model=adapter.language_model(target.model_id),
+                    model=resolve_provider_adapter(adapter).language_model(target.model_id),
                     messages=gateway_messages_to_model_messages(messages, system_prompt),
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -557,7 +569,7 @@ def create_gateway(config: GatewayConfig):
                     routing_mode=routing_mode,
                     task_intent=task_intent,
                     run=lambda adapter, target, messages, system_prompt, temperature, max_tokens: stream_object(
-                        model=adapter.language_model(target.model_id),
+                        model=resolve_provider_adapter(adapter).language_model(target.model_id),
                         messages=gateway_messages_to_model_messages(messages, system_prompt),
                         temperature=temperature,
                         max_tokens=max_tokens,

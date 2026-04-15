@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 import httpx
 
+_DEFAULT_CLIENTS: dict[float | None, httpx.AsyncClient] = {}
+
 
 class ResponseLike(Protocol):
     status_code: int
@@ -55,11 +57,10 @@ class BufferedResponse:
 
 
 class StreamingResponse:
-    def __init__(self, response: httpx.Response, client: httpx.AsyncClient) -> None:
+    def __init__(self, response: httpx.Response) -> None:
         self.status_code = response.status_code
         self.headers = dict(getattr(response, "headers", {}) or {})
         self._response = response
-        self._client = client
         self._closed = False
         self._body_bytes: bytes | None = None
 
@@ -77,7 +78,6 @@ class StreamingResponse:
             return
         self._closed = True
         await self._response.aclose()
-        await self._client.aclose()
 
     async def json(self) -> Any:
         return httpx.Response(200, content=await self._read_body()).json()
@@ -120,6 +120,22 @@ def _build_request_kwargs(json_body: dict[str, Any] | None, body: Any) -> dict[s
     return {"content": body}
 
 
+def _shared_client(timeout: float | None) -> httpx.AsyncClient:
+    client = _DEFAULT_CLIENTS.get(timeout)
+    if client is not None and not getattr(client, "is_closed", False):
+        return client
+    client = httpx.AsyncClient(timeout=timeout)
+    _DEFAULT_CLIENTS[timeout] = client
+    return client
+
+
+async def aclose_default_clients() -> None:
+    clients = list(_DEFAULT_CLIENTS.values())
+    _DEFAULT_CLIENTS.clear()
+    for client in clients:
+        await client.aclose()
+
+
 async def default_fetch(
     url: str,
     *,
@@ -131,11 +147,11 @@ async def default_fetch(
     stream: bool = False,
 ) -> ResponseLike:
     timeout = None if timeout_ms is None else timeout_ms / 1000
-    client = httpx.AsyncClient(timeout=timeout)
+    client = _shared_client(timeout)
     request = client.build_request(method, url, headers=headers, **_build_request_kwargs(json_body, body))
     response = await client.send(request, stream=stream)
     if stream:
-        return StreamingResponse(response=response, client=client)
+        return StreamingResponse(response=response)
     try:
         body_bytes = await response.aread()
         return BufferedResponse(
@@ -145,4 +161,3 @@ async def default_fetch(
         )
     finally:
         await response.aclose()
-        await client.aclose()

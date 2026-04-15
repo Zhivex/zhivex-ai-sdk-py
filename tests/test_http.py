@@ -58,6 +58,7 @@ class FakeBufferedHTTPResponse(FakeStreamingHTTPResponse):
 
 class FakeAsyncClient:
     last_instance: FakeAsyncClient | None = None
+    instances: list[FakeAsyncClient] = []
 
     def __init__(self, *, timeout: float | None = None) -> None:
         self.timeout = timeout
@@ -66,6 +67,7 @@ class FakeAsyncClient:
         self.request: dict[str, object] | None = None
         self.response = FakeStreamingHTTPResponse()
         FakeAsyncClient.last_instance = self
+        FakeAsyncClient.instances.append(self)
 
     def build_request(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, object]):
         self.request = {"method": method, "url": url, "headers": headers, "json": json}
@@ -98,16 +100,16 @@ class HttpTests(IsolatedAsyncioTestCase):
                 stream=True,
             )
             lines = [line async for line in response.iter_lines()]
+            client = FakeAsyncClient.last_instance
+            assert client is not None
+            self.assertTrue(client.sent_stream)
+            self.assertEqual(client.timeout, 1.234)
+            self.assertEqual(lines, ['data: {"chunk":1}', "", 'data: {"chunk":2}', ""])
+            self.assertTrue(client.response.closed)
+            self.assertFalse(client.closed)
         finally:
+            await http_module.aclose_default_clients()
             http_module.httpx.AsyncClient = original_client
-
-        client = FakeAsyncClient.last_instance
-        assert client is not None
-        self.assertTrue(client.sent_stream)
-        self.assertEqual(client.timeout, 1.234)
-        self.assertEqual(lines, ['data: {"chunk":1}', "", 'data: {"chunk":2}', ""])
-        self.assertTrue(client.response.closed)
-        self.assertTrue(client.closed)
 
     async def test_default_fetch_buffers_non_streaming_requests_and_closes_resources(self) -> None:
         original_client = http_module.httpx.AsyncClient
@@ -121,12 +123,37 @@ class HttpTests(IsolatedAsyncioTestCase):
                 stream=False,
             )
             body_text = await response.text()
+            client = FakeBufferedAsyncClient.last_instance
+            assert client is not None
+            self.assertFalse(client.sent_stream)
+            self.assertEqual(body_text, 'data: {"chunk":1}\n\ndata: {"chunk":2}\n')
+            self.assertTrue(client.response.closed)
+            self.assertFalse(client.closed)
         finally:
+            await http_module.aclose_default_clients()
             http_module.httpx.AsyncClient = original_client
 
-        client = FakeBufferedAsyncClient.last_instance
-        assert client is not None
-        self.assertFalse(client.sent_stream)
-        self.assertEqual(body_text, 'data: {"chunk":1}\n\ndata: {"chunk":2}\n')
-        self.assertTrue(client.response.closed)
-        self.assertTrue(client.closed)
+    async def test_default_fetch_reuses_clients_for_matching_timeouts(self) -> None:
+        original_client = http_module.httpx.AsyncClient
+        http_module.httpx.AsyncClient = FakeBufferedAsyncClient
+        FakeAsyncClient.instances.clear()
+        try:
+            await http_module.default_fetch(
+                "https://example.com/one",
+                headers={"content-type": "application/json"},
+                json_body={"hello": "world"},
+                timeout_ms=500,
+                stream=False,
+            )
+            await http_module.default_fetch(
+                "https://example.com/two",
+                headers={"content-type": "application/json"},
+                json_body={"hello": "again"},
+                timeout_ms=500,
+                stream=False,
+            )
+        finally:
+            await http_module.aclose_default_clients()
+            http_module.httpx.AsyncClient = original_client
+
+        self.assertEqual(len(FakeAsyncClient.instances), 1)

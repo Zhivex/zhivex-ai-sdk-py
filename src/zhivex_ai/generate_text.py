@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .errors import ParseError, UnsupportedFeatureError, ValidationError
 from .messages import (
     create_text_message,
-    get_text_from_messages,
+    get_text_from_result,
     normalize_finish_reason,
     result_messages,
     serialize_json_value,
@@ -23,6 +24,7 @@ from .types import (
     GenerateTextOutput,
     GenerateTextStep,
     LanguageModel,
+    PortableRetrievalConfig,
     ModelGenerateInput,
     ModelMessage,
     ReasoningConfig,
@@ -34,6 +36,7 @@ from .types import (
     StreamToolResultEvent,
     StreamTextDeltaEvent,
     ToolCall,
+    ToolChoice,
     ToolChoiceName,
     ToolExecutionError,
     ToolExecutionContext,
@@ -42,6 +45,12 @@ from .types import (
     ToolSet,
     TokenUsage,
 )
+
+_GEMINI_BUILTIN_SEARCH_TOOLS = {"search", "google_search", "googleSearch"}
+
+
+def _is_provider_managed_tool_call(call: ToolCall) -> bool:
+    return bool(call.provider_metadata.get("provider_managed"))
 
 
 def _validate_reasoning(model: LanguageModel, reasoning: ReasoningConfig | None) -> None:
@@ -90,6 +99,46 @@ def normalize_messages(
     return built
 
 
+def _is_portable_model(model: Any) -> bool:
+    return bool(getattr(model, "portable", False))
+
+
+def _validate_portable_provider_options(model: Any, provider_options: dict[str, Any] | None) -> None:
+    if _is_portable_model(model) and provider_options is not None:
+        raise ValidationError(
+            "Portable foundation APIs do not accept provider_options. "
+            "Use `provider.native.*` models when you need provider-specific configuration."
+        )
+
+
+def _apply_retrieval(
+    messages: list[ModelMessage],
+    retrieval: PortableRetrievalConfig | None,
+) -> list[ModelMessage]:
+    if retrieval is None:
+        return messages
+    if not retrieval.documents:
+        raise ValidationError('The "retrieval.documents" field must include at least one document.')
+    if retrieval.max_documents <= 0:
+        raise ValidationError('The "retrieval.max_documents" field must be positive.')
+    if retrieval.max_document_chars <= 0:
+        raise ValidationError('The "retrieval.max_document_chars" field must be positive.')
+    selected = retrieval.documents[: retrieval.max_documents]
+    sections: list[str] = []
+    for index, document in enumerate(selected, start=1):
+        excerpt = document.text.strip()[: retrieval.max_document_chars]
+        sections.append(
+            f"[Document {index}] id={document.document_id}"
+            + (f" title={document.title}" if document.title else "")
+            + f"\n{excerpt}"
+        )
+    retrieval_message = create_text_message(
+        "system",
+        "Use the following retrieved context when it is relevant.\n\n" + "\n\n".join(sections),
+    )
+    return [retrieval_message, *messages]
+
+
 def _to_request(
     *,
     messages: list[ModelMessage],
@@ -99,11 +148,11 @@ def _to_request(
     reasoning: ReasoningConfig | None,
     provider_options: dict[str, Any] | None,
     structured_output: Any,
-    tool_choice: str | ToolChoiceName | None,
+    tool_choice: ToolChoice | None,
     retry: RetryOptions,
 ) -> ModelGenerateInput:
     return ModelGenerateInput(
-        messages=messages,
+        messages=list(messages),
         tools=tools,
         tool_choice=tool_choice,
         temperature=temperature,
@@ -155,24 +204,34 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
 
 
 def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
+    mode = _tool_callable_mode(execute)
+    if mode == "kwargs":
+        return execute(parsed, context=context)
+    if mode == "positional":
+        return execute(parsed, context)
+    return execute(parsed)
+
+
+@lru_cache(maxsize=256)
+def _tool_callable_mode(execute: Any) -> str:
     try:
         signature = inspect.signature(execute)
     except (TypeError, ValueError):
-        return execute(parsed)
+        return "single"
 
     parameters = list(signature.parameters.values())
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     if any(parameter.name == "context" for parameter in parameters):
-        return execute(parsed, context=context)
+        return "kwargs"
     positional = [
         parameter
         for parameter in parameters
         if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     if len(positional) >= 2:
-        return execute(parsed, context)
-    return execute(parsed)
+        return "positional"
+    return "single"
 
 
 async def _execute_tools(
@@ -191,15 +250,15 @@ async def _execute_tools(
         return await _execute_tool(call, tools, timeout_ms=timeout_ms)
 
     if not parallel or len(tool_calls) <= 1:
-        results: list[ToolExecutionResult] = []
+        sequential_results: list[ToolExecutionResult] = []
         for call in tool_calls:
             result = await execute_single(call)
-            results.append(result)
+            sequential_results.append(result)
             if stop_on_error and result.is_error:
                 raise RuntimeError(
                     f'Tool "{result.tool_name}" failed: {(result.error.message if result.error else "Unknown tool error.")}'
                 )
-        return results
+        return sequential_results
 
     results: list[ToolExecutionResult | None] = [None] * len(tool_calls)
     cursor = 0
@@ -220,6 +279,27 @@ async def _execute_tools(
                 f'Tool "{first_error.tool_name}" failed: {(first_error.error.message if first_error.error else "Unknown tool error.")}'
             )
     return resolved
+
+
+def _raise_for_provider_builtin_tool_calls(
+    model: LanguageModel,
+    tool_calls: list[ToolCall],
+    provider_options: dict[str, Any] | None,
+) -> None:
+    if model.provider != "gemini":
+        return
+    builtin_search_calls = [call for call in tool_calls if call.name in _GEMINI_BUILTIN_SEARCH_TOOLS]
+    if not builtin_search_calls:
+        return
+    if provider_options and provider_options.get("google_search"):
+        raise UnsupportedFeatureError(
+            'Gemini returned an unexpected built-in Google Search tool call while `provider_options={"google_search": True}` '
+            "was enabled. Use `create_gemini().grounded_language_model(...)` when you need grounded sources."
+        )
+    raise UnsupportedFeatureError(
+        'Gemini requested its built-in Google Search tool, but Google Search is opt-in in this SDK. '
+        'Retry with `provider_options={"google_search": True}` or use `create_gemini().grounded_language_model(...)`.'
+    )
 
 
 def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
@@ -248,7 +328,7 @@ def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
     tool_calls: list[ToolCall] = []
     for message in messages:
         for part in message.parts:
-            if part.type == "tool-call":
+            if part.type == "tool-call" and not _is_provider_managed_tool_call(part.tool_call):
                 tool_calls.append(part.tool_call)
     return tool_calls
 
@@ -260,13 +340,14 @@ async def generate_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
-    tool_choice: str | ToolChoiceName | None = None,
+    tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
     provider_options: dict[str, Any] | None = None,
+    retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
     max_retries: int | None = None,
@@ -274,7 +355,9 @@ async def generate_text(
 ) -> GenerateTextOutput:
     steps_limit = max(1, max_steps or 1)
     all_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    all_messages = _apply_retrieval(all_messages, retrieval)
     validate_message_parts(model, all_messages)
+    _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
@@ -306,6 +389,7 @@ async def generate_text(
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
+        _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
         current_results = await _execute_tools(
             step_tool_calls,
             tools,
@@ -320,8 +404,9 @@ async def generate_text(
         raise ParseError("Model did not return a result.")
 
     merged_usage = _merge_usage([step.response.usage for step in steps])
+    final_text = get_text_from_result(final_result)
     return GenerateTextOutput(
-        text=get_text_from_messages(all_messages),
+        text=final_text,
         finish_reason=final_result.finish_reason,
         provider_finish_reason=final_result.provider_finish_reason,
         usage=merged_usage,
@@ -401,20 +486,24 @@ def stream_text(
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
-    tool_choice: str | ToolChoiceName | None = None,
+    tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
     provider_options: dict[str, Any] | None = None,
+    retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> _StreamTextResult:
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
+    base_messages = _apply_retrieval(base_messages, retrieval)
     validate_message_parts(model, base_messages)
+    _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
     if not model.capabilities.streaming:
         raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')
@@ -453,6 +542,8 @@ def stream_text(
                 usage = None
 
                 async for event in stream:
+                    if on_event is not None:
+                        await on_event(event)
                     await broadcast.publish(event)
                     if isinstance(event, StreamTextDeltaEvent):
                         text_buffer += event.text_delta
@@ -489,6 +580,7 @@ def stream_text(
                 step_tool_calls = _extract_tool_calls(response_messages)
                 if not step_tool_calls:
                     break
+                _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
                 current_results = await _execute_tools(
                     step_tool_calls,
                     tools,
@@ -498,12 +590,16 @@ def stream_text(
                 tool_results.extend(current_results)
                 for result in current_results:
                     all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
-                    await broadcast.publish(StreamToolResultEvent(tool_result=result))
+                    tool_result_event = StreamToolResultEvent(tool_result=result)
+                    if on_event is not None:
+                        await on_event(tool_result_event)
+                    await broadcast.publish(tool_result_event)
             if final_result is None:
                 raise ParseError("Model did not return a result.")
             merged_usage = _merge_usage([step.response.usage for step in steps])
+            final_text = get_text_from_result(final_result)
             return GenerateTextOutput(
-                text=get_text_from_messages(all_messages),
+                text=final_text,
                 finish_reason=final_result.finish_reason,
                 provider_finish_reason=final_result.provider_finish_reason,
                 usage=merged_usage,
@@ -512,7 +608,10 @@ def stream_text(
                 tool_results=tool_results,
             )
         except Exception as error:
-            await broadcast.publish(StreamErrorEvent(error=error))
+            error_event = StreamErrorEvent(error=error)
+            if on_event is not None:
+                await on_event(error_event)
+            await broadcast.publish(error_event)
             raise
         finally:
             await broadcast.close()

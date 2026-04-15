@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast
 
 from .errors import ParseError, UnsupportedFeatureError
 from .generate_text import generate_text, stream_text
@@ -17,24 +16,27 @@ from .types import (
     StreamObjectCompleteEvent,
     StreamObjectDeltaEvent,
     StreamObjectPartialEvent,
+    StreamTextDeltaEvent,
     StructuredOutputConfig,
 )
 
+ObjectMode = Literal["native", "prompted"]
 
-def _resolve_object_mode(requested_mode: str, native_allowed: bool) -> str:
+
+def _resolve_object_mode(requested_mode: str, native_allowed: bool) -> ObjectMode:
     object_mode = "native" if requested_mode == "auto" and native_allowed else requested_mode
     if object_mode == "auto":
         object_mode = "prompted"
     if object_mode == "native" and not native_allowed:
         raise UnsupportedFeatureError("Model does not support native structured output.")
-    return object_mode
+    return cast(ObjectMode, object_mode)
 
 
 def _with_structured_prompt(
     *,
     prompt: str | None,
     messages: list[ModelMessage] | None,
-    object_mode: str,
+    object_mode: ObjectMode,
 ) -> tuple[str | None, list[ModelMessage] | None]:
     if object_mode != "prompted":
         return prompt, messages
@@ -247,7 +249,7 @@ def stream_object(
         last_partial: Any = None
         async for event in text_result.event_stream():
             events.append(event)
-            if getattr(event, "type", None) == "text-delta":
+            if isinstance(event, StreamTextDeltaEvent):
                 text_buffer += event.text_delta
                 events.append(StreamObjectDeltaEvent(text_delta=event.text_delta, partial_text=text_buffer))
                 partial = _parse_partial_object(text_buffer)

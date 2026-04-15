@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterable, Callable, Mapping
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
 from ._http import ResponseLike
@@ -59,7 +59,10 @@ async def _parse_sse_events(lines: AsyncIterable[str]):
 
 
 def _normalize_sse_data(value: Any) -> str:
-    payload = value if isinstance(value, str) else json.dumps(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        payload = json.dumps(asdict(value))
+    else:
+        payload = value if isinstance(value, str) else json.dumps(value)
     return "\n".join(f"data: {line}" for line in payload.split("\n"))
 
 

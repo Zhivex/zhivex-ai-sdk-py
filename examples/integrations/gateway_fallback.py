@@ -14,8 +14,8 @@ async def main() -> None:
     )
     result = await gateway.generate(
         messages=[GatewayMessage(role="user", content="Say hello in one short sentence.")],
-        primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
-        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+        primary=GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini"),
+        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-4-20250514")],
     )
     print(result.text)
     print(result.provider_used, result.model_used)

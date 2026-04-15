@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -12,7 +12,12 @@ from .types import GenerateResult, LanguageModel, ModelGenerateInput
 
 
 def _serialize_input(input: Any) -> str:
-    return json.dumps(input, default=lambda value: getattr(value, "__dict__", str(value)), sort_keys=True)
+    def default(value: Any) -> Any:
+        if is_dataclass(value) and not isinstance(value, type):
+            return asdict(value)
+        return getattr(value, "__dict__", str(value))
+
+    return json.dumps(input, default=default, sort_keys=True)
 
 
 class GenerateCache(Protocol):

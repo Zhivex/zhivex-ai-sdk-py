@@ -31,7 +31,7 @@ class BedrockProviderTests(IsolatedAsyncioTestCase):
     async def test_bedrock_omits_empty_inference_fields(self) -> None:
         client = FakeBedrockClient()
         provider = create_bedrock(client=client)
-        model = provider("anthropic.claude-3-5-sonnet")
+        model = provider.native.language_model("anthropic.claude-3-5-sonnet")
 
         result = await model.generate(
             ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="hello")])])
