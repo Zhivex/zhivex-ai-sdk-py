@@ -1029,6 +1029,20 @@ make smoke
 
 It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 
+If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
+
+```bash
+SSL_CERT_FILE="$(".venv/bin/python" -c 'import certifi; print(certifi.where())')" \
+GOOGLE_API_KEY=... \
+.venv/bin/python examples/realtime/gemini_realtime.py
+```
+
+or, for a permanent fix with the official python.org installer:
+
+```bash
+"/Applications/Python 3.14/Install Certificates.command"
+```
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
