@@ -8,8 +8,6 @@ This folder contains runnable Python examples for the main public surfaces of th
 - `agents/`: agent orchestration, subagents, memory, remote tools, and MCP integration.
 - `realtime/`: provider realtime sessions plus a live agent example.
 - `audio/`: transcription and speech generation.
-- `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, and model catalog helpers.
-- `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, and FastAPI reference APIs.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, FastAPI reference APIs, and observability patterns.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 

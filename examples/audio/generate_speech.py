@@ -28,7 +28,7 @@ def save_wave(path: Path, pcm: bytes, *, channels: int = 1, rate: int = 24_000, 
 async def main() -> None:
     provider = create_gemini(api_key=os.getenv("GOOGLE_API_KEY"))
     result = await generate_speech(
-        model=provider.speech_model("gemini-2.5-flash-preview-tts"),
+        model=provider.speech_model("gemini-3.1-flash-tts-preview"),
         input="Zhivex AI SDK makes provider switching easier.",
         voice="Kore",
     )

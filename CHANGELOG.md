@@ -21,6 +21,28 @@ Related documents:
 
 ### Added
 
+- No additional entries recorded.
+
+### Changed
+
+- No additional entries recorded.
+
+### Fixed
+
+- No additional entries recorded.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.5.0
+
+### Added
+
 - Stability, versioning, support, and changelog documentation for the documented public surface.
 - Production API guidance with FastAPI integration examples for direct, streaming, and gateway-backed APIs.
 - Observability guidance and examples for telemetry, request correlation, and gateway attempt hooks.

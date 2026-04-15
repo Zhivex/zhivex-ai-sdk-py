@@ -6,7 +6,7 @@ from zhivex_ai import AudioInput, create_openai, transcribe_audio
 
 async def main() -> None:
     provider = create_openai()
-    audio_path = Path(__file__).with_name("sample.wav")
+    audio_path = Path(__file__).with_name("speech.wav")
     if not audio_path.exists():
         raise SystemExit(f"Add a WAV file at {audio_path} before running this example.")
     audio = AudioInput(
