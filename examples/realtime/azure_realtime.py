@@ -1,6 +1,14 @@
 import asyncio
 
-from zhivex_ai import RealtimeSessionConfig, create_azure_openai
+from zhivex_ai import (
+    RealtimeAudioOutputEvent,
+    RealtimeResponseCompletedEvent,
+    RealtimeSessionConfig,
+    RealtimeSessionEndedEvent,
+    RealtimeTextDeltaEvent,
+    RealtimeTranscriptEvent,
+    create_azure_openai,
+)
 
 
 async def main() -> None:
@@ -15,9 +23,33 @@ async def main() -> None:
     )
     try:
         await session.send_text("What is a realtime API?")
+        audio_bytes = 0
+        printed_text = False
         async for event in session.event_stream():
-            print(event)
-            if event.type in {"realtime-response-complete", "realtime-end"}:
+            if isinstance(event, RealtimeTextDeltaEvent):
+                print(event.text_delta, end="", flush=True)
+                printed_text = True
+                continue
+            if isinstance(event, RealtimeTranscriptEvent) and event.role == "assistant" and event.is_final and event.text:
+                if printed_text:
+                    print()
+                    printed_text = False
+                print(f"Assistant transcript: {event.text}")
+                continue
+            if isinstance(event, RealtimeAudioOutputEvent):
+                audio_bytes += len(event.audio)
+                continue
+            if isinstance(event, RealtimeResponseCompletedEvent):
+                if printed_text:
+                    print()
+                if audio_bytes:
+                    print(f"[audio chunks received: {audio_bytes} bytes pcm]")
+                print(f"[turn complete: {event.reason}]")
+                break
+            if isinstance(event, RealtimeSessionEndedEvent):
+                if printed_text:
+                    print()
+                print(f"[session ended: {event.reason}]")
                 break
     finally:
         await session.aclose()
