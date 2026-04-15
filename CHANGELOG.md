@@ -21,11 +21,17 @@ Related documents:
 
 ### Added
 
-- No additional entries recorded.
+- Provider-agnostic agent skills with `Agent(..., skills=...)`, `skill(...)`, `load_skill(...)`, and `discover_skills(...)`.
+- `SKILL.md` loading with optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP dependency discovery.
+- Agent-skills example coverage in `examples/agents/skills.py`.
+- Sticky skill persistence through agent sessions plus `AgentSkillActivatedEvent` and `AgentSkillSkippedEvent` observability hooks.
+- Explicit session helpers `set_agent_session_skills(...)` and `clear_agent_session_skills(...)` for replacing or clearing sticky skills without editing metadata manually.
+- Declarative production policies for agent skills: `priority`, `triggers`, `anti_triggers`, provider/model allowlists, non-sticky skills, dependency failure modes, and session introspection with `get_agent_session_skills(...)`.
 
 ### Changed
 
-- No additional entries recorded.
+- Clarified the documentation split between portable agent skills and the native OpenAI `provider.skills()` lifecycle client.
+- Promoted the portable agent-skill runtime, session controls, and skill observability hooks into the documented stable surface.
 
 ### Fixed
 

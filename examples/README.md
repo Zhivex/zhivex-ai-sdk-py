@@ -93,6 +93,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/messages_and_tools.py
 .venv/bin/python examples/agents/remote_tool.py
 .venv/bin/python examples/agents/mcp_tools.py
+.venv/bin/python examples/agents/skills.py
 ```
 
 ### Realtime
@@ -144,6 +145,7 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
+- `skills.py` shows the provider-agnostic agent-skill runtime, which is separate from the native OpenAI Skills API.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.

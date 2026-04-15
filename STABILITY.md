@@ -19,7 +19,10 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`
-- Agent runtime: `Agent`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`
+- Agent runtime: `Agent`, `AgentSession`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
+- Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
+- Agent skill session controls: `set_agent_session_skills`, `get_agent_session_skills`, `clear_agent_session_skills`
+- Agent skill observability: `AgentSkillActivatedEvent`, `AgentSkillSkippedEvent`
 - Agent persistence: `create_postgres_agent_memory_store`, `create_postgres_checkpoint_store`
 - MCP helpers and registries: `discover_mcp_tools`, `mcp_stdio_server`, `mcp_http_server`, `create_mcp_tool_registry`
 - Gateway: `GatewayAttempt`, `GatewayConfig`, `GatewayError`, `GatewayImageAttachment`, `GatewayMessage`, `GatewayModelTarget`, `GatewayObjectResponse`, `GatewayResponse`, `create_gateway`

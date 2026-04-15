@@ -14,7 +14,7 @@ Related documents:
 - The latest beta release line is the primary target for fixes, documentation updates, and examples.
 - The previous beta minor release may receive critical fixes when the change is low risk and clearly scoped.
 - Stable APIs are the main compatibility contract for production integrations.
-- Stable agent integrations include the core runtime, MCP helper path, MCP-backed registries, and Postgres-backed memory/checkpoint stores documented in [STABILITY.md](./STABILITY.md).
+- Stable agent integrations include the core runtime, session helpers, portable agent skills, MCP helper path, MCP-backed registries, and Postgres-backed memory/checkpoint stores documented in [STABILITY.md](./STABILITY.md).
 - Beta APIs are supported for early adoption, but they may still evolve between minor releases with changelog coverage.
 - Experimental APIs are available for evaluation and feedback, but they do not carry support or compatibility guarantees.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import inspect
 import json
 import re
@@ -9,6 +10,7 @@ import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import uuid4
 
@@ -26,6 +28,7 @@ from ._serde import (
 from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, tool_result_part
+from .skills import SkillDefinition, SkillRegistry, SkillSet
 from .types import (
     AudioFrame,
     FinishReason,
@@ -86,6 +89,117 @@ def _message_text(messages: Iterable[ModelMessage]) -> str:
         if text:
             chunks.append(f"{message.role}: {text}")
     return "\n".join(chunks)
+
+
+def _skill_reference_name(skill: SkillDefinition) -> str:
+    return skill.display_name or skill.name
+
+
+SkillActivationMode = Literal["explicit", "implicit", "sticky"]
+
+
+@dataclass(slots=True)
+class _SkillActivation:
+    skill: SkillDefinition
+    mode: SkillActivationMode
+
+
+@dataclass(slots=True)
+class _SkillSkip:
+    skill_name: str
+    reason: str
+    mode: SkillActivationMode
+    path: str | None = None
+
+
+def _normalize_skill_names(values: Iterable[Any]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        name = str(value).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _tokenize_skill_text(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9][a-z0-9_-]{1,}", value.lower()) if len(token) >= 3}
+
+
+def _matches_any_phrase(text: str, patterns: Iterable[str]) -> bool:
+    lowered = text.lower()
+    for pattern in patterns:
+        candidate = pattern.strip().lower()
+        if candidate and candidate in lowered:
+            return True
+    return False
+
+
+def _explicit_skill_requested(skill: SkillDefinition, text: str) -> bool:
+    pattern = re.compile(rf"(?<!\w)\${re.escape(skill.name)}(?![\w-])", re.IGNORECASE)
+    return bool(pattern.search(text))
+
+
+def _should_activate_skill_implicitly(skill: SkillDefinition, text: str) -> bool:
+    if not skill.allow_implicit_invocation:
+        return False
+    trigger_matched = not skill.triggers or _matches_any_phrase(text, skill.triggers)
+    if not trigger_matched:
+        return False
+    if skill.anti_triggers and _matches_any_phrase(text, skill.anti_triggers):
+        return False
+    if skill.triggers:
+        return True
+    lowered = text.lower()
+    if skill.name.lower() in lowered:
+        return True
+    prompt_tokens = _tokenize_skill_text(text)
+    if not prompt_tokens:
+        return False
+    name_tokens = _tokenize_skill_text(skill.name.replace("-", " "))
+    description_tokens = _tokenize_skill_text(skill.description)
+    overlap = len(prompt_tokens & (name_tokens | description_tokens))
+    return overlap >= 2 or (overlap >= 1 and len(name_tokens) == 1 and bool(prompt_tokens & name_tokens))
+
+
+def _skill_allowed_for_agent(skill: SkillDefinition, agent: Agent) -> tuple[bool, str | None]:
+    provider = str(getattr(agent.model, "provider", "") or "")
+    model_id = str(getattr(agent.model, "model_id", "") or "")
+    if skill.allowed_providers and provider not in skill.allowed_providers:
+        return False, f'provider "{provider}" is not allowed'
+    if skill.allowed_models and not any(fnmatch.fnmatch(model_id, pattern) for pattern in skill.allowed_models):
+        return False, f'model "{model_id}" is not allowed'
+    return True, None
+
+
+def _skill_activation_sort_key(item: _SkillActivation) -> tuple[int, int, str]:
+    mode_order = {"explicit": 0, "sticky": 1, "implicit": 2}
+    return (-item.skill.priority, mode_order[item.mode], item.skill.name)
+
+
+def _skill_system_message(skill: SkillDefinition) -> str:
+    lines = [
+        f"[Active skill: {_skill_reference_name(skill)}]",
+        f"Description: {skill.description}",
+    ]
+    if skill.path:
+        lines.append(f"Skill file: {skill.path}")
+        skill_dir = str(Path(skill.path).resolve().parent)
+        lines.append(f"Skill directory: {skill_dir}")
+        for label, directory in (
+            ("scripts", Path(skill_dir) / "scripts"),
+            ("references", Path(skill_dir) / "references"),
+            ("assets", Path(skill_dir) / "assets"),
+        ):
+            if directory.exists():
+                lines.append(f"Available {label}: {directory}")
+    if skill.default_prompt:
+        lines.append(f"Suggested surrounding prompt: {skill.default_prompt}")
+    lines.append("Follow these skill instructions for the current task:")
+    lines.append(skill.instructions.strip())
+    return "\n".join(lines).strip()
 
 
 def _strip_runtime_system_messages(messages: list[ModelMessage], instructions: str | None) -> list[ModelMessage]:
@@ -724,6 +838,7 @@ class Agent:
     model: LanguageModel | RealtimeModel
     instructions: str | None = None
     tools: ToolSet | ToolRegistry = field(default_factory=dict)
+    skills: SkillSet | SkillRegistry = field(default_factory=dict)
     subagents: dict[str, "Agent"] = field(default_factory=dict)
     memory: AgentMemory | None = None
     checkpoint_store: AgentCheckpointStore | None = None
@@ -799,6 +914,24 @@ class AgentToolResultEvent:
 
 
 @dataclass(slots=True)
+class AgentSkillActivatedEvent:
+    type: str = "skill-activated"
+    skill_name: str = ""
+    activation: SkillActivationMode = "explicit"
+    path: str | None = None
+    description: str | None = None
+
+
+@dataclass(slots=True)
+class AgentSkillSkippedEvent:
+    type: str = "skill-skipped"
+    skill_name: str = ""
+    activation: SkillActivationMode = "sticky"
+    reason: str = ""
+    path: str | None = None
+
+
+@dataclass(slots=True)
 class AgentGuardrailEvent:
     type: str = "guardrail"
     stage: Literal["input", "output"] = "input"
@@ -870,6 +1003,8 @@ AgentEvent: TypeAlias = (
     | AgentToolCallEvent
     | AgentToolApprovalEvent
     | AgentToolResultEvent
+    | AgentSkillActivatedEvent
+    | AgentSkillSkippedEvent
     | AgentGuardrailEvent
     | AgentCheckpointEvent
     | AgentSummaryUpdateEvent
@@ -1010,6 +1145,29 @@ def create_agent_session(
         summary=summary,
         metadata=dict(metadata or {}),
     )
+
+
+def set_agent_session_skills(session: AgentSession, *skill_names: str) -> AgentSession:
+    names = _normalize_skill_names(skill_names)
+    session.metadata = {
+        **session.metadata,
+        "sticky_skills": names,
+        "active_skills": [],
+    }
+    return session
+
+
+def get_agent_session_skills(session: AgentSession) -> list[str]:
+    return _sticky_skill_names(session)
+
+
+def clear_agent_session_skills(session: AgentSession) -> AgentSession:
+    session.metadata = {
+        **session.metadata,
+        "sticky_skills": [],
+        "active_skills": [],
+    }
+    return session
 
 
 def create_in_memory_agent_memory_store(*, summary_config: SummaryConfig | None = None) -> InMemoryAgentMemory:
@@ -1626,6 +1784,7 @@ def _build_run_messages(
     session: AgentSession,
     prompt: str | None,
     messages: list[ModelMessage] | None,
+    active_skills: list[SkillDefinition] | None = None,
 ) -> list[ModelMessage]:
     if prompt is not None and messages is not None:
         raise ValidationError('Pass either "prompt" or "messages", but not both.')
@@ -1633,6 +1792,8 @@ def _build_run_messages(
     built: list[ModelMessage] = []
     if agent.instructions:
         built.append(create_text_message("system", agent.instructions))
+    for active_skill in active_skills or []:
+        built.append(create_text_message("system", _skill_system_message(active_skill)))
     if session.summary:
         built.append(create_text_message("system", f"{SUMMARY_MARKER}{session.summary}"))
     built.extend(_context_messages(session, agent.memory))
@@ -1677,6 +1838,187 @@ def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMes
 def _resolve_tool_registry(agent: Agent, extra_tools: ToolSet | ToolRegistry | None) -> ToolRegistry:
     base = agent.tools if isinstance(agent.tools, ToolRegistry) else ToolRegistry(agent.tools)
     return base.merge(extra_tools)
+
+
+def _resolve_skill_registry(agent: Agent, extra_skills: SkillSet | SkillRegistry | None) -> SkillRegistry:
+    base = agent.skills if isinstance(agent.skills, SkillRegistry) else SkillRegistry(agent.skills)
+    return base.merge(extra_skills)
+
+
+def _sticky_skill_names(session: AgentSession) -> list[str]:
+    raw = session.metadata.get("sticky_skills")
+    if not isinstance(raw, list):
+        return []
+    return _normalize_skill_names(raw)
+
+
+async def _resolve_skill_tools(skill: SkillDefinition) -> ToolSet:
+    resolved: ToolSet = dict(skill.tools)
+    for dependency in skill.dependencies:
+        if dependency.type != "mcp":
+            raise ValidationError(f'Unsupported skill dependency type "{dependency.type}".')
+        if dependency.transport == "stdio":
+            if not dependency.command:
+                raise ValidationError(f'Skill "{skill.name}" requires "command" for stdio MCP dependencies.')
+            server = mcp_stdio_server(
+                name=dependency.value,
+                command=dependency.command,
+                args=dependency.args,
+                env=dependency.env,
+                timeout_ms=dependency.timeout_ms,
+            )
+        else:
+            if not dependency.url:
+                raise ValidationError(f'Skill "{skill.name}" requires "url" for HTTP MCP dependencies.')
+            server = mcp_http_server(
+                name=dependency.value,
+                url=dependency.url,
+                headers=dependency.headers,
+                timeout_ms=dependency.timeout_ms,
+            )
+        prefix = dependency.prefix or f"{skill.name}_{dependency.value}"
+        discovered = await discover_mcp_tools(
+            server,
+            prefix=prefix,
+            include=dependency.include or None,
+            exclude=dependency.exclude or None,
+        )
+        for name, definition in discovered.items():
+            if name in resolved and resolved[name] != definition:
+                raise ValidationError(f'Tool name collision while activating skill "{skill.name}": "{name}".')
+            resolved[name] = definition
+    return resolved
+
+
+async def _select_active_skills(
+    registry: SkillRegistry,
+    *,
+    agent: Agent,
+    session: AgentSession,
+    prompt: str | None,
+    messages: list[ModelMessage] | None,
+) -> tuple[list[_SkillActivation], list[_SkillSkip], ToolSet]:
+    text = prompt or ""
+    if messages is not None:
+        message_text = _message_text(messages)
+        text = f"{text}\n{message_text}".strip()
+    selected: dict[str, _SkillActivation] = {}
+    skipped: list[_SkillSkip] = []
+    sticky_names = _sticky_skill_names(session)
+
+    if text and registry.items():
+        for _, definition in registry.items():
+            if _explicit_skill_requested(definition, text):
+                selected[definition.name] = _SkillActivation(skill=definition, mode="explicit")
+            elif _should_activate_skill_implicitly(definition, text):
+                selected.setdefault(definition.name, _SkillActivation(skill=definition, mode="implicit"))
+
+    for sticky_name in sticky_names:
+        if sticky_name in selected:
+            continue
+        sticky_skill = registry.get(sticky_name)
+        if sticky_skill is None:
+            skipped.append(_SkillSkip(skill_name=sticky_name, reason="sticky skill is no longer registered", mode="sticky"))
+            continue
+        selected[sticky_name] = _SkillActivation(skill=sticky_skill, mode="sticky")
+
+    if not selected:
+        return [], skipped, {}
+    ordered_candidates = sorted(selected.values(), key=_skill_activation_sort_key)
+    activations: list[_SkillActivation] = []
+    resolved_tools: ToolSet = {}
+    for activation in ordered_candidates:
+        allowed, reason = _skill_allowed_for_agent(activation.skill, agent)
+        if not allowed:
+            if activation.mode == "explicit":
+                raise ValidationError(f'Explicit skill "{activation.skill.name}" could not be activated because {reason}.')
+            skipped.append(
+                _SkillSkip(
+                    skill_name=activation.skill.name,
+                    reason=reason or "skill is not allowed for this agent",
+                    mode=activation.mode,
+                    path=activation.skill.path,
+                )
+            )
+            continue
+        try:
+            candidate_tools = await _resolve_skill_tools(activation.skill)
+        except Exception as error:
+            reason = f"dependency resolution failed: {error}"
+            if activation.mode == "explicit" or activation.skill.dependency_failure_mode == "fail":
+                raise ValidationError(f'Skill "{activation.skill.name}" could not be activated: {reason}') from error
+            skipped.append(
+                _SkillSkip(
+                    skill_name=activation.skill.name,
+                    reason=reason,
+                    mode=activation.mode,
+                    path=activation.skill.path,
+                )
+            )
+            continue
+        conflicts = [name for name, definition in candidate_tools.items() if name in resolved_tools and resolved_tools[name] != definition]
+        if conflicts:
+            reason = f'conflicting tools: {", ".join(sorted(conflicts))}'
+            if activation.mode == "explicit":
+                raise ValidationError(f'Explicit skill "{activation.skill.name}" could not be activated due to {reason}.')
+            skipped.append(
+                _SkillSkip(
+                    skill_name=activation.skill.name,
+                    reason=reason,
+                    mode=activation.mode,
+                    path=activation.skill.path,
+                )
+            )
+            continue
+        resolved_tools.update(candidate_tools)
+        activations.append(activation)
+    return activations, skipped, resolved_tools
+
+
+def _persist_active_skills(session: AgentSession, active_skills: list[_SkillActivation]) -> None:
+    if not active_skills and "sticky_skills" not in session.metadata and "active_skills" not in session.metadata:
+        return
+    sticky_skill_names = [item.skill.name for item in active_skills if item.skill.persist_to_session]
+    session.metadata = {
+        **session.metadata,
+        "active_skills": [
+            {
+                "name": item.skill.name,
+                "path": item.skill.path,
+                "metadata_path": item.skill.metadata_path,
+                "activation": item.mode,
+                "priority": item.skill.priority,
+            }
+            for item in active_skills
+        ],
+        "sticky_skills": sticky_skill_names,
+    }
+
+
+async def _emit_skill_events(
+    *,
+    active_skills: list[_SkillActivation],
+    skipped_skills: list[_SkillSkip],
+    emit: Callable[[AgentEvent], Awaitable[None]],
+) -> None:
+    for skipped in skipped_skills:
+        await emit(
+            AgentSkillSkippedEvent(
+                skill_name=skipped.skill_name,
+                activation=skipped.mode,
+                reason=skipped.reason,
+                path=skipped.path,
+            )
+        )
+    for activation in active_skills:
+        await emit(
+            AgentSkillActivatedEvent(
+                skill_name=activation.skill.name,
+                activation=activation.mode,
+                path=activation.skill.path,
+                description=activation.skill.description,
+            )
+        )
 
 
 def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCall]:
@@ -1824,6 +2166,7 @@ class AgentRuntime:
         prompt: str | None = None,
         messages: list[ModelMessage] | None = None,
         tools: ToolSet | ToolRegistry | None = None,
+        skills: SkillSet | SkillRegistry | None = None,
         tool_choice: str | ToolChoiceName | None = None,
         tool_execution: ToolExecutionOptions | None = None,
         max_steps: int | None = None,
@@ -1879,6 +2222,7 @@ class AgentRuntime:
                     prompt=current_prompt,
                     messages=current_messages,
                     tools=tools,
+                    skills=skills,
                     tool_choice=tool_choice,
                     tool_execution=tool_execution,
                     max_steps=max_steps,
@@ -2092,6 +2436,7 @@ class AgentRuntime:
         prompt: str | None,
         messages: list[ModelMessage] | None,
         tools: ToolSet | ToolRegistry | None,
+        skills: SkillSet | SkillRegistry | None,
         tool_choice: str | ToolChoiceName | None,
         tool_execution: ToolExecutionOptions | None,
         max_steps: int | None,
@@ -2105,18 +2450,31 @@ class AgentRuntime:
         emit: Callable[[AgentEvent], Awaitable[None]],
         live_stream: bool,
     ) -> AgentRunResult:
-        built_messages = _build_run_messages(
+        active_skill_activations, skipped_skills, skill_tools = await _select_active_skills(
+            _resolve_skill_registry(agent, skills),
             agent=agent,
             session=session,
             prompt=prompt,
             messages=messages,
         )
+        await _emit_skill_events(active_skills=active_skill_activations, skipped_skills=skipped_skills, emit=emit)
+        built_messages = _build_run_messages(
+            agent=agent,
+            session=session,
+            prompt=prompt,
+            messages=messages,
+            active_skills=[item.skill for item in active_skill_activations],
+        )
+        _persist_active_skills(session, active_skill_activations)
         context = AgentContext(
             run_id=run_id,
             session_id=session.id,
             agent_name=agent.name,
             memory_summary=session.summary,
-            metadata=dict(agent.metadata),
+            metadata={
+                **dict(agent.metadata),
+                "skills": [item.skill.name for item in active_skill_activations],
+            },
             handoff_path=list(trace.orchestration_path),
         )
         await self._run_input_guardrails(
@@ -2130,6 +2488,8 @@ class AgentRuntime:
             emit=emit,
         )
         registry = _resolve_tool_registry(agent, tools)
+        if skill_tools:
+            registry = registry.merge(skill_tools)
         merged_tools = self._wrap_agent_tools(
             agent=agent,
             registry=registry,
@@ -2532,6 +2892,7 @@ def run_agent(
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
     tools: ToolSet | ToolRegistry | None = None,
+    skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
@@ -2554,6 +2915,7 @@ def run_agent(
         prompt=prompt,
         messages=messages,
         tools=tools,
+        skills=skills,
         tool_choice=tool_choice,
         tool_execution=tool_execution,
         max_steps=max_steps,
@@ -2575,6 +2937,7 @@ def resume_agent(
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
     tools: ToolSet | ToolRegistry | None = None,
+    skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
@@ -2612,6 +2975,7 @@ def resume_agent(
             prompt=prompt,
             messages=messages,
             tools=tools,
+            skills=skills,
             tool_choice=tool_choice,
             tool_execution=tool_execution,
             max_steps=max_steps,
@@ -2636,6 +3000,7 @@ def stream_agent(
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
     tools: ToolSet | ToolRegistry | None = None,
+    skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
     max_steps: int | None = None,
@@ -2665,6 +3030,7 @@ def stream_agent(
                 prompt=prompt,
                 messages=messages,
                 tools=tools,
+                skills=skills,
                 tool_choice=tool_choice,
                 tool_execution=tool_execution,
                 max_steps=max_steps,
@@ -2690,6 +3056,7 @@ def stream_live_agent(
     agent: Agent,
     session: AgentSession | None = None,
     tools: ToolSet | ToolRegistry | None = None,
+    skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     connect_options: RealtimeConnectOptions | None = None,
     realtime_config: RealtimeSessionConfig | None = None,
@@ -2730,13 +3097,26 @@ def stream_live_agent(
             orchestration_path=[agent.name],
         )
         await emit_agent(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
+        active_skill_activations, skipped_skills, skill_tools = await _select_active_skills(
+            _resolve_skill_registry(agent, skills),
+            agent=agent,
+            session=resolved_session,
+            prompt=prompt,
+            messages=messages,
+        )
+        await _emit_skill_events(active_skills=active_skill_activations, skipped_skills=skipped_skills, emit=emit_agent)
         registry_instance = _resolve_tool_registry(agent, tools)
+        if skill_tools:
+            registry_instance = registry_instance.merge(skill_tools)
         context = AgentContext(
             run_id=run_id,
             session_id=resolved_session.id,
             agent_name=agent.name,
             memory_summary=resolved_session.summary,
-            metadata=dict(agent.metadata),
+            metadata={
+                **dict(agent.metadata),
+                "skills": [item.skill.name for item in active_skill_activations],
+            },
             handoff_path=list(trace.orchestration_path),
         )
         input_messages = _build_run_messages(
@@ -2744,7 +3124,9 @@ def stream_live_agent(
             session=resolved_session,
             prompt=prompt,
             messages=messages,
+            active_skills=[item.skill for item in active_skill_activations],
         )
+        _persist_active_skills(resolved_session, active_skill_activations)
         await resolved_runtime._run_input_guardrails(
             agent=agent,
             run_id=run_id,
@@ -2765,14 +3147,22 @@ def stream_live_agent(
             context=context,
             emit=emit_agent,
         )
+        instruction_base = realtime_config.instructions if realtime_config is not None and realtime_config.instructions is not None else agent.instructions
+        combined_instructions = instruction_base
+        if active_skill_activations:
+            combined_instructions = "\n\n".join(
+                [text for text in [instruction_base, *(_skill_system_message(item.skill) for item in active_skill_activations)] if text]
+            )
         live_config = realtime_config or RealtimeSessionConfig(
-            instructions=agent.instructions,
+            instructions=combined_instructions,
             tools=wrapped_tools or None,
             tool_choice=tool_choice,
             provider_options=provider_options,
         )
         if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
             live_config = replace(realtime_config, provider_options=provider_options)
+        if realtime_config is not None and active_skill_activations:
+            live_config = replace(live_config, instructions=combined_instructions)
 
         transcript = list(resolved_session.messages)
         tool_results: list[ToolExecutionResult] = []

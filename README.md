@@ -965,12 +965,75 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - input and output guardrails on `Agent(...)`
 - `handoff_to(...)`
 - `remote_tool(...)`
+- `skill(...)`
+- `load_skill(...)`
+- `discover_skills(...)`
 - `discover_mcp_tools(...)`
 - `mcp_stdio_server(...)`
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
 This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, traces, durable Postgres-backed state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+
+Agent skills are also available across the agent runtime. These are provider-agnostic workflow packs that inject task-specific instructions and optional tool dependencies before a run starts. They are distinct from the raw OpenAI Skills API:
+
+- `Agent(..., skills=...)` activates provider-agnostic runtime skills
+- `skill(...)`, `load_skill(...)`, and `discover_skills(...)` help define or load skills from `SKILL.md`
+- `set_agent_session_skills(...)`, `get_agent_session_skills(...)`, and `clear_agent_session_skills(...)` manage sticky session skills explicitly
+- `provider.skills()` remains the native OpenAI lifecycle client for hosted OpenAI skills
+- activated skills stick to the agent session through `session.metadata["sticky_skills"]`
+- the runtime emits `AgentSkillActivatedEvent` and `AgentSkillSkippedEvent` for observability
+
+Runtime skills follow the Codex-style `SKILL.md` layout: frontmatter with `name` and `description`, instruction body, and optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP tool dependencies.
+
+The runtime also supports production-oriented policy metadata:
+
+- `priority` to resolve competing implicit skills
+- `triggers` and `anti_triggers` for deterministic activation rules
+- `allowed_providers` and `allowed_models` to constrain where a skill can run
+- `persist_to_session` to opt out of sticky reuse
+- `dependency_failure_mode` set to `"skip"` or `"fail"`
+
+```python
+import asyncio
+
+from zhivex_ai import (
+    Agent,
+    clear_agent_session_skills,
+    create_agent_session,
+    create_openai,
+    get_agent_session_skills,
+    run_agent,
+    set_agent_session_skills,
+    skill,
+)
+
+
+async def main() -> None:
+    openai = create_openai()
+    release_notes = skill(
+        name="release-notes",
+        description="Use when a user asks for changelog summaries or release notes.",
+        instructions="Write highlights, breaking changes, and migration notes when needed.",
+    )
+    agent = Agent(
+        name="assistant",
+        instructions="You are a careful SDK assistant.",
+        model=openai("gpt-5.4-mini"),
+        skills={"release-notes": release_notes},
+    )
+    session = create_agent_session()
+
+    set_agent_session_skills(session, "release-notes")
+    result = await run_agent(agent=agent, session=session, prompt="Summarize the latest SDK updates.")
+    print(result.text)
+    print(result.session.metadata["active_skills"])
+    print(get_agent_session_skills(session))
+    clear_agent_session_skills(session)
+
+
+asyncio.run(main())
+```
 
 For new MCP integrations, prefer the higher-level helpers:
 
@@ -1012,6 +1075,7 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py)
 - Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
 - Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
+- Agent skills: [skills.py](./examples/agents/skills.py)
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
 - Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)
 - Integrations: [ui_messages.py](./examples/integrations/ui_messages.py), [http_responses.py](./examples/integrations/http_responses.py), [gateway_fallback.py](./examples/integrations/gateway_fallback.py)
