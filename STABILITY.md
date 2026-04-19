@@ -37,6 +37,9 @@ These APIs are supported and documented, but they may still change between minor
 
 - Middleware helpers
 - Model catalog helpers
+- Packaged skill APIs and installers: `load_skill_package`, `validate_skill`, `install_skill`, `list_installed_skills`, `run_skill`, `publish_skill`
+- Packaged skill types and artifacts: `SkillArtifact`, `SkillEntrypoint`, `SkillPermissions`, `SkillPackageManifest`, `InstalledSkill`, `SkillRegistryIndex`, `SkillRunResult`
+- Packaged skill runtime events: `AgentSkillResolvedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillArtifactCreatedEvent`
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
 

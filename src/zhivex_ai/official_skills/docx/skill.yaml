@@ -1,0 +1,88 @@
+schema_version: 1
+name: docx
+version: 1.0.0
+description: Use this skill whenever the user wants to create, read, edit, or analyze Word documents (.docx files).
+entrypoints:
+  - name: create
+    description: Create a new .docx document from structured input.
+    script: scripts/create_docx.py
+    default: true
+    input_schema:
+      type: object
+      required:
+        - output_path
+      properties:
+        output_path:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        paragraphs:
+          type: array
+        sections:
+          type: array
+        bullet_list:
+          type: array
+        numbered_list:
+          type: array
+        tables:
+          type: array
+        properties:
+          type: object
+  - name: edit
+    description: Edit an existing .docx document.
+    script: scripts/edit_docx.py
+    input_schema:
+      type: object
+      required:
+        - input_path
+      properties:
+        input_path:
+          type: string
+        output_path:
+          type: string
+        replace_text:
+          type: array
+        append_paragraphs:
+          type: array
+        append_sections:
+          type: array
+        append_tables:
+          type: array
+        bullet_list:
+          type: array
+        numbered_list:
+          type: array
+        title:
+          type: string
+        properties:
+          type: object
+  - name: analyze
+    description: Analyze a .docx document and extract structure.
+    script: scripts/analyze_docx.py
+    input_schema:
+      type: object
+      required:
+        - input_path
+      properties:
+        input_path:
+          type: string
+        include_paragraphs:
+          type: object
+dependencies:
+  - type: python
+    value: python-docx
+    import_name: docx
+artifacts:
+  - name: document
+    path: output_path
+    media_type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+permissions:
+  allow_network: false
+  read_paths:
+    - resources
+  write_paths:
+    - .
+resources:
+  - resources

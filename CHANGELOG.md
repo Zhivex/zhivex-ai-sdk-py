@@ -27,11 +27,17 @@ Related documents:
 - Sticky skill persistence through agent sessions plus `AgentSkillActivatedEvent` and `AgentSkillSkippedEvent` observability hooks.
 - Explicit session helpers `set_agent_session_skills(...)` and `clear_agent_session_skills(...)` for replacing or clearing sticky skills without editing metadata manually.
 - Declarative production policies for agent skills: `priority`, `triggers`, `anti_triggers`, provider/model allowlists, non-sticky skills, dependency failure modes, and session introspection with `get_agent_session_skills(...)`.
+- Beta packaged-skill support with `skill.yaml`, `load_skill_package(...)`, `validate_skill(...)`, `install_skill(...)`, `list_installed_skills(...)`, `run_skill(...)`, and `publish_skill(...)`.
+- Project-level skills manifests and lockfiles in `.agents/skills.toml` and `.agents/skills.lock.toml`, plus cache installs under `~/.zhivex/skills/`.
+- Static HTTP skill-registry publishing via `publish_skill(...)` and the `zhivex-skills` CLI.
+- Packaged-skill runtime artifacts in `AgentRunResult.artifacts` plus beta observability events for package resolution, dependency checks, executions, and created artifacts.
+- The first official packaged skill: `docx`, powered by `python-docx`.
 
 ### Changed
 
 - Clarified the documentation split between portable agent skills and the native OpenAI `provider.skills()` lifecycle client.
 - Promoted the portable agent-skill runtime, session controls, and skill observability hooks into the documented stable surface.
+- Clarified that the original runtime skills remain stable while the new packaged-skill layer is beta.
 
 ### Fixed
 

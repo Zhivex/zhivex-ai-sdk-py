@@ -36,6 +36,7 @@ dev = [
   "build>=1.2.0",
   "hatchling>=1.27.0",
   "mypy>=1.10.0",
+  "python-docx>=1.1.0",
   "python-dotenv>=1.0.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
@@ -48,6 +49,9 @@ postgres = [
 ]
 mcp = [
   "mcp>=1.0.0"
+]
+docx = [
+  "python-docx>=1.1.0"
 ]
 api = [
   "fastapi>=0.115.0",
@@ -62,6 +66,9 @@ otel = [
 Homepage = "https://github.com/Zhivex/zhivex-ai-sdk-py"
 Repository = "https://github.com/Zhivex/zhivex-ai-sdk-py"
 Issues = "https://github.com/Zhivex/zhivex-ai-sdk-py/issues"
+
+[project.scripts]
+zhivex-skills = "zhivex_ai.skill_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zhivex_ai"]

@@ -28,7 +28,7 @@ from ._serde import (
 from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, tool_result_part
-from .skills import SkillDefinition, SkillRegistry, SkillSet
+from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
 from .types import (
     AudioFrame,
     FinishReason,
@@ -184,6 +184,8 @@ def _skill_system_message(skill: SkillDefinition) -> str:
         f"[Active skill: {_skill_reference_name(skill)}]",
         f"Description: {skill.description}",
     ]
+    if skill.version:
+        lines.append(f"Version: {skill.version}")
     if skill.path:
         lines.append(f"Skill file: {skill.path}")
         skill_dir = str(Path(skill.path).resolve().parent)
@@ -195,6 +197,10 @@ def _skill_system_message(skill: SkillDefinition) -> str:
         ):
             if directory.exists():
                 lines.append(f"Available {label}: {directory}")
+    if skill.resources:
+        lines.append(f"Available resources: {', '.join(skill.resources)}")
+    if skill.entrypoints:
+        lines.append(f"Available entrypoints: {', '.join(item.name for item in skill.entrypoints)}")
     if skill.default_prompt:
         lines.append(f"Suggested surrounding prompt: {skill.default_prompt}")
     lines.append("Follow these skill instructions for the current task:")
@@ -923,12 +929,52 @@ class AgentSkillActivatedEvent:
 
 
 @dataclass(slots=True)
+class AgentSkillResolvedEvent:
+    type: str = "skill-resolved"
+    skill_name: str = ""
+    skill_version: str | None = None
+    entrypoints: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AgentSkillDependencyCheckEvent:
+    type: str = "skill-dependency-check"
+    skill_name: str = ""
+    dependency_type: str = ""
+    dependency_value: str = ""
+    available: bool = True
+
+
+@dataclass(slots=True)
 class AgentSkillSkippedEvent:
     type: str = "skill-skipped"
     skill_name: str = ""
     activation: SkillActivationMode = "sticky"
     reason: str = ""
     path: str | None = None
+
+
+@dataclass(slots=True)
+class AgentSkillExecutionStartEvent:
+    type: str = "skill-execution-start"
+    skill_name: str = ""
+    entrypoint: str = ""
+
+
+@dataclass(slots=True)
+class AgentSkillExecutionFinishEvent:
+    type: str = "skill-execution-finish"
+    skill_name: str = ""
+    entrypoint: str = ""
+    ok: bool = True
+
+
+@dataclass(slots=True)
+class AgentSkillArtifactCreatedEvent:
+    type: str = "skill-artifact-created"
+    skill_name: str = ""
+    entrypoint: str = ""
+    artifact: SkillArtifact | None = None
 
 
 @dataclass(slots=True)
@@ -1004,7 +1050,12 @@ AgentEvent: TypeAlias = (
     | AgentToolApprovalEvent
     | AgentToolResultEvent
     | AgentSkillActivatedEvent
+    | AgentSkillResolvedEvent
+    | AgentSkillDependencyCheckEvent
     | AgentSkillSkippedEvent
+    | AgentSkillExecutionStartEvent
+    | AgentSkillExecutionFinishEvent
+    | AgentSkillArtifactCreatedEvent
     | AgentGuardrailEvent
     | AgentCheckpointEvent
     | AgentSummaryUpdateEvent
@@ -1053,6 +1104,7 @@ class AgentRunResult:
     steps: list[GenerateTextStep] = field(default_factory=list)
     messages: list[ModelMessage] = field(default_factory=list)
     tool_results: list[ToolExecutionResult] = field(default_factory=list)
+    artifacts: list[SkillArtifact] = field(default_factory=list)
     trace: AgentTrace | None = None
     handoff: AgentHandoff | None = None
     orchestration_path: list[str] = field(default_factory=list)
@@ -1854,9 +1906,13 @@ def _sticky_skill_names(session: AgentSession) -> list[str]:
 
 async def _resolve_skill_tools(skill: SkillDefinition) -> ToolSet:
     resolved: ToolSet = dict(skill.tools)
+    if skill.entrypoints:
+        from .skillpacks import build_skill_entrypoint_tools
+
+        resolved.update(build_skill_entrypoint_tools(skill))
     for dependency in skill.dependencies:
         if dependency.type != "mcp":
-            raise ValidationError(f'Unsupported skill dependency type "{dependency.type}".')
+            continue
         if dependency.transport == "stdio":
             if not dependency.command:
                 raise ValidationError(f'Skill "{skill.name}" requires "command" for stdio MCP dependencies.')
@@ -1986,12 +2042,20 @@ def _persist_active_skills(session: AgentSession, active_skills: list[_SkillActi
                 "name": item.skill.name,
                 "path": item.skill.path,
                 "metadata_path": item.skill.metadata_path,
+                "version": item.skill.version,
+                "entrypoints": [entrypoint.name for entrypoint in item.skill.entrypoints],
                 "activation": item.mode,
                 "priority": item.skill.priority,
             }
             for item in active_skills
         ],
         "sticky_skills": sticky_skill_names,
+        "skill_versions": {item.skill.name: item.skill.version for item in active_skills if item.skill.version},
+        "skill_entrypoints": {
+            item.skill.name: [entrypoint.name for entrypoint in item.skill.entrypoints]
+            for item in active_skills
+            if item.skill.entrypoints
+        },
     }
 
 
@@ -2019,6 +2083,50 @@ async def _emit_skill_events(
                 description=activation.skill.description,
             )
         )
+        if activation.skill.version or activation.skill.entrypoints:
+            await emit(
+                AgentSkillResolvedEvent(
+                    skill_name=activation.skill.name,
+                    skill_version=activation.skill.version,
+                    entrypoints=[item.name for item in activation.skill.entrypoints],
+                )
+            )
+        for dependency in activation.skill.dependencies:
+            await emit(
+                AgentSkillDependencyCheckEvent(
+                    skill_name=activation.skill.name,
+                    dependency_type=dependency.type,
+                    dependency_value=dependency.value,
+                    available=True,
+                )
+            )
+
+
+def _extract_skill_artifacts(tool_results: list[ToolExecutionResult]) -> list[SkillArtifact]:
+    artifacts: list[SkillArtifact] = []
+    for result in tool_results:
+        if not isinstance(result.output, dict):
+            continue
+        payload = result.output.get("artifacts")
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            artifact_path = str(item.get("path") or "").strip()
+            if not artifact_path:
+                continue
+            artifacts.append(
+                SkillArtifact(
+                    name=str(item.get("name") or Path(artifact_path).name),
+                    path=artifact_path,
+                    media_type=str(item.get("media_type") or "") or None,
+                    role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
+                    description=str(item.get("description") or "") or None,
+                    metadata=dict(item.get("metadata") or {}),
+                )
+            )
+    return artifacts
 
 
 def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCall]:
@@ -2266,6 +2374,7 @@ class AgentRuntime:
                         steps=segment_result.steps,
                         messages=segment_result.messages,
                         tool_results=segment_result.tool_results,
+                        artifacts=segment_result.artifacts,
                         trace=trace,
                         handoff=final_handoff,
                         orchestration_path=list(trace.orchestration_path),
@@ -2643,6 +2752,22 @@ class AgentRuntime:
             emit=emit,
             trace=trace,
         )
+        artifacts = _extract_skill_artifacts(result.tool_results)
+        if artifacts:
+            session.metadata = {
+                **session.metadata,
+                "skill_artifacts": [
+                    {
+                        "name": artifact.name,
+                        "path": artifact.path,
+                        "media_type": artifact.media_type,
+                        "role": artifact.role,
+                        "description": artifact.description,
+                        "metadata": dict(artifact.metadata),
+                    }
+                    for artifact in artifacts
+                ],
+            }
         handoff = _detect_handoff(result.tool_results)
         return AgentRunResult(
             run_id=run_id,
@@ -2655,6 +2780,7 @@ class AgentRuntime:
             steps=result.steps,
             messages=result.messages,
             tool_results=result.tool_results,
+            artifacts=artifacts,
             trace=trace,
             handoff=handoff,
             orchestration_path=list(trace.orchestration_path),
@@ -2742,11 +2868,38 @@ class AgentRuntime:
                         "run.id": run_id,
                     },
                 )
+                skill_name = str(_definition.metadata.get("skill_name") or "")
+                skill_entrypoint = str(_definition.metadata.get("skill_entrypoint") or "")
+                if skill_name and skill_entrypoint:
+                    await emit(AgentSkillExecutionStartEvent(skill_name=skill_name, entrypoint=skill_entrypoint))
                 try:
                     result = await registry.execute(_definition, input, tool_context)
                 except Exception as error:
+                    if skill_name and skill_entrypoint:
+                        await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=False))
                     self._finish_span(span, error=error)
                     raise
+                if skill_name and skill_entrypoint:
+                    await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=True))
+                    if isinstance(result, dict):
+                        for item in list(result.get("artifacts") or []):
+                            if isinstance(item, dict):
+                                artifact_path = str(item.get("path") or "").strip()
+                                if artifact_path:
+                                    await emit(
+                                        AgentSkillArtifactCreatedEvent(
+                                            skill_name=skill_name,
+                                            entrypoint=skill_entrypoint,
+                                            artifact=SkillArtifact(
+                                                name=str(item.get("name") or Path(artifact_path).name),
+                                                path=artifact_path,
+                                                media_type=str(item.get("media_type") or "") or None,
+                                                role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
+                                                description=str(item.get("description") or "") or None,
+                                                metadata=dict(item.get("metadata") or {}),
+                                            ),
+                                        )
+                                    )
                 self._finish_span(span)
                 return result
 

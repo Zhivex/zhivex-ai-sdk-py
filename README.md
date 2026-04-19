@@ -131,6 +131,14 @@ pip install "zhivex-ai-sdk[postgres]"
 pip install "zhivex-ai-sdk[mcp]"
 pip install "zhivex-ai-sdk[api]"
 pip install "zhivex-ai-sdk[otel]"
+pip install "zhivex-ai-sdk[docx]"
+```
+
+The beta skill-package layer also exposes a CLI:
+
+```bash
+zhivex-skills validate path/to/skill
+zhivex-skills install path/to/skill
 ```
 
 ## Quick Start
@@ -985,6 +993,24 @@ Agent skills are also available across the agent runtime. These are provider-agn
 - the runtime emits `AgentSkillActivatedEvent` and `AgentSkillSkippedEvent` for observability
 
 Runtime skills follow the Codex-style `SKILL.md` layout: frontmatter with `name` and `description`, instruction body, and optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP tool dependencies.
+
+The SDK now also includes a beta skill-package layer for Anthropic-style packaged skills. This adds `skill.yaml`, installable skill packages, a static HTTP registry flow, direct `run_skill(...)`, artifacts, and the `zhivex-skills` CLI. The packaged-skill APIs are:
+
+- `load_skill_package(...)`
+- `validate_skill(...)`
+- `install_skill(...)`
+- `list_installed_skills(...)`
+- `run_skill(...)`
+- `publish_skill(...)`
+
+Packaged skills can declare:
+
+- versioned entrypoints
+- local Python or binary dependencies
+- produced artifacts
+- explicit read/write/network permissions
+
+The first official packaged skill is the beta `docx` skill under `zhivex_ai/official_skills/docx`, designed around `python-docx`.
 
 The runtime also supports production-oriented policy metadata:
 
