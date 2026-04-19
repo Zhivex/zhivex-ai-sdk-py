@@ -6,7 +6,7 @@ from copy import deepcopy
 import json
 import os
 from collections.abc import AsyncIterable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 import time
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -14,7 +14,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
-from ..messages import normalize_finish_reason, validate_file_part, validate_message_parts
+from ..messages import is_hosted_tool_definition, normalize_finish_reason, validate_file_part, validate_message_parts
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..realtime import (
@@ -26,6 +26,7 @@ from ..realtime import (
     tool_result_payload,
 )
 from ..types import (
+    AgentCapabilities,
     AudioFrame,
     AudioInput,
     BatchesClient,
@@ -57,7 +58,13 @@ from ..types import (
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    OpenAIMcpApprovalRequest,
+    OpenAIMcpApprovalResponse,
+    OpenAIMcpCall,
+    OpenAIMcpListTools,
+    OpenAIResponseReference,
     ModerationsClient,
+    ProviderDataPart,
     ProviderFile,
     ProviderImage,
     ProviderUpload,
@@ -80,6 +87,7 @@ from ..types import (
     SpeechOutput,
     StreamEvent,
     StreamFinishEvent,
+    StreamProviderDataEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     TokenUsage,
@@ -92,9 +100,53 @@ from ..types import (
     TranscriptionModel,
     TranscriptionOutput,
     UploadsClient,
+    AzureOpenAIMcpApprovalRequest,
+    AzureOpenAIMcpApprovalResponse,
+    AzureOpenAIMcpCall,
+    AzureOpenAIMcpListTools,
+    AzureOpenAIResponseReference,
 )
 from .base import ProviderAdapter
 from ._payload import drop_none
+
+def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
+    if provider_name in {"openai", "azure-openai"}:
+        return AgentCapabilities(
+            support_tier="tier-a",
+            tool_choice_none=True,
+            approval_requests=True,
+            hosted_web_search=True,
+            hosted_file_search=True,
+            remote_mcp=True,
+            computer_use=True,
+        )
+    if provider_name == "openrouter":
+        return AgentCapabilities(
+            support_tier="tier-c",
+            tool_choice_none=True,
+            hosted_web_search=True,
+        )
+    if provider_name == "qwen":
+        return AgentCapabilities(
+            support_tier="tier-c",
+            tool_choice_none=True,
+        )
+    if provider_name == "kimi":
+        return AgentCapabilities(
+            support_tier="tier-c",
+            tool_choice_none=True,
+        )
+    if provider_name == "ollama":
+        return AgentCapabilities(
+            support_tier="tier-c",
+            tool_choice_none=False,
+        )
+    return AgentCapabilities()
+
+
+def _with_agent_capabilities(capabilities: ModelCapabilities, agent_capabilities: AgentCapabilities) -> ModelCapabilities:
+    return replace(capabilities, agent_capabilities=agent_capabilities)
+
 
 OPENAI_COMPAT_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -126,6 +178,7 @@ OPENAI_COMPAT_TRANSCRIPTION_CAPABILITIES = replace(
     embeddings=False,
     reasoning=False,
     web_search=False,
+    agent_capabilities=AgentCapabilities(),
 )
 
 OPENAI_COMPAT_SPEECH_CAPABILITIES = replace(
@@ -302,7 +355,122 @@ def _serialize_tool_output(tool_result: ToolExecutionResult) -> str:
     return json.dumps(value)
 
 
-def _to_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def _serialize_provider_data_input(message: ModelMessage, provider_name: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    accepted_providers = {provider_name}
+    if provider_name == "azure-openai":
+        accepted_providers.add("openai")
+    for part in message.parts:
+        if getattr(part, "type", None) != "provider-data":
+            continue
+        provider = getattr(part, "provider", "")
+        data = getattr(part, "data", None)
+        if provider not in accepted_providers:
+            continue
+        parsed = _parse_provider_data_value(data, provider_name)
+        if parsed is None:
+            continue
+        if getattr(parsed, "type", None) == "mcp_approval_response":
+            items.append(drop_none(asdict(parsed)))
+    return items
+
+
+def _provider_data_classes(
+    provider_name: str,
+) -> tuple[type[Any], type[Any], type[Any], type[Any], type[Any]]:
+    if provider_name == "azure-openai":
+        return (
+            AzureOpenAIResponseReference,
+            AzureOpenAIMcpApprovalRequest,
+            AzureOpenAIMcpApprovalResponse,
+            AzureOpenAIMcpCall,
+            AzureOpenAIMcpListTools,
+        )
+    return (
+        OpenAIResponseReference,
+        OpenAIMcpApprovalRequest,
+        OpenAIMcpApprovalResponse,
+        OpenAIMcpCall,
+        OpenAIMcpListTools,
+    )
+
+
+def _parse_provider_data_value(value: Any, provider_name: str) -> Any | None:
+    response_reference_cls, approval_request_cls, approval_response_cls, mcp_call_cls, mcp_list_tools_cls = (
+        _provider_data_classes(provider_name)
+    )
+    if isinstance(
+        value,
+        (
+            response_reference_cls,
+            approval_request_cls,
+            approval_response_cls,
+            mcp_call_cls,
+            mcp_list_tools_cls,
+        ),
+    ):
+        return value
+    if not isinstance(value, dict):
+        return None
+    if "response_id" in value or "responseId" in value:
+        response_id = value.get("response_id", value.get("responseId"))
+        if isinstance(response_id, str) and response_id:
+            return response_reference_cls(response_id=response_id)
+    item_type = value.get("type")
+    if item_type == "mcp_approval_request":
+        return approval_request_cls(
+            id=str(value.get("id") or ""),
+            arguments=str(value.get("arguments") or ""),
+            name=str(value.get("name") or ""),
+            server_label=str(value.get("server_label") or ""),
+        )
+    if item_type == "mcp_approval_response":
+        return approval_response_cls(
+            approval_request_id=str(value.get("approval_request_id") or ""),
+            approve=bool(value.get("approve")),
+            id=str(value.get("id")) if value.get("id") is not None else None,
+            reason=str(value.get("reason")) if value.get("reason") is not None else None,
+        )
+    if item_type == "mcp_call":
+        return mcp_call_cls(
+            id=str(value.get("id") or ""),
+            arguments=str(value.get("arguments") or ""),
+            name=str(value.get("name") or ""),
+            server_label=str(value.get("server_label") or ""),
+            approval_request_id=str(value.get("approval_request_id")) if value.get("approval_request_id") is not None else None,
+            error=str(value.get("error")) if value.get("error") is not None else None,
+            output=str(value.get("output")) if value.get("output") is not None else None,
+            status=value.get("status"),
+        )
+    if item_type == "mcp_list_tools":
+        return mcp_list_tools_cls(
+            id=str(value.get("id")) if value.get("id") is not None else None,
+            server_label=str(value.get("server_label")) if value.get("server_label") is not None else None,
+            tools=deepcopy(value.get("tools")),
+        )
+    return None
+
+
+def _provider_data_part_for(provider_name: str, data: Any) -> ProviderDataPart:
+    return ProviderDataPart(provider=provider_name, data=data)
+
+
+def _response_reference_part(payload: dict[str, Any], provider_name: str) -> ProviderDataPart | None:
+    response_id = payload.get("id")
+    if not isinstance(response_id, str) or not response_id:
+        return None
+    response_reference_cls, _, _, _, _ = _provider_data_classes(provider_name)
+    return _provider_data_part_for(provider_name, response_reference_cls(response_id=response_id))
+
+
+def _parse_provider_data_output_item(item: dict[str, Any], provider_name: str) -> ProviderDataPart | None:
+    parsed = _parse_provider_data_value(item, provider_name)
+    if parsed is None:
+        return None
+    return _provider_data_part_for(provider_name, parsed)
+
+
+def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for message in messages:
         if message.role == "system":
@@ -317,6 +485,7 @@ def _to_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
                             "output": _serialize_tool_output(part.tool_result),
                         }
                     )
+            items.extend(_serialize_provider_data_input(message, provider_name))
             continue
 
         content = _map_message_content(message)
@@ -340,14 +509,35 @@ def _to_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
                             "arguments": json.dumps(part.tool_call.input),
                         }
                     )
+        items.extend(_serialize_provider_data_input(message, provider_name))
     return items
 
 
-def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+def _map_hosted_tool(tool: Any, provider_name: str) -> dict[str, Any]:
+    provider = getattr(tool, "provider", None)
+    accepted_providers = {None, provider_name}
+    if provider_name == "azure-openai":
+        accepted_providers.add("openai")
+    if provider not in accepted_providers:
+        raise ValidationError(
+            f'Hosted tool "{getattr(tool, "name", "")}" targets provider "{provider}", but this model uses "{provider_name}".'
+        )
+    payload = {"type": tool.type}
+    if isinstance(tool.config, dict):
+        payload.update(deepcopy(tool.config))
+    elif tool.config is not None:
+        payload["config"] = deepcopy(tool.config)
+    return drop_none(payload)
+
+
+def _map_tools(tools: dict[str, Any] | None, *, provider_name: str) -> list[dict[str, Any]] | None:
     if not tools:
         return None
     mapped = []
     for tool in tools.values():
+        if is_hosted_tool_definition(tool):
+            mapped.append(_map_hosted_tool(tool, provider_name))
+            continue
         parameters = create_schema_adapter(tool.schema).json_schema()
         if getattr(tool, "source", None) == "mcp":
             parameters = _normalize_openai_strict_tool_schema(parameters)
@@ -584,9 +774,13 @@ def _parse_output_content_part(content: dict[str, Any]) -> list[Any]:
     return []
 
 
-def _parse_output_item(item: dict[str, Any]) -> list[Any]:
+def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
     parts: list[Any] = []
     item_type = str(item.get("type") or "")
+    provider_data_part = _parse_provider_data_output_item(item, provider_name)
+    if provider_data_part is not None:
+        parts.append(provider_data_part)
+        return parts
     if item_type == "message" and item.get("role") == "assistant":
         for content in item.get("content") or []:
             if isinstance(content, dict):
@@ -666,10 +860,13 @@ def _parse_output_item(item: dict[str, Any]) -> list[Any]:
     return parts
 
 
-def _parse_responses_message(payload: dict[str, Any]) -> ModelMessage:
+def _parse_responses_message(payload: dict[str, Any], provider_name: str) -> ModelMessage:
     parts: list[Any] = []
+    response_reference = _response_reference_part(payload, provider_name)
+    if response_reference is not None:
+        parts.append(response_reference)
     for item in payload.get("output") or []:
-        parts.extend(_parse_output_item(item))
+        parts.extend(_parse_output_item(item, provider_name))
     return ModelMessage(role="assistant", parts=parts)
 
 
@@ -684,7 +881,7 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     if provider_tools is not None and not isinstance(provider_tools, list):
         raise ValidationError('The OpenAI-compatible "provider_options.tools" field must be a list.')
     merged_tools = []
-    mapped_tools = _map_tools(input.tools) or []
+    mapped_tools = _map_tools(input.tools, provider_name=provider_name) or []
     if mapped_tools:
         merged_tools.extend(mapped_tools)
     if provider_tools:
@@ -692,7 +889,7 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     body = {
         "model": model_id,
         "instructions": _system_instructions(input.messages),
-        "input": _to_responses_input(input.messages),
+        "input": _to_responses_input(input.messages, provider_name),
         "tools": merged_tools or None,
         "tool_choice": _map_tool_choice(input.tool_choice, provider_name=provider_name),
         "text": _map_structured_output(input),
@@ -2333,7 +2530,7 @@ def _openai_realtime_headers(
 
 
 def _openai_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]] | None:
-    return _map_tools(config.tools)
+    return _map_tools(config.tools, provider_name="openai")
 
 
 def _openai_realtime_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any]:
@@ -2561,7 +2758,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
-        assistant_message = _parse_responses_message(payload)
+        assistant_message = _parse_responses_message(payload, self.provider)
         finish_reason, provider_finish_reason = _parse_response_finish_reason(payload)
         return GenerateResult(
             messages=[assistant_message],
@@ -2597,9 +2794,12 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                 if payload.get("type") == "response.output_text.delta":
                     yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
                     continue
-                if payload.get("type") == "response.output_item.done":
+                if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
                     item = payload.get("item") or {}
-                    if item.get("type") == "function_call":
+                    provider_data_part = _parse_provider_data_output_item(item, self.provider) if isinstance(item, dict) else None
+                    if provider_data_part is not None:
+                        yield StreamProviderDataEvent(provider=provider_data_part.provider, data=provider_data_part.data)
+                    elif item.get("type") == "function_call":
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
                                 id=item.get("call_id") or item.get("id", ""),
@@ -2612,6 +2812,9 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                     continue
                 if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
                     response_payload = payload.get("response") or {}
+                    response_reference = _response_reference_part(response_payload, self.provider)
+                    if response_reference is not None:
+                        yield StreamProviderDataEvent(provider=response_reference.provider, data=response_reference.data)
                     finish_reason, provider_finish_reason = _parse_response_finish_reason(response_payload)
                     yield StreamFinishEvent(
                         finish_reason=finish_reason,
@@ -2820,7 +3023,7 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
                 headers=self._headers(),
                 json_body={
                     "model": self.model_id,
-                    "input": _to_responses_input(input.messages),
+                    "input": _to_responses_input(input.messages, self.provider),
                     "tools": [web_search_tool],
                     "temperature": input.temperature,
                     "max_output_tokens": input.max_tokens,
@@ -3339,7 +3542,10 @@ def create_openai_compatible_provider(
         raise ConfigurationError(f"Missing {provider_name} API key.")
     requester = fetch or default_fetch
     base = base_url.rstrip("/")
-    shared_capabilities = capabilities or OPENAI_COMPAT_CAPABILITIES
+    provider_agent_capabilities = _openai_compat_agent_capabilities(provider_name)
+    shared_capabilities = _with_agent_capabilities(capabilities or OPENAI_COMPAT_CAPABILITIES, provider_agent_capabilities)
+    grounded_capabilities = _with_agent_capabilities(OPENAI_COMPAT_GROUNDED_CAPABILITIES, provider_agent_capabilities)
+    realtime_capabilities = _with_agent_capabilities(OPENAI_COMPAT_REALTIME_CAPABILITIES, provider_agent_capabilities)
     resolved_supports_transcription = supports_audio if supports_transcription is None else supports_transcription
     resolved_supports_speech = supports_audio if supports_speech is None else supports_speech
     return ProviderAdapter(
@@ -3412,6 +3618,7 @@ def create_openai_compatible_provider(
                 auth_header=auth_header,
                 auth_prefix=auth_prefix,
                 default_web_search_tool=deepcopy(default_grounding_tool) if default_grounding_tool is not None else {"type": "web_search"},
+                capabilities=grounded_capabilities,
             ))
             if supports_grounding
             else None
@@ -3428,6 +3635,7 @@ def create_openai_compatible_provider(
                 realtime_url=realtime_url,
                 browser_token_url=browser_token_url,
                 connection_factory=realtime_connection_factory,
+                capabilities=realtime_capabilities,
             ))
             if supports_realtime
             else None

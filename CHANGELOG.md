@@ -32,16 +32,25 @@ Related documents:
 - Static HTTP skill-registry publishing via `publish_skill(...)` and the `zhivex-skills` CLI.
 - Packaged-skill runtime artifacts in `AgentRunResult.artifacts` plus beta observability events for package resolution, dependency checks, executions, and created artifacts.
 - The first official packaged skill: `docx`, powered by `python-docx`.
+- Beta provider agent capability metadata with `AgentCapabilities`, `AgentSupportTier`, `get_agent_capabilities(...)`, `get_agent_support_tier(...)`, and an agent-capabilities section in the generated support matrix.
+- Beta first-class hosted tools with `HostedToolDefinition`, `HostedToolClass`, `hosted_tool(...)`, hosted-tool inspectors, `ProviderDataPart`, `provider_data_part(...)`, OpenAI/Azure MCP approval-response helpers, and native provider mapping for OpenAI, Azure OpenAI, Gemini, Vertex, and Anthropic.
+- Beta hosted-tool phase 2 coverage with shared fail-fast validation, typed OpenAI/Azure provider-data payloads and parsers, `StreamProviderDataEvent`, and provider-managed MCP approval handling in `run_agent(...)` / `stream_agent(...)`.
+- Beta response-reference ergonomics with `openai_response_reference(...)`, `azure_openai_response_reference(...)`, response-id extraction helpers, generic provider-data extraction helpers, and `UIMessageProviderDataChunk` support in UI streaming helpers.
 
 ### Changed
 
 - Clarified the documentation split between portable agent skills and the native OpenAI `provider.skills()` lifecycle client.
 - Promoted the portable agent-skill runtime, session controls, and skill observability hooks into the documented stable surface.
 - Clarified that the original runtime skills remain stable while the new packaged-skill layer is beta.
+- Clarified that first-class hosted tools inside `tools={...}` are now the preferred beta-native path, while legacy raw `provider_options` tool payloads remain accepted where already supported for backward compatibility.
+- Hosted tools now fail fast in shared foundation APIs when they target the wrong provider, require unsupported capability classes, or attempt unsupported `tool_choice` combinations such as named hosted-tool forcing.
+- `openai_response_options(...)` can now derive `previous_response_id` directly from provider-data response references, assistant messages, or prior results through the new beta response-reference helpers.
+- The README support matrix is now intended to be rewritten from runtime metadata via `scripts/generate_support_matrix.py --write-readme`, keeping provider docs aligned with the generated portable/native/agent capability tables.
 
 ### Fixed
 
-- No additional entries recorded.
+- Aligned beta provider agent-capability metadata with the hosted-tool helpers already supported by adapters, including Anthropic code execution and Gemini/Vertex file-search plus computer-use hosted tools.
+- Clarified across README, STABILITY, and SUPPORT that the generated `Agent Capabilities` matrix is beta guidance for hosted tools and provider-managed events, with provider-managed approval/runtime integration currently limited to OpenAI and Azure OpenAI.
 
 ### Deprecated
 

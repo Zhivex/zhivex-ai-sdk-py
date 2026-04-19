@@ -46,6 +46,10 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Experimental realtime/live voice sessions plus `stream_live_agent()` for voice-first agents
 - Embeddings support where the provider supports it
 - Provider factories for hosted and local models
+- Beta provider agent capability metadata for support tiers and hosted-agent features
+- Beta first-class hosted tool definitions for provider-native tools in `tools={...}`
+- Beta typed provider-data payloads and approval flows for OpenAI/Azure remote MCP
+- Beta response-reference helpers and provider-data UI chunks for OpenAI/Azure continuation workflows
 - Gateway routing with fallback support
 - HTTP/UI helpers for SSE, plain text streams, and UI message transport
 - Middleware for telemetry, caching, and circuit breaking
@@ -63,7 +67,10 @@ Portable construction fails fast for providers that do not satisfy the portable 
 For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
+Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
+It includes beta provider agent capability metadata alongside portable support and native extras, so the docs stay aligned with the runtime support model instead of drifting by hand.
 
+<!-- BEGIN GENERATED SUPPORT MATRIX -->
 ### Tier-1 Providers
 
 These providers back the stable surface for production API work in this SDK today:
@@ -104,12 +111,31 @@ These providers back the stable surface for production API work in this SDK toda
 | qwen | No | No | No | No | No | No | No | No | No | No | No |
 | vertex | No | No | No | No | No | No | No | No | Yes | No | No |
 
+### Agent Capabilities
+
+| Provider | Support Tier | Tool Choice None | Approval Requests | Hosted Web Search | Hosted File Search | Remote MCP | Computer Use | Code Execution | Toolsets |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |
+| azure-openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
+| bedrock | tier-c | No | No | No | No | No | No | No | No |
+| gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
+| kimi | tier-c | Yes | No | No | No | No | No | No | No |
+| ollama | tier-c | No | No | No | No | No | No | No | No |
+| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
+| openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
+| qwen | tier-c | Yes | No | No | No | No | No | No | No |
+| vertex | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
+<!-- END GENERATED SUPPORT MATRIX -->
+
 ### Tool Calling Notes
 
 Tool support now follows the same rule everywhere:
 
 - The portable layer accepts only the SDK-owned contract. It rejects `provider_options` and any provider-managed tool payloads.
 - Provider-specific hosted tools, raw Responses settings, Gemini built-in tools, and similar knobs must go through `provider.native.*`.
+- First-class hosted tool definitions are the preferred native path for OpenAI, Azure OpenAI, Gemini, Vertex, and Anthropic. Legacy raw `provider_options` payloads remain accepted where already supported for backward compatibility.
+- Hosted tools now fail fast in the shared foundation layer when they target the wrong provider, request an unsupported hosted-tool class, or use hosted-only combinations such as unsupported `tool_choice="none"` / `ToolChoiceName(...)`.
+- The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
 - Anthropic is part of the tier-1 text-generation story in this SDK. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
 - OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
@@ -740,6 +766,101 @@ result = await generate_text(
     },
 )
 ```
+
+Hosted tools can now live directly inside `tools={...}` on native models, alongside callable local tools:
+
+```python
+import asyncio
+
+from pydantic import BaseModel, ConfigDict
+
+from zhivex_ai import create_openai, generate_text, openai_web_search_tool, tool
+
+
+class WeatherInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: str
+
+
+async def main() -> None:
+    openai = create_openai()
+
+    result = await generate_text(
+        model=openai.native.language_model("gpt-5.4-mini"),
+        prompt="Compare today's weather in Buenos Aires with what is happening in the news.",
+        tools={
+            "weather": tool(
+                name="weather",
+                schema=WeatherInput,
+                execute=lambda input: {"city": input.city, "forecast": "18C and cloudy"},
+            ),
+            "search": openai_web_search_tool(search_context_size="high"),
+        },
+    )
+
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Remote MCP approval responses also round-trip through assistant messages with a `provider-data` part:
+
+```python
+from zhivex_ai import assistant, openai_mcp_approval_response, user
+
+messages = [
+    assistant([openai_mcp_approval_response(approval_request_id="apr_123", approve=True)]),
+    user("Continue with the approved MCP call."),
+]
+```
+
+OpenAI and Azure OpenAI also expose beta typed provider-data payloads and parse helpers:
+
+```python
+from zhivex_ai import (
+    OpenAIMcpApprovalRequest,
+    parse_openai_provider_data_part,
+    provider_data_part,
+)
+
+part = provider_data_part(
+    "openai",
+    OpenAIMcpApprovalRequest(
+        id="apr_123",
+        arguments='{"query":"apollo"}',
+        name="docs_search",
+        server_label="Docs",
+    ),
+)
+
+parsed = parse_openai_provider_data_part(part)
+assert parsed is not None
+assert parsed.type == "mcp_approval_request"
+```
+
+You can also continue OpenAI Responses API workflows without manually threading raw IDs:
+
+```python
+from zhivex_ai import (
+    get_openai_response_id,
+    openai_response_options,
+)
+
+first = await generate_text(
+    model=openai.native.language_model("gpt-5.4-mini"),
+    prompt="Start a multi-turn responses workflow.",
+)
+
+follow_up = openai_response_options(previous_response=first)
+assert get_openai_response_id(first) is not None
+```
+
+The UI helpers now preserve provider-managed control traffic as `provider-data` chunks as well, so `to_ui_message_stream(...)` can surface MCP approval requests, response references, and other typed provider-data events to frontend consumers.
+
+When these approval requests appear inside `run_agent(...)` or `stream_agent(...)`, the runtime reuses `approval_policy` to emit `AgentToolApprovalEvent` events, append the provider-specific approval response, and continue the loop. This provider-managed approval path is currently beta and limited to OpenAI and Azure OpenAI; other providers may expose hosted-tool metadata in the support matrix before they share this same approval/runtime integration.
+
+See [examples/text/native_hosted_tools.py](./examples/text/native_hosted_tools.py) for a compact mixed local + hosted tool example, and [examples/agents/provider_managed_approvals.py](./examples/agents/provider_managed_approvals.py) for the matching OpenAI/Azure remote MCP approval flow with `stream_agent(...)`.
 
 ### Gateway fallback routing
 

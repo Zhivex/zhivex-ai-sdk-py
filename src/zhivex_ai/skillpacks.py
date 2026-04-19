@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import importlib.util
 import inspect
@@ -9,7 +8,6 @@ import os
 from pathlib import Path
 import shutil
 import socket
-import sys
 import tarfile
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -189,8 +187,8 @@ def _skills_lock_path(root: Path) -> Path:
     return _skills_dir(root) / "skills.lock.toml"
 
 
-def _global_cache_dir() -> Path:
-    return Path.home() / ".zhivex" / "skills"
+def _installed_skills_cache_dir(root: Path) -> Path:
+    return _skills_dir(root) / "installed"
 
 
 def _read_project_registry(root: Path) -> str | None:
@@ -319,7 +317,7 @@ def _materialize_installed_skill(
     project_root: Path,
 ) -> InstalledSkill:
     skill_root = _skill_dir_from_input(Path(definition.source or definition.path or source))
-    cache_dir = _global_cache_dir() / definition.name / str(definition.version or "0")
+    cache_dir = _installed_skills_cache_dir(project_root) / definition.name / str(definition.version or "0")
     cache_dir.parent.mkdir(parents=True, exist_ok=True)
     if cache_dir.exists():
         shutil.rmtree(cache_dir)
@@ -362,7 +360,10 @@ def _install_from_registry(*, name: str, version: str, registry_url: str, projec
         extract_dir = Path(tmp) / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(tarball_path, "r:gz") as archive:
-            archive.extractall(extract_dir)
+            if "filter" in inspect.signature(archive.extractall).parameters:
+                archive.extractall(extract_dir, filter="data")
+            else:
+                archive.extractall(extract_dir)
         skill_dir = extract_dir / name
         if not skill_dir.exists():
             nested_dirs = [item for item in extract_dir.iterdir() if item.is_dir()]
@@ -447,6 +448,8 @@ def _validate_entrypoint_input(entrypoint: SkillEntrypoint, payload: dict[str, A
             raise ValidationError(f'Skill entrypoint "{entrypoint.name}" field "{key}" must be an array.')
         if expected_type == "object" and not isinstance(value, dict):
             raise ValidationError(f'Skill entrypoint "{entrypoint.name}" field "{key}" must be an object.')
+        if expected_type == "boolean" and not isinstance(value, bool):
+            raise ValidationError(f'Skill entrypoint "{entrypoint.name}" field "{key}" must be a boolean.')
 
 
 def _validate_skill_dependencies(definition: SkillDefinition) -> None:

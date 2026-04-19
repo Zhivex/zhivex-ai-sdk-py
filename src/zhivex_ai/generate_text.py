@@ -5,13 +5,18 @@ import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 from .errors import ParseError, UnsupportedFeatureError, ValidationError
 from .messages import (
     create_text_message,
+    get_agent_capabilities,
+    get_hosted_tool_class,
     get_text_from_result,
+    is_hosted_tool_definition,
+    is_callable_tool_definition,
     normalize_finish_reason,
+    provider_data_part,
     result_messages,
     serialize_json_value,
     tool_call_part,
@@ -32,12 +37,15 @@ from .types import (
     StreamErrorEvent,
     StreamEvent,
     StreamFinishEvent,
+    StreamProviderDataEvent,
     StreamToolCallEvent,
     StreamToolResultEvent,
     StreamTextDeltaEvent,
+    HostedToolDefinition,
     ToolCall,
     ToolChoice,
     ToolChoiceName,
+    ToolDefinition,
     ToolExecutionError,
     ToolExecutionContext,
     ToolExecutionOptions,
@@ -47,6 +55,16 @@ from .types import (
 )
 
 _GEMINI_BUILTIN_SEARCH_TOOLS = {"search", "google_search", "googleSearch"}
+_HOSTED_TOOL_CAPABILITY_FLAGS = {
+    "web-search": "hosted_web_search",
+    "file-search": "hosted_file_search",
+    "remote-mcp": "remote_mcp",
+    "computer-use": "computer_use",
+    "code-execution": "code_execution",
+    "toolset": "toolsets",
+}
+_NAMED_HOSTED_TOOL_CHOICE_PROVIDERS = {"anthropic"}
+_REQUIRED_HOSTED_TOOL_CHOICE_ONLY_UNSUPPORTED_PROVIDERS = {"gemini", "vertex"}
 
 
 def _is_provider_managed_tool_call(call: ToolCall) -> bool:
@@ -82,6 +100,65 @@ def _validate_tool_choice(model: LanguageModel, tools: ToolSet | None, tool_choi
         raise ValidationError('The "tool_choice" option must be "none", "auto", "required", or ToolChoiceName(...).')
     if isinstance(tool_choice, ToolChoiceName) and tool_choice.tool_name not in tools:
         raise ValidationError(f'The selected tool "{tool_choice.tool_name}" is not registered.')
+    if isinstance(tool_choice, ToolChoiceName):
+        selected = tools.get(tool_choice.tool_name) if tools else None
+        if (
+            selected is not None
+            and is_hosted_tool_definition(selected)
+            and model.provider not in _NAMED_HOSTED_TOOL_CHOICE_PROVIDERS
+        ):
+            raise ValidationError(
+                f'The selected tool "{tool_choice.tool_name}" is provider-managed. '
+                f'ToolChoiceName(...) only supports hosted tools for {", ".join(sorted(_NAMED_HOSTED_TOOL_CHOICE_PROVIDERS))}.'
+            )
+
+
+def _validate_hosted_tools(model: LanguageModel, tools: ToolSet | None, tool_choice: ToolChoice | None) -> None:
+    if not tools:
+        return
+    hosted_tools: list[HostedToolDefinition] = []
+    callable_tools: list[ToolDefinition] = []
+    for tool in tools.values():
+        if is_hosted_tool_definition(tool):
+            hosted_tools.append(cast(HostedToolDefinition, tool))
+        else:
+            callable_tools.append(cast(ToolDefinition, tool))
+    if not hosted_tools:
+        return
+    if _is_portable_model(model):
+        raise ValidationError(
+            "Portable foundation APIs do not accept hosted tools. Use `provider.native.*` models for provider-managed tools."
+        )
+
+    capabilities = get_agent_capabilities(model)
+    accepted_providers = {None, model.provider}
+    if model.provider == "azure-openai":
+        accepted_providers.add("openai")
+
+    for hosted in hosted_tools:
+        if hosted.provider not in accepted_providers:
+            raise ValidationError(
+                f'Hosted tool "{hosted.name}" targets provider "{hosted.provider}", but this model uses "{model.provider}".'
+            )
+        tool_class = get_hosted_tool_class(hosted)
+        capability_name = _HOSTED_TOOL_CAPABILITY_FLAGS.get(tool_class)
+        if capability_name is not None and not getattr(capabilities, capability_name):
+            raise UnsupportedFeatureError(
+                f'Model "{model.provider}/{model.model_id}" does not support hosted tool class "{tool_class}".'
+            )
+
+    if tool_choice == "none" and not capabilities.tool_choice_none:
+        raise UnsupportedFeatureError(
+            f'Model "{model.provider}/{model.model_id}" does not support `tool_choice=\"none\"` with hosted tools.'
+        )
+    if (
+        tool_choice == "required"
+        and not callable_tools
+        and model.provider in _REQUIRED_HOSTED_TOOL_CHOICE_ONLY_UNSUPPORTED_PROVIDERS
+    ):
+        raise UnsupportedFeatureError(
+            f'Model "{model.provider}/{model.model_id}" cannot guarantee `tool_choice=\"required\"` when only hosted tools are registered.'
+        )
 
 
 def normalize_messages(
@@ -170,9 +247,12 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     tool = tools.get(call.name) if tools else None
     if tool is None:
         raise ValidationError(f'Tool "{call.name}" was requested by the model but is not registered.')
-    if tool.execute is None:
+    if not is_callable_tool_definition(tool):
+        raise ValidationError(f'Tool "{call.name}" is provider-managed and cannot run in the local tool runtime.')
+    callable_tool = cast(ToolDefinition, tool)
+    if callable_tool.execute is None:
         raise ValidationError(f'Tool "{call.name}" is registered but does not have a local executor.')
-    adapter = create_schema_adapter(tool.schema)
+    adapter = create_schema_adapter(callable_tool.schema)
     try:
         parsed = adapter.validate_python(call.input)
     except Exception as error:
@@ -181,11 +261,11 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
         context = ToolExecutionContext(
             tool_name=call.name,
             tool_call_id=call.id,
-            permissions=list(tool.permissions),
-            source=tool.source,
-            metadata=dict(tool.metadata),
+            permissions=list(callable_tool.permissions),
+            source=callable_tool.source,
+            metadata=dict(callable_tool.metadata),
         )
-        output = _invoke_tool_callable(tool.execute, parsed, context)
+        output = _invoke_tool_callable(callable_tool.execute, parsed, context)
         if inspect.isawaitable(output):
             output = await asyncio.wait_for(output, timeout_ms / 1000) if timeout_ms is not None else await output
         return ToolExecutionResult(
@@ -362,6 +442,7 @@ async def generate_text(
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
     _validate_tool_choice(model, tools, tool_choice)
+    _validate_hosted_tools(model, tools, tool_choice)
 
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
     steps: list[GenerateTextStep] = []
@@ -510,6 +591,7 @@ def stream_text(
     if tools and not model.capabilities.tools:
         raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
     _validate_tool_choice(model, tools, tool_choice)
+    _validate_hosted_tools(model, tools, tool_choice)
 
     steps_limit = max(1, max_steps or 1)
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
@@ -535,7 +617,7 @@ def stream_text(
                     retry=retry,
                 )
                 stream = await model.stream(request)
-                step_messages: list[ModelMessage] = []
+                assistant_parts: list[Any] = []
                 text_buffer = ""
                 finish_reason = normalize_finish_reason("stop")
                 provider_finish_reason: str | None = None
@@ -547,24 +629,16 @@ def stream_text(
                     await broadcast.publish(event)
                     if isinstance(event, StreamTextDeltaEvent):
                         text_buffer += event.text_delta
+                        assistant_parts.append(create_text_message("assistant", event.text_delta).parts[0])
                     elif isinstance(event, StreamToolCallEvent):
-                        assistant_message = next((m for m in step_messages if m.role == "assistant"), None)
-                        if assistant_message is None:
-                            assistant_message = ModelMessage(role="assistant", parts=[])
-                            step_messages.append(assistant_message)
-                        assistant_message.parts.append(tool_call_part(event.tool_call))
+                        assistant_parts.append(tool_call_part(event.tool_call))
+                    elif isinstance(event, StreamProviderDataEvent):
+                        assistant_parts.append(provider_data_part(event.provider, event.data))
                     elif isinstance(event, StreamFinishEvent):
                         finish_reason = event.finish_reason
                         provider_finish_reason = event.provider_finish_reason
                         usage = event.usage
 
-                assistant_parts = []
-                if text_buffer:
-                    assistant_parts.append(create_text_message("assistant", text_buffer).parts[0])
-                for item in step_messages:
-                    for part in item.parts:
-                        if getattr(part, "type", None) == "tool-call":
-                            assistant_parts.append(part)
                 response_messages = [ModelMessage(role="assistant", parts=assistant_parts)] if assistant_parts else []
                 response = GenerateResult(
                     messages=response_messages,

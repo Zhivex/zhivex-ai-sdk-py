@@ -10,10 +10,11 @@ from typing import Any
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
-from ..messages import normalize_finish_reason, serialize_json_value, validate_file_part, validate_message_parts
+from ..messages import hosted_tool, is_callable_tool_definition, normalize_finish_reason, serialize_json_value, validate_file_part, validate_message_parts
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    AgentCapabilities,
     CodeExecutionResultPart,
     CountTokensClient,
     CountTokensResult,
@@ -24,6 +25,7 @@ from ..types import (
     GroundedLanguageModel,
     GroundingSource,
     GroundedModelGenerateInput,
+    HostedToolDefinition,
     LanguageModel,
     ModelCapabilities,
     ModelGenerateInput,
@@ -60,6 +62,13 @@ ANTHROPIC_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        code_execution=True,
+        toolsets=True,
+    ),
 )
 
 ANTHROPIC_GROUNDED_CAPABILITIES = ModelCapabilities(
@@ -76,6 +85,13 @@ ANTHROPIC_GROUNDED_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=True,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        code_execution=True,
+        toolsets=True,
+    ),
 )
 
 _ANTHROPIC_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
@@ -128,17 +144,21 @@ def anthropic_web_search_tool(
     user_location: dict[str, Any] | None = None,
     tool_type: str = _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE,
     **extra: Any,
-) -> dict[str, Any]:
-    return drop_none(
-        {
-            "type": tool_type,
-            "name": name,
-            "max_uses": max_uses,
-            "allowed_domains": list(allowed_domains) if allowed_domains else None,
-            "blocked_domains": list(blocked_domains) if blocked_domains else None,
-            "user_location": deepcopy(user_location) if user_location is not None else None,
-            **deepcopy(extra),
-        }
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name,
+        provider="anthropic",
+        type=tool_type,
+        tool_class="web-search",
+        config=drop_none(
+            {
+                "max_uses": max_uses,
+                "allowed_domains": list(allowed_domains) if allowed_domains else None,
+                "blocked_domains": list(blocked_domains) if blocked_domains else None,
+                "user_location": deepcopy(user_location) if user_location is not None else None,
+                **deepcopy(extra),
+            }
+        ),
     )
 
 
@@ -151,21 +171,29 @@ def anthropic_mcp_server(
     allowed_tools: list[str] | None = None,
     tool_configuration: dict[str, Any] | None = None,
     **extra: Any,
-) -> dict[str, Any]:
+) -> HostedToolDefinition:
     config = deepcopy(tool_configuration) if tool_configuration is not None else {}
     if enabled is not None:
         config["enabled"] = enabled
     if allowed_tools is not None:
         config["allowed_tools"] = list(allowed_tools)
-    return drop_none(
-        {
-            "type": "url",
-            "server_name": name,
-            "url": url,
-            "authorization_token": authorization_token,
-            "tool_configuration": config or None,
-            **deepcopy(extra),
-        }
+    return hosted_tool(
+        name=name,
+        provider="anthropic",
+        type="mcp_toolset",
+        tool_class="toolset",
+        config=drop_none(
+            {
+                "server": {
+                    "type": "url",
+                    "name": name,
+                    "url": url,
+                    "authorization_token": authorization_token,
+                },
+                "default_config": config or None,
+                **deepcopy(extra),
+            }
+        ),
     )
 
 
@@ -174,8 +202,14 @@ def anthropic_code_execution_tool(
     name: str = "code_execution",
     tool_type: str = "code_execution_20250825",
     **extra: Any,
-) -> dict[str, Any]:
-    return drop_none({"type": tool_type, "name": name, **deepcopy(extra)})
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name,
+        provider="anthropic",
+        type=tool_type,
+        tool_class="code-execution",
+        config=drop_none(deepcopy(extra)),
+    )
 
 
 def _parse_response_error(provider: str, response: Any) -> ProviderHTTPError:
@@ -427,7 +461,42 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     if not tools:
         return None
     mapped: list[dict[str, Any]] = []
+    mcp_toolset_names: set[str] = set()
     for tool in tools.values():
+        if not is_callable_tool_definition(tool):
+            if tool.provider not in (None, "anthropic"):
+                raise UnsupportedFeatureError(
+                    f'Provider "anthropic" does not support hosted tools declared for provider "{tool.provider}".'
+                )
+            if tool.type == "mcp_toolset":
+                config = tool.config if isinstance(tool.config, dict) else {}
+                server = config.get("server") if isinstance(config, dict) else None
+                if not isinstance(server, dict) or not server.get("name"):
+                    raise UnsupportedFeatureError('Provider "anthropic" requires a named MCP server for "mcp_toolset".')
+                server_name = str(server["name"])
+                if server_name in mcp_toolset_names:
+                    raise UnsupportedFeatureError(
+                        f'Provider "anthropic" does not support multiple "mcp_toolset" entries for MCP server "{server_name}".'
+                    )
+                mcp_toolset_names.add(server_name)
+                payload = {
+                    "type": "mcp_toolset",
+                    "mcp_server_name": server_name,
+                }
+                if config.get("default_config") is not None:
+                    payload["default_config"] = deepcopy(config["default_config"])
+                if config.get("configs") is not None:
+                    payload["configs"] = deepcopy(config["configs"])
+                if config.get("cache_control") is not None:
+                    payload["cache_control"] = deepcopy(config["cache_control"])
+                mapped.append(payload)
+                continue
+
+            payload = {"type": tool.type, "name": tool.name}
+            if isinstance(tool.config, dict):
+                payload.update(deepcopy(tool.config))
+            mapped.append(payload)
+            continue
         payload = {
             "name": tool.name,
             "description": tool.description,
@@ -449,16 +518,99 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
     return mapped
 
 
+def _extract_mcp_servers_from_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return None
+    servers: dict[str, dict[str, Any]] = {}
+    for tool in tools.values():
+        if is_callable_tool_definition(tool) or tool.type != "mcp_toolset":
+            continue
+        if tool.provider not in (None, "anthropic"):
+            raise UnsupportedFeatureError(
+                f'Provider "anthropic" does not support hosted tools declared for provider "{tool.provider}".'
+            )
+        config = tool.config if isinstance(tool.config, dict) else {}
+        server = deepcopy(config.get("server")) if isinstance(config, dict) else None
+        if not isinstance(server, dict) or not server.get("name") or not server.get("url"):
+            raise UnsupportedFeatureError(
+                'Provider "anthropic" requires MCP toolsets to declare "server.name" and "server.url".'
+            )
+        existing = servers.get(server["name"])
+        if existing is not None and existing != server:
+            raise UnsupportedFeatureError(
+                f'Provider "anthropic" received conflicting MCP server definitions for "{server["name"]}".'
+            )
+        servers[server["name"]] = server
+    return list(servers.values()) or None
+
+
 def _merge_tool_payloads(
     mapped_tools: list[dict[str, Any]] | None,
     provider_options: dict[str, Any],
+    *,
+    mcp_servers: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
     options = dict(provider_options)
     extra_tools = options.pop("tools", None)
+    extra_mcp_servers = options.get("mcp_servers")
+    if extra_mcp_servers is not None and not isinstance(extra_mcp_servers, list):
+        raise ValidationError('Provider "anthropic" expects "provider_options[\'mcp_servers\']" to be a list when provided.')
+    mapped_mcp_server_names = {
+        str(server.get("name"))
+        for server in mcp_servers or []
+        if isinstance(server, dict) and server.get("name")
+    }
+    if isinstance(extra_mcp_servers, list):
+        seen_extra_servers: dict[str, dict[str, Any]] = {}
+        normalized_extra_servers: list[dict[str, Any]] = []
+        for item in extra_mcp_servers:
+            server_payload: dict[str, Any] | None = None
+            if isinstance(item, HostedToolDefinition):
+                if item.type != "mcp_toolset":
+                    raise ValidationError(
+                        'Provider "anthropic" only accepts MCP toolset helpers inside "provider_options[\'mcp_servers\']".'
+                    )
+                config = item.config if isinstance(item.config, dict) else {}
+                server = deepcopy(config.get("server")) if isinstance(config, dict) else None
+                if isinstance(server, dict):
+                    server_payload = server
+            elif isinstance(item, dict):
+                server_payload = deepcopy(item)
+            if not isinstance(server_payload, dict):
+                raise ValidationError(
+                    'Provider "anthropic" expects "provider_options[\'mcp_servers\']" entries to be dictionaries.'
+                )
+            name = server_payload.get("name")
+            if not name:
+                raise ValidationError(
+                    'Provider "anthropic" requires each "provider_options[\'mcp_servers\']" entry to declare "name".'
+                )
+            name = str(name)
+            existing = seen_extra_servers.get(name)
+            if existing is not None and existing != server_payload:
+                raise UnsupportedFeatureError(
+                    f'Provider "anthropic" received conflicting MCP server definitions for "{name}".'
+                )
+            seen_extra_servers[name] = deepcopy(server_payload)
+            normalized_extra_servers.append(server_payload)
+            if name in mapped_mcp_server_names:
+                raise UnsupportedFeatureError(
+                    f'Provider "anthropic" does not support declaring MCP server "{name}" in both hosted toolsets and "provider_options[\'mcp_servers\']".'
+                )
+        extra_mcp_servers = normalized_extra_servers
+    if mcp_servers:
+        merged_mcp_servers = [*mcp_servers, *(deepcopy(extra_mcp_servers) if isinstance(extra_mcp_servers, list) else [])]
+        options["mcp_servers"] = merged_mcp_servers
     if extra_tools is None:
         return mapped_tools, options
     if not isinstance(extra_tools, list):
         raise ValidationError('Provider "anthropic" expects "provider_options[\'tools\']" to be a list when provided.')
+    if mapped_tools and any(
+        isinstance(item, dict) and item.get("type") == "mcp_toolset" for item in mapped_tools
+    ) and any(isinstance(item, dict) and item.get("type") == "mcp_toolset" for item in extra_tools):
+        raise UnsupportedFeatureError(
+            'Provider "anthropic" does not support mixing first-class "mcp_toolset" tools with raw "provider_options[\'tools\']" MCP toolsets.'
+        )
     merged = [*list(mapped_tools or []), *(serialize_json_value(item) for item in extra_tools)]
     return merged or None, options
 
@@ -855,7 +1007,11 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
             built_messages = [ModelMessage(role="system", parts=[TextPart(text=system)]), *built_messages]
         validate_message_parts(self, built_messages)
         extracted_options, request_betas = _extract_provider_options(provider_options)
-        body_tools, extracted_options = _merge_tool_payloads(_map_tools(tools), extracted_options)
+        body_tools, extracted_options = _merge_tool_payloads(
+            _map_tools(tools),
+            extracted_options,
+            mcp_servers=_extract_mcp_servers_from_tools(tools),
+        )
         body = drop_none(
             {
                 "model": model_id,
@@ -912,7 +1068,11 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         validate_message_parts(self, input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         provider_options, request_betas = _extract_provider_options(input.provider_options)
-        body_tools, provider_options = _merge_tool_payloads(_map_tools(input.tools), provider_options)
+        body_tools, provider_options = _merge_tool_payloads(
+            _map_tools(input.tools),
+            provider_options,
+            mcp_servers=_extract_mcp_servers_from_tools(input.tools),
+        )
         body = drop_none(
             {
                 "model": self.model_id,
@@ -965,7 +1125,11 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         validate_message_parts(self, input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         provider_options, request_betas = _extract_provider_options(input.provider_options)
-        body_tools, provider_options = _merge_tool_payloads(_map_tools(input.tools), provider_options)
+        body_tools, provider_options = _merge_tool_payloads(
+            _map_tools(input.tools),
+            provider_options,
+            mcp_servers=_extract_mcp_servers_from_tools(input.tools),
+        )
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -1175,6 +1339,7 @@ def create_anthropic(
     return create_provider_bundle(
         name="anthropic",
         native=native,
+        agent_capabilities=ANTHROPIC_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

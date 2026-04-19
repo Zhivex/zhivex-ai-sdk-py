@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import json
-from dataclasses import is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from typing import Any
 
 from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
+    AgentCapabilities,
+    AgentSupportTier,
     ContentPart,
     FilePart,
     FinishReason,
     GenerateResult,
+    HostedToolClass,
+    HostedToolDefinition,
     ImagePart,
     LanguageModel,
     MCPToolConfig,
     MessageRole,
     ModelMessage,
+    ProviderDataPart,
     RemoteHTTPToolConfig,
     TextPart,
     ToolCall,
@@ -38,6 +43,10 @@ def tool_result_part(tool_result: ToolExecutionResult) -> ToolResultPart:
     return ToolResultPart(tool_result=tool_result)
 
 
+def provider_data_part(provider: str, data: Any) -> ProviderDataPart:
+    return ProviderDataPart(provider=provider, data=data)
+
+
 def _normalize_message_parts(input: str | list[ContentPart]) -> list[ContentPart]:
     return [text_part(input)] if isinstance(input, str) else input
 
@@ -58,6 +67,18 @@ def assistant(input: str | list[ContentPart]) -> ModelMessage:
     return ModelMessage(role="assistant", parts=_normalize_message_parts(input))
 
 
+def get_agent_capabilities(model: LanguageModel) -> AgentCapabilities:
+    capabilities = getattr(model, "capabilities", None)
+    configured = getattr(capabilities, "agent_capabilities", None)
+    if configured is None:
+        return AgentCapabilities()
+    return replace(configured)
+
+
+def get_agent_support_tier(model: LanguageModel) -> AgentSupportTier:
+    return get_agent_capabilities(model).support_tier
+
+
 def get_text_from_parts(parts: list[ContentPart]) -> str:
     return "".join(part.text for part in parts if isinstance(part, TextPart))
 
@@ -70,9 +91,79 @@ def get_text_from_result(result: GenerateResult) -> str:
     return get_text_from_messages(result_messages(result))
 
 
+def get_provider_data_parts(value: Any, *, provider: str | None = None) -> list[ProviderDataPart]:
+    collected: list[ProviderDataPart] = []
+
+    def visit(node: Any) -> None:
+        if node is None:
+            return
+        if isinstance(node, ProviderDataPart):
+            if provider is None or node.provider == provider:
+                collected.append(node)
+            return
+        if isinstance(node, ModelMessage):
+            for part in node.parts:
+                visit(part)
+            return
+        if isinstance(node, GenerateResult):
+            for message in result_messages(node):
+                visit(message)
+            return
+        if hasattr(node, "messages") and isinstance(getattr(node, "messages"), list):
+            for message in getattr(node, "messages"):
+                visit(message)
+            return
+        if hasattr(node, "steps") and isinstance(getattr(node, "steps"), list):
+            for step in getattr(node, "steps"):
+                response = getattr(step, "response", None)
+                if response is not None:
+                    visit(response)
+            return
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                visit(item)
+
+    visit(value)
+    return collected
+
+
+def get_last_provider_data_part(value: Any, *, provider: str | None = None) -> ProviderDataPart | None:
+    parts = get_provider_data_parts(value, provider=provider)
+    return parts[-1] if parts else None
+
+
+def get_provider_data_entries(
+    value: Any,
+    *,
+    provider: str | None = None,
+    parser: Any | None = None,
+    data_type: str | None = None,
+) -> list[Any]:
+    entries: list[Any] = []
+    for part in get_provider_data_parts(value, provider=provider):
+        parsed = parser(part) if parser is not None else getattr(part, "data", None)
+        if parsed is None:
+            continue
+        if data_type is not None and getattr(parsed, "type", None) != data_type:
+            continue
+        entries.append(parsed)
+    return entries
+
+
+def get_last_provider_data_entry(
+    value: Any,
+    *,
+    provider: str | None = None,
+    parser: Any | None = None,
+    data_type: str | None = None,
+) -> Any:
+    entries = get_provider_data_entries(value, provider=provider, parser=parser, data_type=data_type)
+    return entries[-1] if entries else None
+
+
 def _to_json_compatible(value: Any) -> Any:
     if is_dataclass(value):
-        return {k: _to_json_compatible(v) for k, v in value.__dict__.items()}
+        return {k: _to_json_compatible(v) for k, v in asdict(value).items()}
     if isinstance(value, dict):
         return {str(k): _to_json_compatible(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -82,6 +173,73 @@ def _to_json_compatible(value: Any) -> Any:
 
 def serialize_json_value(value: Any) -> Any:
     return json.loads(json.dumps(_to_json_compatible(value)))
+
+
+def _infer_hosted_tool_class(
+    *,
+    tool_type: str,
+    config: Any = None,
+) -> HostedToolClass:
+    normalized_type = tool_type.lower()
+
+    if (
+        "web_search" in normalized_type
+        or "web-search" in normalized_type
+        or "googlesearch" in normalized_type
+        or normalized_type == "google_search"
+    ):
+        return "web-search"
+    if "file_search" in normalized_type or "file-search" in normalized_type or normalized_type == "filesearch":
+        return "file-search"
+    if normalized_type == "mcp":
+        return "remote-mcp"
+    if "mcp_toolset" in normalized_type or "mcp-toolset" in normalized_type:
+        return "toolset"
+    if "computer_use" in normalized_type or "computer-use" in normalized_type:
+        return "computer-use"
+    if "codeexecution" in normalized_type or "code_execution" in normalized_type or "code-execution" in normalized_type:
+        return "code-execution"
+    if isinstance(config, dict):
+        if "toolset" in normalized_type or "tools" in config:
+            return "toolset"
+    return "custom"
+
+
+def hosted_tool(
+    *,
+    name: str,
+    type: str,
+    provider: str | None = None,
+    config: Any = None,
+    tool_class: HostedToolClass | None = None,
+    requires_approval: bool | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> HostedToolDefinition:
+    return HostedToolDefinition(
+        name=name,
+        provider=provider,
+        type=type,
+        config=serialize_json_value(config) if config is not None else None,
+        tool_class=tool_class or _infer_hosted_tool_class(tool_type=type, config=config),
+        requires_approval=requires_approval,
+        metadata=dict(metadata or {}),
+    )
+
+
+def is_hosted_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> bool:
+    return isinstance(tool_definition, HostedToolDefinition) or getattr(tool_definition, "kind", None) == "hosted"
+
+
+def is_callable_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> bool:
+    return not is_hosted_tool_definition(tool_definition)
+
+
+def get_hosted_tool_class(tool_definition: HostedToolDefinition) -> HostedToolClass:
+    return tool_definition.tool_class or _infer_hosted_tool_class(tool_type=tool_definition.type, config=tool_definition.config)
+
+
+def is_hosted_tool_class(tool_definition: HostedToolDefinition, tool_class: HostedToolClass) -> bool:
+    return get_hosted_tool_class(tool_definition) == tool_class
 
 
 def tool(
@@ -236,3 +394,5 @@ def validate_message_parts(model: LanguageModel, messages: list[ModelMessage]) -
                 raise UnsupportedFeatureError(
                     f'Model "{model.provider}/{model.model_id}" does not support tool calling.'
                 )
+            if part.type == "provider-data" and not isinstance(part, ProviderDataPart):
+                raise ValidationError("Provider data parts must be created with provider_data_part(...).")

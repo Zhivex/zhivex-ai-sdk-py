@@ -23,6 +23,7 @@ from zhivex_ai import (
     UnsupportedFeatureError,
     ToolChoiceName,
     ValidationError,
+    assistant,
     create_openai,
     create_openrouter,
     create_qwen,
@@ -45,21 +46,35 @@ from zhivex_ai import (
     openai_inline_skill_source,
     openai_local_shell_tool,
     openai_local_skill,
+    openai_mcp_approval_response,
     openai_mcp_tool,
     openai_namespace_tool,
     openai_network_policy_allowlist,
     openai_response_options,
+    openai_response_reference,
     openai_shell_environment,
     openai_shell_tool,
     openai_skill_reference,
     openai_tool_search_tool,
     openai_user_location,
     openai_web_search_tool,
+    get_openai_response_id,
+    get_openai_response_reference,
+    provider_data_part,
+    parse_openai_provider_data_part,
     stream_text,
     tool,
     transcribe_audio,
+    user,
 )
-from zhivex_ai.types import ModelMessage, TextPart
+from zhivex_ai.providers.openai import (  # noqa: E402
+    get_last_openai_mcp_call,
+    get_last_openai_mcp_list_tools_event,
+    get_openai_mcp_calls,
+    get_openai_mcp_list_tools_events,
+    openai_provider_data_tool_call,
+)
+from zhivex_ai.types import ModelMessage, OpenAIMcpApprovalResponse, TextPart
 
 
 @dataclass
@@ -1432,15 +1447,16 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             store=True,
         )
 
-        self.assertEqual(search_tool["type"], "web_search")
-        self.assertEqual(search_tool["user_location"]["city"], "Buenos Aires")
-        self.assertEqual(file_tool["filters"]["filters"][0]["value"], "es")
-        self.assertEqual(image_tool["output_format"], "webp")
-        self.assertEqual(shell_tool["environment"]["type"], "local")
-        self.assertEqual(code_tool["container"]["type"], "auto")
-        self.assertEqual(code_tool["container"]["network_policy"]["domain_secrets"][0]["name"], "TOKEN")
-        self.assertEqual(namespace_tool["tools"][0]["format"]["type"], "grammar")
-        self.assertEqual(tool_search_tool["type"], "tool_search")
+        self.assertEqual(search_tool.type, "web_search")
+        self.assertEqual(search_tool.tool_class, "web-search")
+        self.assertEqual(search_tool.config["user_location"]["city"], "Buenos Aires")
+        self.assertEqual(file_tool.config["filters"]["filters"][0]["value"], "es")
+        self.assertEqual(image_tool.config["output_format"], "webp")
+        self.assertEqual(shell_tool.config["environment"]["type"], "local")
+        self.assertEqual(code_tool.config["container"]["type"], "auto")
+        self.assertEqual(code_tool.config["container"]["network_policy"]["domain_secrets"][0]["name"], "TOKEN")
+        self.assertEqual(namespace_tool.config["tools"][0]["format"]["type"], "grammar")
+        self.assertEqual(tool_search_tool.type, "tool_search")
         self.assertEqual(inline_skill["source"]["type"], "base64")
         self.assertEqual(skill_ref["type"], "skill_reference")
         self.assertEqual(openai_custom_tool_format_text()["type"], "text")
@@ -1486,6 +1502,302 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(requests[0]["json"]["background"])
         self.assertEqual(requests[0]["json"]["conversation"], "conv_123")
         self.assertEqual(requests[0]["json"]["previous_response_id"], "resp_prev")
+
+    async def test_openai_response_reference_helpers_extract_from_parts_messages_and_results(self) -> None:
+        response_part = openai_response_reference(response_id="resp_from_part")
+        response_message = assistant([response_part])
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "id": "resp_from_result",
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+        response_result = await generate_text(
+            model=create_openai(
+                api_key="test",
+                fetch=fetch,
+            ).native.language_model("gpt-4o-mini"),
+            prompt="hello",
+        )
+
+        self.assertEqual(get_openai_response_reference(response_part).response_id, "resp_from_part")  # type: ignore[union-attr]
+        self.assertEqual(get_openai_response_id(response_message), "resp_from_part")
+        self.assertEqual(get_openai_response_id(response_result), "resp_from_result")
+
+    async def test_openai_response_options_accepts_previous_response_objects(self) -> None:
+        option_from_part = openai_response_options(previous_response=openai_response_reference(response_id="resp_part"))
+        option_from_message = openai_response_options(
+            previous_response=assistant([provider_data_part("openai", {"response_id": "resp_message"})])
+        )
+
+        self.assertEqual(option_from_part["previous_response_id"], "resp_part")
+        self.assertEqual(option_from_message["previous_response_id"], "resp_message")
+
+    async def test_openai_maps_hosted_tools_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gpt-4o-mini"),
+            prompt="hello",
+            tools={
+                "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True}),
+                "search": openai_web_search_tool(search_context_size="high"),
+                "mcp": openai_mcp_tool(server_url="https://mcp.example.com", server_label="Example MCP"),
+            },
+        )
+
+        mapped_tools = requests[0]["json"]["tools"]
+        self.assertEqual(mapped_tools[0]["type"], "function")
+        self.assertEqual(mapped_tools[1]["type"], "web_search")
+        self.assertEqual(mapped_tools[1]["search_context_size"], "high")
+        self.assertEqual(mapped_tools[2]["type"], "mcp")
+        self.assertEqual(mapped_tools[2]["server_label"], "Example MCP")
+
+    async def test_openai_maps_mcp_approval_response_provider_data_parts(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gpt-4o-mini"),
+            messages=[
+                assistant([openai_mcp_approval_response(approval_request_id="apr_123", approve=True)]),
+                user("continue"),
+            ],
+        )
+
+        self.assertEqual(requests[0]["json"]["input"][0]["type"], "mcp_approval_response")
+        self.assertEqual(requests[0]["json"]["input"][0]["approval_request_id"], "apr_123")
+        self.assertTrue(requests[0]["json"]["input"][0]["approve"])
+
+    async def test_openai_parse_helper_recognizes_typed_and_legacy_provider_data(self) -> None:
+        typed_part = openai_mcp_approval_response(approval_request_id="apr_typed", approve=True)
+        legacy_payload = provider_data_part(
+            "openai",
+            {"type": "mcp_approval_response", "approval_request_id": "apr_legacy", "approve": False},
+        )
+
+        typed = parse_openai_provider_data_part(typed_part)
+        legacy = parse_openai_provider_data_part(legacy_payload)
+
+        self.assertIsInstance(typed, OpenAIMcpApprovalResponse)
+        self.assertEqual(typed.approval_request_id, "apr_typed")
+        self.assertIsInstance(legacy, OpenAIMcpApprovalResponse)
+        self.assertEqual(legacy.approval_request_id, "apr_legacy")
+        self.assertFalse(legacy.approve)
+
+    async def test_openai_parses_provider_data_parts_from_responses_payload(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body, "stream": stream})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "id": "resp_123",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "mcp_approval_request",
+                            "id": "apr_123",
+                            "arguments": '{"query":"apollo"}',
+                            "name": "docs_search",
+                            "server_label": "Docs",
+                        },
+                        {
+                            "type": "mcp_call",
+                            "id": "call_123",
+                            "arguments": '{"query":"apollo"}',
+                            "name": "docs_search",
+                            "server_label": "Docs",
+                            "status": "completed",
+                        },
+                        {
+                            "type": "mcp_list_tools",
+                            "id": "list_123",
+                            "server_label": "Docs",
+                            "tools": [{"name": "docs_search"}],
+                        },
+                    ],
+                },
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("gpt-4o-mini"),
+            prompt="hello",
+        )
+
+        provider_parts = [part for part in result.steps[0].response.messages[0].parts if getattr(part, "type", None) == "provider-data"]
+        self.assertEqual(len(provider_parts), 4)
+        self.assertEqual(parse_openai_provider_data_part(provider_parts[0]).response_id, "resp_123")  # type: ignore[union-attr]
+        self.assertEqual(getattr(parse_openai_provider_data_part(provider_parts[1]), "type", None), "mcp_approval_request")
+        self.assertEqual(getattr(parse_openai_provider_data_part(provider_parts[2]), "type", None), "mcp_call")
+        self.assertEqual(getattr(parse_openai_provider_data_part(provider_parts[3]), "type", None), "mcp_list_tools")
+
+    async def test_openai_provider_data_helpers_extract_mcp_events(self) -> None:
+        message = assistant(
+            [
+                openai_response_reference(response_id="resp_1"),
+                provider_data_part(
+                    "openai",
+                    {
+                        "type": "mcp_call",
+                        "id": "call_1",
+                        "arguments": '{"query":"apollo"}',
+                        "name": "docs_search",
+                        "server_label": "Docs",
+                        "status": "completed",
+                    },
+                ),
+                provider_data_part(
+                    "openai",
+                    {
+                        "type": "mcp_list_tools",
+                        "id": "list_1",
+                        "server_label": "Docs",
+                        "tools": [{"name": "docs_search"}],
+                    },
+                ),
+            ]
+        )
+
+        mcp_calls = get_openai_mcp_calls(message)
+        mcp_list_tools_events = get_openai_mcp_list_tools_events(message)
+
+        self.assertEqual(len(mcp_calls), 1)
+        self.assertEqual(mcp_calls[0].id, "call_1")
+        self.assertEqual(get_last_openai_mcp_call(message).server_label, "Docs")  # type: ignore[union-attr]
+        self.assertEqual(len(mcp_list_tools_events), 1)
+        self.assertEqual(mcp_list_tools_events[0].id, "list_1")
+        self.assertEqual(get_last_openai_mcp_list_tools_event(message).server_label, "Docs")  # type: ignore[union-attr]
+
+    async def test_openai_provider_data_tool_call_helper_normalizes_mcp_events(self) -> None:
+        mcp_call = openai_provider_data_tool_call(
+            provider_data_part(
+                "openai",
+                {
+                    "type": "mcp_call",
+                    "id": "call_1",
+                    "arguments": '{"query":"apollo"}',
+                    "name": "docs_search",
+                    "server_label": "Docs",
+                    "status": "completed",
+                },
+            )
+        )
+        list_tools_call = openai_provider_data_tool_call(
+            provider_data_part(
+                "openai",
+                {
+                    "type": "mcp_list_tools",
+                    "id": "list_1",
+                    "server_label": "Docs",
+                    "tools": [{"name": "docs_search"}],
+                },
+            )
+        )
+
+        self.assertEqual(mcp_call.name, "docs_search")  # type: ignore[union-attr]
+        self.assertEqual(mcp_call.input["query"], "apollo")  # type: ignore[union-attr]
+        self.assertTrue(mcp_call.provider_metadata["provider_managed"])  # type: ignore[union-attr]
+        self.assertEqual(mcp_call.provider_metadata["provider_event_type"], "mcp_call")  # type: ignore[union-attr]
+        self.assertEqual(list_tools_call.name, "mcp_list_tools")  # type: ignore[union-attr]
+        self.assertEqual(list_tools_call.input["tools"][0]["name"], "docs_search")  # type: ignore[union-attr]
+
+    async def test_openai_stream_emits_provider_data_events_for_mcp_items(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={},
+                body_text=(
+                    'data: {"type":"response.output_item.done","item":{"type":"mcp_approval_request","id":"apr_1","arguments":"{\\"query\\":\\"apollo\\"}","name":"docs_search","server_label":"Docs"}}\n\n'
+                    'data: {"type":"response.completed","response":{"id":"resp_456","status":"completed"}}\n\n'
+                ),
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stream = stream_text(
+            model=provider.native.language_model("gpt-4o-mini"),
+            prompt="hello",
+        )
+        events = [event async for event in stream.event_stream()]
+        result = await stream.collect()
+
+        provider_events = [event for event in events if event.type == "provider-data"]
+        self.assertEqual(len(provider_events), 2)
+        self.assertEqual(getattr(provider_events[0].data, "type", None), "mcp_approval_request")
+        self.assertEqual(getattr(provider_events[1].data, "response_id", None), "resp_456")
+        provider_parts = [part for part in result.steps[0].response.messages[0].parts if getattr(part, "type", None) == "provider-data"]
+        self.assertEqual(len(provider_parts), 2)
 
     async def test_openai_exposes_conversations_client(self) -> None:
         requests: list[dict[str, Any]] = []

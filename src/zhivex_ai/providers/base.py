@@ -5,6 +5,7 @@ from typing import Callable
 
 from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
+    AgentCapabilities,
     BatchesClient,
     CountTokensClient,
     ContainersClient,
@@ -343,6 +344,7 @@ class ProviderBundle:
     native: ProviderAdapter
     portable_support: PortableSupport
     native_support: NativeSupport
+    agent_capabilities: AgentCapabilities
     tier: str
 
     def __call__(self, model_id: str) -> PortableLanguageModel:
@@ -430,6 +432,7 @@ def create_provider_bundle(
     name: str,
     native: ProviderAdapter,
     portable_support: PortableSupport,
+    agent_capabilities: AgentCapabilities,
 ) -> ProviderBundle:
     return ProviderBundle(
         name=name,
@@ -437,6 +440,7 @@ def create_provider_bundle(
         native=native,
         portable_support=portable_support,
         native_support=build_native_support(native),
+        agent_capabilities=agent_capabilities,
         tier=portable_support.tier,
     )
 

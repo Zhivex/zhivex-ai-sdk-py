@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
+from ..messages import hosted_tool, is_callable_tool_definition
 from ..messages import normalize_finish_reason, validate_file_part, validate_message_parts
 from ..realtime import (
     CallbackRealtimeSession,
@@ -27,6 +28,8 @@ from ..realtime import (
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    AgentCapabilities,
+    HostedToolDefinition,
     AudioFrame,
     AudioInput,
     CodeExecutionResultPart,
@@ -104,6 +107,14 @@ GEMINI_CAPABILITIES = ModelCapabilities(
     embeddings=True,
     reasoning=True,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
 )
 
 GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
@@ -120,6 +131,14 @@ GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=True,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
 )
 
 GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
@@ -136,6 +155,7 @@ GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+    agent_capabilities=AgentCapabilities(),
 )
 
 GEMINI_TRANSCRIPTION_CAPABILITIES = replace(
@@ -158,6 +178,14 @@ GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
     realtime=True,
     realtime_audio_input=True,
     realtime_audio_output=True,
@@ -183,28 +211,47 @@ _BUILT_IN_TOOL_NAME_MAP = {
 }
 
 
-def gemini_hosted_tool(tool_type: str, /, **config: Any) -> dict[str, Any]:
-    return {tool_type: drop_none(deepcopy(config)) if config else {}}
+def gemini_hosted_tool(
+    tool_type: str,
+    /,
+    *,
+    name: str | None = None,
+    tool_class: str | None = None,
+    **config: Any,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name or tool_type,
+        provider="gemini",
+        type=tool_type,
+        tool_class=tool_class,  # type: ignore[arg-type]
+        config=drop_none(deepcopy(config)) if config else {},
+    )
 
 
-def gemini_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("google_search", excludeDomains=list(exclude_domains or []) if exclude_domains else None, **extra)
+def gemini_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool(
+        "google_search",
+        name="google_search",
+        tool_class="web-search",
+        excludeDomains=list(exclude_domains or []) if exclude_domains else None,
+        **extra,
+    )
 
 
-def gemini_google_maps_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("google_maps", **config)
+def gemini_google_maps_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("google_maps", name="google_maps", **config)
 
 
-def gemini_url_context_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("url_context", **config)
+def gemini_url_context_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("url_context", name="url_context", **config)
 
 
-def gemini_code_execution_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("code_execution", **config)
+def gemini_code_execution_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("code_execution", name="code_execution", tool_class="code-execution", **config)
 
 
-def gemini_computer_use_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("computer_use", **config)
+def gemini_computer_use_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("computer_use", name="computer_use", tool_class="computer-use", **config)
 
 
 def gemini_file_search_tool(
@@ -212,13 +259,21 @@ def gemini_file_search_tool(
     file_search_store_names: list[str],
     filters: dict[str, Any] | None = None,
     **extra: Any,
-) -> dict[str, Any]:
+) -> HostedToolDefinition:
     return gemini_hosted_tool(
         "file_search",
+        name="file_search",
+        tool_class="file-search",
         fileSearchStoreNames=list(file_search_store_names),
         filters=deepcopy(filters) if filters is not None else None,
         **extra,
     )
+
+
+def _gemini_hosted_payload(tool: HostedToolDefinition) -> dict[str, Any]:
+    canonical = _normalize_builtin_tool_name(tool.type) or tool.type
+    config = deepcopy(tool.config) if isinstance(tool.config, dict) else {}
+    return {canonical: config}
 
 
 def _system_instruction(messages: list[ModelMessage]) -> dict[str, Any] | None:
@@ -380,8 +435,15 @@ def _extract_raw_tools(provider_options: dict[str, Any] | None) -> list[dict[str
 
 def _validate_builtin_tool_combination(function_tools: dict[str, Any] | None, builtin_tools: list[dict[str, Any]]) -> None:
     names = [next(iter(tool.keys())) for tool in builtin_tools if isinstance(tool, dict) and tool]
+    for singleton_name in ("fileSearch", "computerUse", "urlContext"):
+        if names.count(singleton_name) > 1:
+            raise UnsupportedFeatureError(
+                f'Provider "gemini" does not support declaring "{singleton_name}" more than once in a single request.'
+            )
     if "fileSearch" in names and (len(names) > 1 or bool(function_tools)):
         raise UnsupportedFeatureError('Provider "gemini" does not support combining "file_search" with other tools.')
+    if "computerUse" in names and (len(names) > 1 or bool(function_tools)):
+        raise UnsupportedFeatureError('Provider "gemini" does not support combining "computer_use" with other tools.')
     if "urlContext" in names and function_tools:
         raise UnsupportedFeatureError('Provider "gemini" does not support combining "url_context" with function calling.')
 
@@ -434,7 +496,14 @@ def _map_tools(
     force_google_search: bool = False,
 ) -> list[dict[str, Any]] | None:
     mapped: list[dict[str, Any]] = []
-    if tools:
+    callable_tools: dict[str, Any] = {}
+    hosted_tools: list[dict[str, Any]] = []
+    for tool in (tools or {}).values():
+        if is_callable_tool_definition(tool):
+            callable_tools[tool.name] = tool
+        else:
+            hosted_tools.append(_gemini_hosted_payload(tool))
+    if callable_tools:
         mapped.append(
             {
                 "functionDeclarations": [
@@ -447,21 +516,23 @@ def _map_tools(
                             else create_schema_adapter(tool.schema).json_schema()
                         ),
                     }
-                    for tool in tools.values()
+                    for tool in callable_tools.values()
                 ]
             }
         )
     builtin_tools = _extract_builtin_tools(provider_options)
+    builtin_tools = [*hosted_tools, *builtin_tools]
     if force_google_search and not any("googleSearch" in tool for tool in builtin_tools):
         builtin_tools.insert(0, _google_search_tool())
-    _validate_builtin_tool_combination(tools, builtin_tools)
+    _validate_builtin_tool_combination(callable_tools or None, builtin_tools)
     mapped.extend(builtin_tools)
     mapped.extend(_extract_raw_tools(provider_options))
     return mapped or None
 
 
 def _map_tool_config(tools: dict[str, Any] | None, tool_choice: str | ToolChoiceName | None) -> dict[str, Any] | None:
-    if not tools or tool_choice is None or tool_choice == "auto":
+    callable_tools = {name: tool for name, tool in (tools or {}).items() if is_callable_tool_definition(tool)}
+    if not callable_tools or tool_choice is None or tool_choice == "auto":
         return None
     if tool_choice == "none":
         return {"functionCallingConfig": {"mode": "NONE"}}
@@ -2051,6 +2122,7 @@ def create_gemini(
     return create_provider_bundle(
         name="gemini",
         native=native,
+        agent_capabilities=GEMINI_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

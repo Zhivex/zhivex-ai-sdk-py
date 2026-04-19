@@ -27,9 +27,10 @@ from ._serde import (
 )
 from .errors import ProviderHTTPError, ValidationError
 from .generate_text import generate_text, stream_text
-from .messages import create_text_message, tool_result_part
+from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
 from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
 from .types import (
+    AnyToolDefinition,
     AudioFrame,
     FinishReason,
     GenerateTextOutput,
@@ -51,6 +52,7 @@ from .types import (
     RealtimeToolCallEvent,
     RealtimeToolResultEvent,
     RealtimeTranscriptEvent,
+    StreamProviderDataEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     StreamToolResultEvent,
@@ -428,13 +430,15 @@ class AgentSession:
 
 
 class ToolRuntime(Protocol):
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any: ...
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any: ...
 
     async def aclose(self) -> None: ...
 
 
 class LocalToolRuntime:
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the local tool runtime.')
         if definition.execute is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define a local executor.')
         result = _invoke_tool_callable(definition.execute, input, context)
@@ -448,7 +452,7 @@ class UnsupportedToolRuntime:
     def __init__(self, source: str) -> None:
         self._source = source
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
         raise RuntimeError(
             f'Tool "{definition.name}" uses source "{self._source}", but no runtime is configured for that source.'
         )
@@ -461,7 +465,9 @@ class HTTPRemoteToolRuntime:
     def __init__(self, *, fetch: Any = None) -> None:
         self._fetch = fetch or default_fetch
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the remote tool runtime.')
         config: RemoteHTTPToolConfig | None = definition.remote_config
         if config is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define a remote_config.')
@@ -600,7 +606,9 @@ class MCPToolRuntime:
             tools = result.get("tools")
         return list(tools or [])
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the MCP tool runtime.')
         config: MCPToolConfig | None = definition.mcp_config
         if config is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define an mcp_config.')
@@ -632,14 +640,14 @@ class ToolRegistry:
         }
         self._runtimes.update(runtimes or {})
 
-    def register(self, definition: ToolDefinition) -> ToolDefinition:
+    def register(self, definition: AnyToolDefinition) -> AnyToolDefinition:
         self._tools[definition.name] = definition
         return definition
 
-    def get(self, name: str) -> ToolDefinition | None:
+    def get(self, name: str) -> AnyToolDefinition | None:
         return self._tools.get(name)
 
-    def items(self) -> list[tuple[str, ToolDefinition]]:
+    def items(self) -> list[tuple[str, AnyToolDefinition]]:
         return list(self._tools.items())
 
     async def __aenter__(self) -> "ToolRegistry":
@@ -659,7 +667,9 @@ class ToolRegistry:
             merged.register(definition)
         return merged
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the local agent runtime.')
         runtime = self._runtimes.get(definition.source, UnsupportedToolRuntime(definition.source))
         return await runtime.execute(definition, input, context)
 
@@ -909,6 +919,11 @@ class AgentToolApprovalEvent:
     tool_input: Any = None
     approved: bool = True
     reason: str | None = None
+    provider: str | None = None
+    provider_managed: bool = False
+    approval_request_id: str | None = None
+    tool_source: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -1872,6 +1887,122 @@ def _normalize_guardrail_result(value: GuardrailResult | bool | None) -> Guardra
     raise TypeError("Guardrails must return GuardrailResult, bool, or None.")
 
 
+@dataclass(slots=True)
+class _ProviderManagedApproval:
+    provider: str
+    approval_request_id: str
+    tool_name: str
+    tool_input: Any
+    server_label: str | None
+    raw_payload: Any
+
+
+@dataclass(slots=True)
+class _ProviderManagedToolTraceEvent:
+    provider: str
+    event_key: str
+    tool_call: ToolCall
+    raw_payload: Any
+
+
+def _decode_provider_managed_arguments(arguments: Any) -> Any:
+    if not isinstance(arguments, str):
+        return arguments
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+
+
+def _parse_provider_managed_approval_part(part: Any) -> _ProviderManagedApproval | None:
+    if getattr(part, "type", None) != "provider-data":
+        return None
+    provider = str(getattr(part, "provider", "") or "")
+    if provider == "openai":
+        from .providers.openai import parse_openai_provider_data_part
+
+        parsed = parse_openai_provider_data_part(part)
+    elif provider == "azure-openai":
+        from .providers.azure_openai import parse_azure_openai_provider_data_part
+
+        parsed = parse_azure_openai_provider_data_part(part)
+    else:
+        return None
+    if parsed is None or getattr(parsed, "type", None) != "mcp_approval_request":
+        return None
+    return _ProviderManagedApproval(
+        provider=provider,
+        approval_request_id=str(getattr(parsed, "id", "") or ""),
+        tool_name=str(getattr(parsed, "name", "") or ""),
+        tool_input=_decode_provider_managed_arguments(getattr(parsed, "arguments", "")),
+        server_label=str(getattr(parsed, "server_label", "") or "") or None,
+        raw_payload=parsed,
+    )
+
+
+def _provider_managed_event_key(provider: str, payload: Any) -> str:
+    event_type = str(getattr(payload, "type", "") or payload.__class__.__name__)
+    identifier = getattr(payload, "id", None) or getattr(payload, "approval_request_id", None) or getattr(payload, "response_id", None)
+    if identifier:
+        return f"{provider}:{event_type}:{identifier}"
+    try:
+        stable_payload = json.dumps(asdict(payload) if is_dataclass(payload) else payload, sort_keys=True, default=str)
+    except TypeError:
+        stable_payload = repr(payload)
+    return f"{provider}:{event_type}:{stable_payload}"
+
+
+def _parse_provider_managed_tool_trace_part(part: Any) -> _ProviderManagedToolTraceEvent | None:
+    if getattr(part, "type", None) != "provider-data":
+        return None
+    provider = str(getattr(part, "provider", "") or "")
+    if provider == "openai":
+        from .providers.openai import openai_provider_data_tool_call, parse_openai_provider_data_part
+
+        parsed = parse_openai_provider_data_part(part)
+        tool_call = openai_provider_data_tool_call(parsed) if parsed is not None else None
+    elif provider == "azure-openai":
+        from .providers.azure_openai import azure_openai_provider_data_tool_call, parse_azure_openai_provider_data_part
+
+        parsed = parse_azure_openai_provider_data_part(part)
+        tool_call = azure_openai_provider_data_tool_call(parsed) if parsed is not None else None
+    else:
+        return None
+    if parsed is None or tool_call is None:
+        return None
+    return _ProviderManagedToolTraceEvent(
+        provider=provider,
+        event_key=_provider_managed_event_key(provider, parsed),
+        tool_call=tool_call,
+        raw_payload=parsed,
+    )
+
+
+def _provider_managed_approval_response_message(
+    approval: _ProviderManagedApproval,
+    *,
+    approved: bool,
+    reason: str | None = None,
+) -> ModelMessage:
+    if approval.provider == "openai":
+        from .providers.openai import openai_mcp_approval_response
+
+        part = openai_mcp_approval_response(
+            approval_request_id=approval.approval_request_id,
+            approve=approved,
+            reason=reason,
+        )
+    else:
+        from .providers.azure_openai import azure_openai_mcp_approval_response
+
+        part = azure_openai_mcp_approval_response(
+            approval_request_id=approval.approval_request_id,
+            approve=approved,
+            reason=reason,
+        )
+    return ModelMessage(role="assistant", parts=[part])
+
+
 def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMessage]:
     messages = list(result.messages)
     if messages:
@@ -2156,6 +2287,28 @@ def _segment_provider_finish_reason(result: GenerateTextOutput) -> str | None:
     if result.steps:
         return result.steps[-1].response.provider_finish_reason
     return result.provider_finish_reason
+
+
+def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
+    present = [usage for usage in usages if usage is not None]
+    if not present:
+        return None
+    input_tokens = (
+        sum(usage.input_tokens for usage in present if usage.input_tokens is not None)
+        if all(usage.input_tokens is not None for usage in present)
+        else None
+    )
+    output_tokens = (
+        sum(usage.output_tokens for usage in present if usage.output_tokens is not None)
+        if all(usage.output_tokens is not None for usage in present)
+        else None
+    )
+    total_tokens = (
+        sum(usage.total_tokens for usage in present if usage.total_tokens is not None)
+        if all(usage.total_tokens is not None for usage in present)
+        else None
+    )
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
 
 
 def _response_messages(step: GenerateTextStep) -> list[ModelMessage]:
@@ -2620,66 +2773,180 @@ class AgentRuntime:
         )
         buffer_live_text = live_stream and agent.model.capabilities.streaming and bool(agent.output_guardrails)
         buffered_text_deltas: list[str] = []
+        accumulated_steps: list[GenerateTextStep] = []
+        accumulated_tool_results: list[ToolExecutionResult] = []
+        conversation_messages = list(built_messages)
+        persisted_run_messages: list[ModelMessage] = []
+        remaining_steps = _effective_max_steps(agent.run_limits, max_steps)
+
+        async def resolve_provider_managed_approval(
+            approval: _ProviderManagedApproval,
+        ) -> ModelMessage:
+            if agent.approval_policy is None:
+                raise RuntimeError(
+                    "Provider-managed approvals require an approval_policy on the agent."
+                )
+            trace.approval_count += 1
+            request = ToolApprovalRequest(
+                run_id=run_id,
+                session_id=session.id,
+                agent_name=agent.name,
+                tool_name=approval.tool_name,
+                tool_input=approval.tool_input,
+                tool_permissions=[],
+                tool_source="hosted",
+                tool_metadata={
+                    "provider": approval.provider,
+                    "server_label": approval.server_label,
+                    "hosted_tool_class": "remote-mcp",
+                    "provider_event_type": "mcp_approval_request",
+                    "raw_provider_payload": approval.raw_payload,
+                },
+                context=context,
+                handoff_path=list(trace.orchestration_path),
+            )
+            decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
+            await emit(
+                AgentToolApprovalEvent(
+                    tool_name=approval.tool_name,
+                    tool_input=approval.tool_input,
+                    approved=decision.approved,
+                    reason=decision.reason,
+                    provider=approval.provider,
+                    provider_managed=True,
+                    approval_request_id=approval.approval_request_id,
+                    tool_source="hosted",
+                    metadata={
+                        "provider": approval.provider,
+                        "server_label": approval.server_label,
+                        "hosted_tool_class": "remote-mcp",
+                        "provider_event_type": "mcp_approval_request",
+                        "raw_provider_payload": approval.raw_payload,
+                    },
+                )
+            )
+            return _provider_managed_approval_response_message(
+                approval,
+                approved=decision.approved,
+                reason=decision.reason,
+            )
+
         try:
             emitted_live_text = False
             emitted_live_tool_events = False
-            if live_stream and agent.model.capabilities.streaming:
+            while True:
+                if remaining_steps is not None and remaining_steps <= 0:
+                    raise RuntimeError("Agent run exceeded max steps while handling provider-managed approvals.")
+                pending_provider_responses: list[ModelMessage] = []
+                handled_provider_approvals: set[str] = set()
+                handled_provider_tool_events: set[str] = set()
+                if live_stream and agent.model.capabilities.streaming:
 
-                async def handle_stream_event(event: Any) -> None:
-                    nonlocal emitted_live_text, emitted_live_tool_events
-                    if isinstance(event, StreamTextDeltaEvent):
-                        if buffer_live_text:
-                            buffered_text_deltas.append(event.text_delta)
-                        else:
-                            emitted_live_text = True
-                            await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
-                    elif isinstance(event, StreamToolCallEvent):
-                        emitted_live_tool_events = True
-                        await emit(AgentToolCallEvent(tool_call=event.tool_call))
-                    elif isinstance(event, StreamToolResultEvent):
-                        emitted_live_tool_events = True
-                        await emit(AgentToolResultEvent(tool_result=event.tool_result))
+                    async def handle_stream_event(event: Any) -> None:
+                        nonlocal emitted_live_text, emitted_live_tool_events
+                        if isinstance(event, StreamTextDeltaEvent):
+                            if buffer_live_text:
+                                buffered_text_deltas.append(event.text_delta)
+                            else:
+                                emitted_live_text = True
+                                await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
+                        elif isinstance(event, StreamToolCallEvent):
+                            emitted_live_tool_events = True
+                            await emit(AgentToolCallEvent(tool_call=event.tool_call))
+                        elif isinstance(event, StreamToolResultEvent):
+                            emitted_live_tool_events = True
+                            await emit(AgentToolResultEvent(tool_result=event.tool_result))
+                        elif isinstance(event, StreamProviderDataEvent):
+                            provider_part = provider_data_part(event.provider, event.data)
+                            provider_tool_event = _parse_provider_managed_tool_trace_part(provider_part)
+                            if (
+                                provider_tool_event is not None
+                                and provider_tool_event.event_key not in handled_provider_tool_events
+                            ):
+                                handled_provider_tool_events.add(provider_tool_event.event_key)
+                                emitted_live_tool_events = True
+                                await emit(AgentToolCallEvent(tool_call=provider_tool_event.tool_call))
+                            approval = _parse_provider_managed_approval_part(provider_part)
+                            if approval is None or approval.approval_request_id in handled_provider_approvals:
+                                return
+                            handled_provider_approvals.add(approval.approval_request_id)
+                            pending_provider_responses.append(await resolve_provider_managed_approval(approval))
 
-                streamed = stream_text(
-                    model=agent.model,
-                    messages=built_messages,
-                    tools=merged_tools or None,
-                    tool_choice=tool_choice,
-                    tool_execution=tool_execution,
-                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
-                    max_retries=max_retries,
-                    retry_backoff_ms=retry_backoff_ms,
-                    on_event=handle_stream_event,
-                )
-                result = await streamed.collect()
-            else:
-                result = await generate_text(
-                    model=agent.model,
-                    messages=built_messages,
-                    tools=merged_tools or None,
-                    tool_choice=tool_choice,
-                    tool_execution=tool_execution,
-                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
-                    max_retries=max_retries,
-                    retry_backoff_ms=retry_backoff_ms,
-                )
+                    streamed = stream_text(
+                        model=agent.model,
+                        messages=conversation_messages,
+                        tools=merged_tools or None,
+                        tool_choice=tool_choice,
+                        tool_execution=tool_execution,
+                        max_steps=remaining_steps,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                        max_retries=max_retries,
+                        retry_backoff_ms=retry_backoff_ms,
+                        on_event=handle_stream_event,
+                    )
+                    result = await streamed.collect()
+                else:
+                    result = await generate_text(
+                        model=agent.model,
+                        messages=conversation_messages,
+                        tools=merged_tools or None,
+                        tool_choice=tool_choice,
+                        tool_execution=tool_execution,
+                        max_steps=remaining_steps,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                        max_retries=max_retries,
+                        retry_backoff_ms=retry_backoff_ms,
+                    )
+
+                accumulated_steps.extend(result.steps)
+                accumulated_tool_results.extend(result.tool_results)
+                if remaining_steps is not None:
+                    remaining_steps -= max(1, len(result.steps))
+
+                new_response_messages: list[ModelMessage] = []
+                for step in result.steps:
+                    response_messages = _response_messages(step)
+                    if response_messages:
+                        new_response_messages.extend(response_messages)
+                        conversation_messages.extend(response_messages)
+                        persisted_run_messages.extend(response_messages)
+                for tool_result in result.tool_results:
+                    tool_message = ModelMessage(role="tool", parts=[tool_result_part(tool_result)])
+                    conversation_messages.append(tool_message)
+                    persisted_run_messages.append(tool_message)
+
+                for message in new_response_messages:
+                    for part in message.parts:
+                        provider_tool_event = _parse_provider_managed_tool_trace_part(part)
+                        if provider_tool_event is not None and provider_tool_event.event_key not in handled_provider_tool_events:
+                            handled_provider_tool_events.add(provider_tool_event.event_key)
+                            await emit(AgentToolCallEvent(tool_call=provider_tool_event.tool_call))
+                        approval = _parse_provider_managed_approval_part(part)
+                        if approval is None or approval.approval_request_id in handled_provider_approvals:
+                            continue
+                        handled_provider_approvals.add(approval.approval_request_id)
+                        pending_provider_responses.append(await resolve_provider_managed_approval(approval))
+
+                if pending_provider_responses:
+                    conversation_messages.extend(pending_provider_responses)
+                    persisted_run_messages.extend(pending_provider_responses)
+                    continue
+                break
         except Exception as error:
             self._finish_span(span, error=error)
             raise
         self._finish_span(span, attributes={"finish.reason": result.finish_reason})
 
         if not emitted_live_tool_events:
-            for tool_call in _extract_tool_calls_from_steps(result.steps):
+            for tool_call in _extract_tool_calls_from_steps(accumulated_steps):
                 await emit(AgentToolCallEvent(tool_call=tool_call))
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
@@ -2687,7 +2954,7 @@ class AgentRuntime:
         if segment_text and not emitted_live_text and not buffer_live_text:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if not emitted_live_tool_events:
-            for tool_result in result.tool_results:
+            for tool_result in accumulated_tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
         await self._run_output_guardrails(
             agent=agent,
@@ -2706,16 +2973,12 @@ class AgentRuntime:
                     await emit(AgentTextDeltaEvent(text_delta=text_delta))
             elif segment_text:
                 await emit(AgentTextDeltaEvent(text_delta=segment_text))
-
         transcript = list(session.messages)
         if messages is not None:
             transcript.extend(messages)
         elif prompt is not None:
             transcript.append(create_text_message("user", prompt))
-        for step in result.steps:
-            transcript.extend(_response_messages(step))
-        for tool_result in result.tool_results:
-            transcript.append(ModelMessage(role="tool", parts=[tool_result_part(tool_result)]))
+        transcript.extend(persisted_run_messages)
         session.messages = _strip_runtime_system_messages(transcript, agent.instructions)
         if agent.memory is not None and _should_refresh_summary(agent.memory, session):
             summary_span = self._start_span(
@@ -2745,14 +3008,22 @@ class AgentRuntime:
 
         await _save_checkpoints(
             checkpoint_store=agent.checkpoint_store,
-            result=result,
+            result=GenerateTextOutput(
+                text=segment_text,
+                finish_reason=segment_finish_reason,
+                provider_finish_reason=segment_provider_finish_reason,
+                usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+                steps=accumulated_steps,
+                messages=conversation_messages,
+                tool_results=accumulated_tool_results,
+            ),
             run_id=run_id,
             session_id=session.id,
             agent_name=agent.name,
             emit=emit,
             trace=trace,
         )
-        artifacts = _extract_skill_artifacts(result.tool_results)
+        artifacts = _extract_skill_artifacts(accumulated_tool_results)
         if artifacts:
             session.metadata = {
                 **session.metadata,
@@ -2768,7 +3039,7 @@ class AgentRuntime:
                     for artifact in artifacts
                 ],
             }
-        handoff = _detect_handoff(result.tool_results)
+        handoff = _detect_handoff(accumulated_tool_results)
         return AgentRunResult(
             run_id=run_id,
             agent_name=agent.name,
@@ -2776,10 +3047,10 @@ class AgentRuntime:
             text=segment_text,
             finish_reason=segment_finish_reason,
             provider_finish_reason=segment_provider_finish_reason,
-            usage=result.usage,
-            steps=result.steps,
-            messages=result.messages,
-            tool_results=result.tool_results,
+            usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+            steps=accumulated_steps,
+            messages=conversation_messages,
+            tool_results=accumulated_tool_results,
             artifacts=artifacts,
             trace=trace,
             handoff=handoff,

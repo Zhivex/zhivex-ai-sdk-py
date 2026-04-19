@@ -5,13 +5,16 @@ from typing import Any
 
 from .schema import create_schema_adapter
 from .types import (
+    AnyToolDefinition,
     CodeExecutionResultPart,
     GenerateResult,
     GeneratedCodePart,
+    HostedToolDefinition,
     MCPServerConfig,
     MCPToolConfig,
     ModelGenerateInput,
     ModelMessage,
+    ProviderDataPart,
     RemoteHTTPToolConfig,
     StructuredOutputConfig,
     TokenUsage,
@@ -125,6 +128,12 @@ def serialize_content_part(part: Any) -> dict[str, Any]:
             "cache_control": _json_compatible(getattr(part, "cache_control", None)),
             "provider_metadata": _json_compatible(getattr(part, "provider_metadata", {})),
         }
+    if getattr(part, "type", None) == "provider-data":
+        return {
+            "type": "provider-data",
+            "provider": getattr(part, "provider", ""),
+            "data": _json_compatible(getattr(part, "data", None)),
+        }
     if getattr(part, "type", None) == "tool-call":
         return {"type": "tool-call", "tool_call": serialize_tool_call(part.tool_call)}
     if getattr(part, "type", None) == "tool-result":
@@ -181,6 +190,11 @@ def deserialize_content_part(payload: dict[str, Any]) -> Any:
         )
     if part_type == "tool-call":
         return ToolCallPart(tool_call=deserialize_tool_call(dict(payload.get("tool_call") or {})))
+    if part_type == "provider-data":
+        return ProviderDataPart(
+            provider=str(payload.get("provider", "")),
+            data=payload.get("data"),
+        )
     if part_type == "tool-result":
         return ToolResultPart(tool_result=deserialize_tool_execution_result(dict(payload.get("tool_result") or {})))
     if part_type == "generated-code":
@@ -293,7 +307,18 @@ def deserialize_mcp_tool_config(payload: dict[str, Any] | None) -> MCPToolConfig
     return MCPToolConfig(server=server, tool_name=str(payload.get("tool_name", "")))
 
 
-def serialize_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
+def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
+    if isinstance(definition, HostedToolDefinition) or getattr(definition, "kind", None) == "hosted":
+        return {
+            "kind": "hosted",
+            "name": definition.name,
+            "provider": definition.provider,
+            "type": definition.type,
+            "config": _json_compatible(definition.config),
+            "tool_class": definition.tool_class,
+            "requires_approval": definition.requires_approval,
+            "metadata": _json_compatible(definition.metadata),
+        }
     return {
         "name": definition.name,
         "description": definition.description,
@@ -315,7 +340,17 @@ def serialize_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
     }
 
 
-def deserialize_tool_definition(payload: dict[str, Any]) -> ToolDefinition:
+def deserialize_tool_definition(payload: dict[str, Any]) -> AnyToolDefinition:
+    if payload.get("kind") == "hosted":
+        return HostedToolDefinition(
+            name=str(payload.get("name", "")),
+            provider=payload.get("provider"),
+            type=str(payload.get("type", "")),
+            config=payload.get("config"),
+            tool_class=payload.get("tool_class"),
+            requires_approval=payload.get("requires_approval"),
+            metadata=dict(payload.get("metadata") or {}),
+        )
     schema_payload = payload.get("schema")
     schema: Any = {}
     if isinstance(schema_payload, dict):

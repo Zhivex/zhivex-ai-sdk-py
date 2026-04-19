@@ -4,7 +4,6 @@ import argparse
 import asyncio
 from dataclasses import asdict
 import json
-from pathlib import Path
 from typing import Any
 
 from .skillpacks import install_skill, list_installed_skills, publish_skill, run_skill, validate_skill

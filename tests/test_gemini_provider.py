@@ -21,10 +21,14 @@ from zhivex_ai import (
     ToolChoiceName,
     create_gemini,
     create_vertex,
+    gemini_code_execution_tool,
+    gemini_computer_use_tool,
+    gemini_file_search_tool,
     gemini_google_search_tool,
     generate_grounded_text,
     generate_speech,
     generate_text,
+    hosted_tool,
     tool,
     vertex_external_search_tool,
     vertex_google_maps_tool,
@@ -364,7 +368,168 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertNotIn("built_in_tools", requests[0])
 
     async def test_gemini_hosted_tool_builder_is_exported(self) -> None:
-        self.assertEqual(gemini_google_search_tool(), {"google_search": {}})
+        tool = gemini_google_search_tool()
+        self.assertEqual(tool.type, "google_search")
+        self.assertEqual(tool.tool_class, "web-search")
+        self.assertEqual(tool.config, {})
+
+    async def test_gemini_maps_hosted_tools_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gemini-2.5-flash"),
+            prompt="hello",
+            tools={
+                "weather": tool(name="weather", schema=dict[str, str], execute=lambda input: {"ok": True}),
+                "search": gemini_google_search_tool(),
+                "code": gemini_code_execution_tool(),
+            },
+        )
+
+        self.assertEqual(requests[0]["tools"][0]["functionDeclarations"][0]["name"], "weather")
+        self.assertEqual(requests[0]["tools"][1], {"googleSearch": {}})
+        self.assertEqual(requests[0]["tools"][2], {"codeExecution": {}})
+
+    async def test_gemini_maps_file_search_hosted_tool_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gemini-2.5-flash"),
+            prompt="hello",
+            tools={
+                "files": gemini_file_search_tool(file_search_store_names=["fileSearchStores/alpha"]),
+            },
+        )
+
+        self.assertEqual(
+            requests[0]["tools"][0],
+            {"fileSearch": {"fileSearchStoreNames": ["fileSearchStores/alpha"]}},
+        )
+
+    async def test_gemini_rejects_combining_file_search_with_function_tools(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("gemini-2.5-flash"),
+                prompt="hello",
+                tools={
+                    "lookup": tool(name="lookup", schema=dict[str, str], execute=lambda input: input),
+                    "files": gemini_file_search_tool(file_search_store_names=["fileSearchStores/alpha"]),
+                },
+            )
+
+        self.assertIn('combining "file_search" with other tools', str(context.exception))
+
+    async def test_gemini_maps_computer_use_hosted_tool_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gemini-2.5-flash"),
+            prompt="hello",
+            tools={
+                "computer": gemini_computer_use_tool(display_name="Browser"),
+            },
+        )
+
+        self.assertEqual(requests[0]["tools"][0], {"computerUse": {"display_name": "Browser"}})
+
+    async def test_gemini_rejects_combining_computer_use_with_other_tools(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("gemini-2.5-flash"),
+                prompt="hello",
+                tools={
+                    "search": gemini_google_search_tool(),
+                    "computer": gemini_computer_use_tool(display_name="Browser"),
+                },
+            )
+
+        self.assertIn('combining "computer_use" with other tools', str(context.exception))
+
+    async def test_vertex_rejects_duplicate_computer_use_tool_declarations(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any],
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("gemini-2.5-flash"),
+                prompt="hello",
+                tools={
+                    "computer_a": hosted_tool(
+                        name="computer_a",
+                        provider="vertex",
+                        type="computer_use",
+                        tool_class="computer-use",
+                        config={"display_name": "Browser A"},
+                    ),
+                    "computer_b": hosted_tool(
+                        name="computer_b",
+                        provider="vertex",
+                        type="computer_use",
+                        tool_class="computer-use",
+                        config={"display_name": "Browser B"},
+                    ),
+                },
+            )
+
+        self.assertIn('declaring "computerUse" more than once', str(context.exception))
 
     async def test_gemini_grounded_language_model_returns_sources(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -460,8 +625,11 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
 
     async def test_vertex_hosted_tool_builders_are_exported(self) -> None:
-        self.assertEqual(vertex_google_search_tool(), {"google_search": {}})
-        self.assertEqual(vertex_google_maps_tool(enable_widget=False), {"google_maps": {"enable_widget": False}})
+        google_search = vertex_google_search_tool()
+        google_maps = vertex_google_maps_tool(enable_widget=False)
+        self.assertEqual(google_search.type, "google_search")
+        self.assertEqual(google_maps.type, "google_maps")
+        self.assertEqual(google_maps.config, {"enable_widget": False})
         self.assertEqual(
             vertex_vertex_ai_search_tool(datastore="projects/p/locations/global/collections/default_collection/dataStores/docs"),
             {

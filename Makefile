@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test test-cov lint typecheck smoke compile check build release-check clean
+.PHONY: dev test test-cov lint typecheck smoke compile support-matrix-check check build release-check clean
 
 dev:
 	uv venv .venv
@@ -24,7 +24,10 @@ smoke:
 compile:
 	$(PYTHON) -m compileall src tests examples
 
-check: compile lint typecheck test-cov
+support-matrix-check:
+	$(PYTHON) scripts/generate_support_matrix.py --check-readme
+
+check: compile lint typecheck support-matrix-check test-cov
 
 build:
 	$(PYTHON) -m build --no-isolation --outdir dist

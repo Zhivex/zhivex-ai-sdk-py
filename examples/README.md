@@ -64,8 +64,10 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/text/openai_text.py
 .venv/bin/python examples/text/stream_text.py
 .venv/bin/python examples/text/structured_output.py
+.venv/bin/python examples/text/native_hosted_tools.py
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/stream_agent.py
+.venv/bin/python examples/agents/provider_managed_approvals.py
 .venv/bin/python examples/agents/mcp_tools.py
 .venv/bin/python examples/realtime/openai_realtime.py
 ```
@@ -82,6 +84,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/text/structured_output.py
 .venv/bin/python examples/text/embeddings.py
 .venv/bin/python examples/text/grounded_text.py
+.venv/bin/python examples/text/native_hosted_tools.py
 ```
 
 ### Agents
@@ -92,6 +95,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/resume_agent.py
 .venv/bin/python examples/agents/messages_and_tools.py
 .venv/bin/python examples/agents/remote_tool.py
+.venv/bin/python examples/agents/provider_managed_approvals.py
 .venv/bin/python examples/agents/mcp_tools.py
 .venv/bin/python examples/agents/skills.py
 ```
@@ -146,6 +150,8 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `skills.py` shows the provider-agnostic agent-skill runtime, which is separate from the native OpenAI Skills API.
+- `native_hosted_tools.py` is the compact production-style example for mixing local callable tools with provider-managed hosted tools on OpenAI or Azure OpenAI native models.
+- `provider_managed_approvals.py` is the compact production-style example for OpenAI/Azure remote MCP approvals with `stream_agent(...)` and `approval_policy`.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.

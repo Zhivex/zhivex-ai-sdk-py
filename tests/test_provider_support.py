@@ -53,6 +53,7 @@ class ProviderSupportTests(TestCase):
         )
         tiers = {row.provider: (row.tier, row.portable_badge) for row in rows}
         native = {row.provider: row.native_support for row in rows}
+        agent = {row.provider: row.agent_capabilities for row in rows}
 
         self.assertEqual(tiers["openai"], ("portable", True))
         self.assertEqual(tiers["anthropic"], ("portable", True))
@@ -71,6 +72,18 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["openai"].containers)
         self.assertTrue(native["openai"].skills)
         self.assertTrue(native["anthropic"].files)
+        self.assertEqual(agent["openai"].support_tier, "tier-a")
+        self.assertTrue(agent["openai"].approval_requests)
+        self.assertTrue(agent["openai"].remote_mcp)
+        self.assertEqual(agent["anthropic"].support_tier, "tier-b")
+        self.assertTrue(agent["anthropic"].code_execution)
+        self.assertTrue(agent["anthropic"].toolsets)
+        self.assertTrue(agent["gemini"].hosted_file_search)
+        self.assertTrue(agent["gemini"].computer_use)
+        self.assertTrue(agent["vertex"].hosted_file_search)
+        self.assertTrue(agent["vertex"].computer_use)
+        self.assertEqual(agent["bedrock"].support_tier, "tier-c")
+        self.assertFalse(agent["bedrock"].tool_choice_none)
 
         markdown = render_provider_support_markdown(rows)
         self.assertIn("### Tier-1 Providers", markdown)
@@ -80,6 +93,9 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| openai | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
+        self.assertIn("### Agent Capabilities", markdown)
+        self.assertIn("| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |", markdown)
+        self.assertIn("| anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(

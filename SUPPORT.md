@@ -16,6 +16,11 @@ Related documents:
 - Stable APIs are the main compatibility contract for production integrations.
 - Stable agent integrations include the core runtime, session helpers, portable agent skills, MCP helper path, MCP-backed registries, and Postgres-backed memory/checkpoint stores documented in [STABILITY.md](./STABILITY.md).
 - Beta APIs are supported for early adoption, but they may still evolve between minor releases with changelog coverage.
+- Beta provider capability metadata describes current provider agent ergonomics, but it is not a stable behavioral guarantee yet.
+- Beta hosted-tool definitions and `provider-data` control parts describe the preferred native tool-registration path, but provider-specific execution semantics may still evolve between minor releases.
+- Beta provider-managed approval flows currently cover OpenAI and Azure OpenAI only, including typed `provider-data` payload parsing and agent-runtime approval-policy integration.
+- Beta response-reference helpers and `provider-data` UI chunks are supported for OpenAI/Azure continuation workflows and observability, but their exact ergonomics may still evolve between minor releases.
+- The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
 - Experimental APIs are available for evaluation and feedback, but they do not carry support or compatibility guarantees.
 
 ## What qualifies for patch releases

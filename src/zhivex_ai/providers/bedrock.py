@@ -10,6 +10,7 @@ from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, encode_audio_frame, tool_result_payload, unsupported_browser_token
 from ..runtime import with_retry
 from ..types import (
+    AgentCapabilities,
     AudioFrame,
     GenerateResult,
     LanguageModel,
@@ -50,6 +51,10 @@ BEDROCK_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-c",
+        tool_choice_none=False,
+    ),
 )
 
 BEDROCK_REALTIME_CAPABILITIES = ModelCapabilities(
@@ -66,6 +71,10 @@ BEDROCK_REALTIME_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-c",
+        tool_choice_none=False,
+    ),
     realtime=True,
     realtime_audio_input=True,
     realtime_audio_output=True,
@@ -280,6 +289,7 @@ def create_bedrock(
     return create_provider_bundle(
         name="bedrock",
         native=native,
+        agent_capabilities=BEDROCK_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=False,

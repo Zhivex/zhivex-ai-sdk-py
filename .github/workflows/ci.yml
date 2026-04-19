@@ -26,6 +26,9 @@ jobs:
       - name: Compile sources
         run: python -m compileall src tests examples
 
+      - name: Check generated support matrix
+        run: python scripts/generate_support_matrix.py --check-readme
+
       - name: Run Ruff
         run: python -m ruff check src tests examples
 

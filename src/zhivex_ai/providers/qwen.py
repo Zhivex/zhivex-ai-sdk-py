@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
 from ..runtime import with_retry
-from ..types import ModelCapabilities, PortableSupport, RetryOptions, SpeechModel, SpeechOutput
+from ..types import AgentCapabilities, ModelCapabilities, PortableSupport, RetryOptions, SpeechModel, SpeechOutput
 from .base import create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
@@ -171,6 +171,7 @@ def create_qwen(
     return create_provider_bundle(
         name="qwen",
         native=native,
+        agent_capabilities=native.language_model("").capabilities.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

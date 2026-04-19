@@ -10,7 +10,7 @@ from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
 from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import CountTokensResult, EmbedResult, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
+from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
@@ -493,6 +493,7 @@ def create_vertex(
     return create_provider_bundle(
         name="vertex",
         native=native,
+        agent_capabilities=GEMINI_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

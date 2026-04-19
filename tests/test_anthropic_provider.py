@@ -217,6 +217,96 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(assistant_blocks[0]["type"], "thinking")
         self.assertEqual(assistant_blocks[1]["type"], "tool_use")
 
+    async def test_anthropic_maps_hosted_tools_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+                headers={},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="hello",
+            tools={
+                "lookup": tool(name="lookup", schema=dict[str, str], execute=lambda input: {"ok": True}),
+                "search": anthropic_web_search_tool(max_uses=2),
+                "mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"]),
+                "code": anthropic_code_execution_tool(),
+            },
+        )
+
+        self.assertEqual(requests[0]["tools"][0]["name"], "lookup")
+        self.assertEqual(requests[0]["tools"][1]["type"], "web_search_20250305")
+        self.assertEqual(requests[0]["tools"][2]["type"], "mcp_toolset")
+        self.assertEqual(requests[0]["tools"][2]["mcp_server_name"], "example-mcp")
+        self.assertEqual(requests[0]["tools"][3]["type"], "code_execution_20250825")
+        self.assertEqual(requests[0]["mcp_servers"][0]["name"], "example-mcp")
+        self.assertEqual(requests[0]["mcp_servers"][0]["url"], "https://mcp.example.com")
+
+    async def test_anthropic_rejects_duplicate_mcp_toolsets_for_same_server(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={
+                    "mcp_a": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"]),
+                    "mcp_b": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["sum"]),
+                },
+            )
+
+        self.assertIn('multiple "mcp_toolset" entries', str(context.exception))
+
+    async def test_anthropic_rejects_duplicate_mcp_server_declarations_across_tools_and_provider_options(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={"mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")},
+                provider_options={"mcp_servers": [{"name": "example-mcp", "url": "https://mcp.example.com"}]},
+            )
+
+        self.assertIn('declaring MCP server "example-mcp" in both hosted toolsets', str(context.exception))
+
+    async def test_anthropic_rejects_mixed_first_class_and_raw_mcp_toolsets(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={"mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")},
+                provider_options={"tools": [{"type": "mcp_toolset", "mcp_server_name": "backup-mcp"}]},
+            )
+
+        self.assertIn('mixing first-class "mcp_toolset" tools', str(context.exception))
+
     async def test_anthropic_rejects_forced_tool_choice_with_extended_thinking(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -739,8 +829,9 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"])
         code_execution = anthropic_code_execution_tool()
 
-        self.assertEqual(web_search["type"], "web_search_20250305")
-        self.assertEqual(web_search["max_uses"], 2)
-        self.assertEqual(mcp_server["server_name"], "example-mcp")
-        self.assertEqual(mcp_server["tool_configuration"]["allowed_tools"], ["echo"])
-        self.assertEqual(code_execution["type"], "code_execution_20250825")
+        self.assertEqual(web_search.type, "web_search_20250305")
+        self.assertEqual(web_search.config["max_uses"], 2)
+        self.assertEqual(mcp_server.type, "mcp_toolset")
+        self.assertEqual(mcp_server.config["server"]["name"], "example-mcp")
+        self.assertEqual(mcp_server.config["default_config"]["allowed_tools"], ["echo"])
+        self.assertEqual(code_execution.type, "code_execution_20250825")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .._http import Fetcher
-from ..types import PortableSupport
+from ..types import AgentCapabilities, PortableSupport
 from .base import create_provider_bundle
 from .openai_compat import create_openai_compatible_provider
 
@@ -22,6 +22,7 @@ def create_ollama(
     return create_provider_bundle(
         name="ollama",
         native=native,
+        agent_capabilities=native.language_model("").capabilities.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

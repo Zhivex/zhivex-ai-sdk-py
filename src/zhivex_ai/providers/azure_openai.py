@@ -1,13 +1,289 @@
 from __future__ import annotations
 
 import os
+import json
+from typing import Any
 
 from .._http import Fetcher
 from ..errors import ConfigurationError
+from ..messages import (
+    get_last_provider_data_entry,
+    get_provider_data_entries,
+    get_provider_data_parts,
+    hosted_tool,
+    provider_data_part,
+)
 from ..realtime import RealtimeConnectionFactory
-from ..types import PortableSupport
+from ..types import (
+    AgentCapabilities,
+    AzureOpenAIMcpApprovalRequest,
+    AzureOpenAIMcpApprovalResponse,
+    AzureOpenAIMcpCall,
+    AzureOpenAIMcpListTools,
+    AzureOpenAIProviderData,
+    AzureOpenAIResponseReference,
+    HostedToolDefinition,
+    PortableSupport,
+    ProviderDataPart,
+    ToolCall,
+)
 from .base import create_provider_bundle
-from .openai_compat import create_openai_compatible_provider
+from .openai_compat import _parse_provider_data_value, create_openai_compatible_provider
+
+
+def azure_openai_web_search_tool(
+    *,
+    search_context_size: str | None = None,
+    user_location: dict[str, object] | None = None,
+    tool_type: str = "web_search_preview",
+    **extra: object,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name="web_search",
+        provider="azure-openai",
+        type=tool_type,
+        tool_class="web-search",
+        config={
+            key: value
+            for key, value in {
+                "search_context_size": search_context_size,
+                "user_location": user_location,
+                **extra,
+            }.items()
+            if value is not None
+        },
+    )
+
+
+def azure_openai_file_search_tool(
+    *,
+    vector_store_ids: list[str],
+    filters: dict[str, object] | None = None,
+    max_num_results: int | None = None,
+    **extra: object,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name="file_search",
+        provider="azure-openai",
+        type="file_search",
+        tool_class="file-search",
+        config={
+            key: value
+            for key, value in {
+                "vector_store_ids": list(vector_store_ids),
+                "filters": filters,
+                "max_num_results": max_num_results,
+                **extra,
+            }.items()
+            if value is not None
+        },
+    )
+
+
+def azure_openai_mcp_tool(
+    *,
+    server_url: str | None = None,
+    server_label: str | None = None,
+    headers: dict[str, str] | None = None,
+    allowed_tools: list[str] | None = None,
+    require_approval: str | None = None,
+    **extra: object,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=server_label or "mcp",
+        provider="azure-openai",
+        type="mcp",
+        tool_class="remote-mcp",
+        requires_approval=require_approval != "never",
+        config={
+            key: value
+            for key, value in {
+                "server_url": server_url,
+                "server_label": server_label,
+                "headers": headers,
+                "allowed_tools": allowed_tools,
+                "require_approval": require_approval,
+                **extra,
+            }.items()
+            if value is not None
+        },
+    )
+
+
+def azure_openai_computer_use_tool(
+    *,
+    environment: str | None = None,
+    display_width: int | None = None,
+    display_height: int | None = None,
+    tool_type: str = "computer_use_preview",
+    **extra: object,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name="computer",
+        provider="azure-openai",
+        type=tool_type,
+        tool_class="computer-use",
+        config={
+            key: value
+            for key, value in {
+                "environment": environment,
+                "display_width": display_width,
+                "display_height": display_height,
+                **extra,
+            }.items()
+            if value is not None
+        },
+    )
+
+
+def azure_openai_mcp_approval_response(
+    *,
+    approval_request_id: str,
+    approve: bool,
+    id: str | None = None,
+    reason: str | None = None,
+) -> ProviderDataPart:
+    return provider_data_part(
+        "azure-openai",
+        AzureOpenAIMcpApprovalResponse(
+            approval_request_id=approval_request_id,
+            approve=approve,
+            id=id,
+            reason=reason,
+        ),
+    )
+
+
+def azure_openai_response_reference(*, response_id: str) -> ProviderDataPart:
+    return provider_data_part("azure-openai", AzureOpenAIResponseReference(response_id=response_id))
+
+
+def parse_azure_openai_provider_data_part(part: ProviderDataPart) -> AzureOpenAIProviderData | None:
+    if getattr(part, "type", None) != "provider-data":
+        return None
+    if getattr(part, "provider", "") not in {"azure-openai", "openai", ""}:
+        return None
+    data = _parse_provider_data_value(getattr(part, "data", None), "azure-openai")
+    if isinstance(
+        data,
+        (
+            AzureOpenAIResponseReference,
+            AzureOpenAIMcpApprovalRequest,
+            AzureOpenAIMcpApprovalResponse,
+            AzureOpenAIMcpCall,
+            AzureOpenAIMcpListTools,
+        ),
+    ):
+        return data
+    return None
+
+
+def get_azure_openai_response_reference(value: Any) -> AzureOpenAIResponseReference | None:
+    for part in reversed(get_provider_data_parts(value)):
+        if getattr(part, "provider", "") not in {"azure-openai", "openai"}:
+            continue
+        parsed = parse_azure_openai_provider_data_part(part)
+        if isinstance(parsed, AzureOpenAIResponseReference):
+            return parsed
+    return None
+
+
+def get_azure_openai_response_id(value: Any) -> str | None:
+    reference = get_azure_openai_response_reference(value)
+    return reference.response_id if reference is not None else None
+
+
+def get_azure_openai_provider_data(value: Any, *, data_type: str | None = None) -> list[AzureOpenAIProviderData]:
+    return get_provider_data_entries(
+        value,
+        provider="azure-openai",
+        parser=parse_azure_openai_provider_data_part,
+        data_type=data_type,
+    )
+
+
+def get_last_azure_openai_provider_data(value: Any, *, data_type: str | None = None) -> AzureOpenAIProviderData | None:
+    return get_last_provider_data_entry(
+        value,
+        provider="azure-openai",
+        parser=parse_azure_openai_provider_data_part,
+        data_type=data_type,
+    )
+
+
+def get_azure_openai_mcp_calls(value: Any) -> list[AzureOpenAIMcpCall]:
+    return [
+        entry
+        for entry in get_azure_openai_provider_data(value, data_type="mcp_call")
+        if isinstance(entry, AzureOpenAIMcpCall)
+    ]
+
+
+def get_last_azure_openai_mcp_call(value: Any) -> AzureOpenAIMcpCall | None:
+    entry = get_last_azure_openai_provider_data(value, data_type="mcp_call")
+    return entry if isinstance(entry, AzureOpenAIMcpCall) else None
+
+
+def get_azure_openai_mcp_list_tools_events(value: Any) -> list[AzureOpenAIMcpListTools]:
+    return [
+        entry
+        for entry in get_azure_openai_provider_data(value, data_type="mcp_list_tools")
+        if isinstance(entry, AzureOpenAIMcpListTools)
+    ]
+
+
+def get_last_azure_openai_mcp_list_tools_event(value: Any) -> AzureOpenAIMcpListTools | None:
+    entry = get_last_azure_openai_provider_data(value, data_type="mcp_list_tools")
+    return entry if isinstance(entry, AzureOpenAIMcpListTools) else None
+
+
+def azure_openai_provider_data_tool_call(value: ProviderDataPart | AzureOpenAIProviderData) -> ToolCall | None:
+    parsed = parse_azure_openai_provider_data_part(value) if isinstance(value, ProviderDataPart) else value
+    if isinstance(parsed, AzureOpenAIMcpCall):
+        return ToolCall(
+            id=parsed.id,
+            name=parsed.name,
+            input=_parse_json_string(parsed.arguments),
+            provider_metadata={
+                key: value
+                for key, value in {
+                    "provider": "azure-openai",
+                    "provider_managed": True,
+                    "provider_event_type": parsed.type,
+                    "server_label": parsed.server_label,
+                    "approval_request_id": parsed.approval_request_id,
+                    "status": parsed.status,
+                }.items()
+                if value is not None
+            },
+        )
+    if isinstance(parsed, AzureOpenAIMcpListTools):
+        identifier = parsed.id or f"azure_openai_mcp_list_tools_{parsed.server_label or 'default'}"
+        return ToolCall(
+            id=identifier,
+            name="mcp_list_tools",
+            input={key: value for key, value in {"server_label": parsed.server_label, "tools": parsed.tools}.items() if value is not None},
+            provider_metadata={
+                key: value
+                for key, value in {
+                    "provider": "azure-openai",
+                    "provider_managed": True,
+                    "provider_event_type": parsed.type,
+                    "server_label": parsed.server_label,
+                }.items()
+                if value is not None
+            },
+        )
+    return None
+
+
+def _parse_json_string(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 def create_azure_openai(
@@ -47,6 +323,7 @@ def create_azure_openai(
     return create_provider_bundle(
         name="azure-openai",
         native=native,
+        agent_capabilities=native.language_model("").capabilities.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

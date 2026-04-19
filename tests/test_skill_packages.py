@@ -30,7 +30,6 @@ from zhivex_ai import (  # noqa: E402
     load_skill,
     load_skill_package,
     publish_skill,
-    run_agent,
     run_skill,
 )
 from zhivex_ai.skill_cli import main as skill_cli_main  # noqa: E402

@@ -13,6 +13,8 @@ FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "error"
 StructuredOutputMode = Literal["auto", "native", "prompted"]
 ToolChoiceMode = Literal["none", "auto", "required"]
 PortableProviderTier = Literal["portable", "native-only", "compatibility"]
+AgentSupportTier = Literal["tier-a", "tier-b", "tier-c"]
+HostedToolClass = Literal["web-search", "file-search", "remote-mcp", "computer-use", "code-execution", "toolset", "custom"]
 
 
 @dataclass(slots=True)
@@ -58,6 +60,19 @@ class NativeSupport:
     skills: bool = False
     responses: bool = False
     conversations: bool = False
+
+
+@dataclass(slots=True)
+class AgentCapabilities:
+    support_tier: AgentSupportTier = "tier-c"
+    tool_choice_none: bool = False
+    approval_requests: bool = False
+    hosted_web_search: bool = False
+    hosted_file_search: bool = False
+    remote_mcp: bool = False
+    computer_use: bool = False
+    code_execution: bool = False
+    toolsets: bool = False
 
 
 @dataclass(slots=True)
@@ -162,6 +177,119 @@ class FilePart:
     citations_enabled: bool | None = None
     cache_control: dict[str, Any] | None = None
     provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ProviderDataPart:
+    type: Literal["provider-data"] = "provider-data"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
+class OpenAIResponseReference:
+    response_id: str
+
+
+@dataclass(slots=True)
+class OpenAIMcpApprovalRequest:
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+
+
+@dataclass(slots=True)
+class OpenAIMcpApprovalResponse:
+    type: Literal["mcp_approval_response"] = "mcp_approval_response"
+    approval_request_id: str = ""
+    approve: bool = False
+    id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class OpenAIMcpCall:
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: Literal["in_progress", "completed", "incomplete", "calling", "failed"] | None = None
+
+
+@dataclass(slots=True)
+class OpenAIMcpListTools:
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str | None = None
+    server_label: str | None = None
+    tools: JsonValue | None = None
+
+
+OpenAIProviderData: TypeAlias = (
+    OpenAIResponseReference
+    | OpenAIMcpApprovalRequest
+    | OpenAIMcpApprovalResponse
+    | OpenAIMcpCall
+    | OpenAIMcpListTools
+)
+
+
+@dataclass(slots=True)
+class AzureOpenAIResponseReference:
+    response_id: str
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpApprovalRequest:
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpApprovalResponse:
+    type: Literal["mcp_approval_response"] = "mcp_approval_response"
+    approval_request_id: str = ""
+    approve: bool = False
+    id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpCall:
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: Literal["in_progress", "completed", "incomplete", "calling", "failed"] | None = None
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpListTools:
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str | None = None
+    server_label: str | None = None
+    tools: JsonValue | None = None
+
+
+AzureOpenAIProviderData: TypeAlias = (
+    AzureOpenAIResponseReference
+    | AzureOpenAIMcpApprovalRequest
+    | AzureOpenAIMcpApprovalResponse
+    | AzureOpenAIMcpCall
+    | AzureOpenAIMcpListTools
+)
 
 
 @dataclass(slots=True)
@@ -491,7 +619,7 @@ class CountTokensClient(Protocol):
         prompt: str | None = None,
         messages: list["ModelMessage"] | None = None,
         system: str | None = None,
-        tools: dict[str, "ToolDefinition"] | None = None,
+        tools: dict[str, "AnyToolDefinition"] | None = None,
         provider_options: dict[str, Any] | None = None,
         options: "RetryOptions | None" = None,
     ) -> CountTokensResult: ...
@@ -824,7 +952,9 @@ class CodeExecutionResultPart:
     outcome: str | None = None
 
 
-ContentPart: TypeAlias = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart
+ContentPart: TypeAlias = (
+    TextPart | ImagePart | FilePart | ProviderDataPart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart
+)
 
 
 @dataclass(slots=True)
@@ -867,6 +997,15 @@ class UIMessageToolResultChunk:
 
 
 @dataclass(slots=True)
+class UIMessageProviderDataChunk:
+    type: Literal["provider-data"] = "provider-data"
+    message_id: str = ""
+    role: Literal["assistant"] = "assistant"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
 class UIMessageFinishChunk:
     type: Literal["finish"] = "finish"
     message_id: str = ""
@@ -886,6 +1025,7 @@ UIMessageChunk: TypeAlias = (
     UIMessageTextChunk
     | UIMessageToolCallChunk
     | UIMessageToolResultChunk
+    | UIMessageProviderDataChunk
     | UIMessageFinishChunk
     | UIMessageErrorChunk
 )
@@ -906,6 +1046,7 @@ class ModelCapabilities:
     embeddings: bool
     reasoning: bool
     web_search: bool
+    agent_capabilities: AgentCapabilities | None = None
     realtime: bool = False
     realtime_audio_input: bool = False
     realtime_audio_output: bool = False
@@ -1018,6 +1159,13 @@ class StreamToolResultEvent:
 
 
 @dataclass(slots=True)
+class StreamProviderDataEvent:
+    type: Literal["provider-data"] = "provider-data"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
 class StreamFinishEvent:
     type: Literal["finish"] = "finish"
     finish_reason: FinishReason | None = None
@@ -1032,7 +1180,12 @@ class StreamErrorEvent:
 
 
 StreamEvent: TypeAlias = (
-    StreamTextDeltaEvent | StreamToolCallEvent | StreamToolResultEvent | StreamFinishEvent | StreamErrorEvent
+    StreamTextDeltaEvent
+    | StreamToolCallEvent
+    | StreamToolResultEvent
+    | StreamProviderDataEvent
+    | StreamFinishEvent
+    | StreamErrorEvent
 )
 
 
@@ -1126,7 +1279,7 @@ ProviderOptions = dict[str, Any]
 class RealtimeSessionConfig:
     instructions: str | None = None
     voice: str | None = None
-    tools: dict[str, "ToolDefinition"] | None = None
+    tools: dict[str, "AnyToolDefinition"] | None = None
     tool_choice: ToolChoice | None = None
     input_audio_media_type: str | None = None
     output_audio_media_type: str | None = None
@@ -1149,7 +1302,7 @@ class RealtimeTokenResult:
 @dataclass(slots=True)
 class ModelGenerateInput(RetryOptions):
     messages: list[ModelMessage] = field(default_factory=list)
-    tools: dict[str, "ToolDefinition[Any]"] | None = None
+    tools: dict[str, "AnyToolDefinition"] | None = None
     tool_choice: ToolChoice | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -1347,7 +1500,7 @@ class RealtimeSession(Protocol):
         *,
         instructions: str | None = None,
         voice: str | None = None,
-        tools: dict[str, "ToolDefinition"] | None = None,
+        tools: dict[str, "AnyToolDefinition"] | None = None,
         tool_choice: ToolChoice | None = None,
         turn_detection: dict[str, Any] | None = None,
         provider_options: ProviderOptions | None = None,
@@ -1401,7 +1554,20 @@ class ToolDefinition:
     mcp_config: MCPToolConfig | None = None
 
 
-ToolSet = dict[str, ToolDefinition]
+@dataclass(slots=True)
+class HostedToolDefinition:
+    kind: Literal["hosted"] = "hosted"
+    name: str = ""
+    provider: str | None = None
+    type: str = ""
+    config: JsonValue | None = None
+    tool_class: HostedToolClass | None = None
+    requires_approval: bool | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+AnyToolDefinition: TypeAlias = ToolDefinition | HostedToolDefinition
+ToolSet = dict[str, AnyToolDefinition]
 
 
 @dataclass(slots=True)
