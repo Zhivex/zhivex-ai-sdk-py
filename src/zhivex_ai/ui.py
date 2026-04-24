@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 from .types import (
     CodeExecutionResultPart,
@@ -35,8 +38,8 @@ def _random_id() -> str:
 
 
 def _to_plain(value: Any) -> Any:
-    if is_dataclass(value):
-        return {key: _to_plain(item) for key, item in asdict(value).items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {key: _to_plain(item) for key, item in asdict(cast("DataclassInstance", value)).items()}
     if isinstance(value, dict):
         return {key: _to_plain(item) for key, item in value.items()}
     if isinstance(value, list):

@@ -20,6 +20,8 @@ Related documents:
 - Beta hosted-tool definitions and `provider-data` control parts describe the preferred native tool-registration path, but provider-specific execution semantics may still evolve between minor releases.
 - Beta provider-managed approval flows currently cover OpenAI and Azure OpenAI only, including typed `provider-data` payload parsing and agent-runtime approval-policy integration.
 - Beta response-reference helpers and `provider-data` UI chunks are supported for OpenAI/Azure continuation workflows and observability, but their exact ergonomics may still evolve between minor releases.
+- Beta Google native media/job clients cover Gemini/Vertex image, video, music/audio, batch, and interaction workflows where the official Google endpoints expose them. Preview Google models remain subject to Google availability, quota, and deprecation windows.
+- Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Kimi remains a compatibility provider rather than a tier-1 portable provider.
 - The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
 - Experimental APIs are available for evaluation and feedback, but they do not carry support or compatibility guarantees.
 
@@ -45,6 +47,10 @@ The current tier-1 providers for the stable production API story are:
 - Vertex
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. Embeddings, transcription, and speech remain unavailable on the Anthropic provider path here today.
+
+Gemini and Vertex are tier-1 for the portable production surface. Google-specific media generation, Batch API, Interactions API, Deep Research, and Veo operation workflows are exposed through native provider clients rather than the portable contract.
+
+Kimi/Moonshot is supported as a compatibility provider through `provider.native`. Its native text generation uses the official Chat Completions API, with Files, Batch, token estimation, and Formulas exposed as beta native clients.
 
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.
 

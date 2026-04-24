@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
@@ -162,8 +165,8 @@ def get_last_provider_data_entry(
 
 
 def _to_json_compatible(value: Any) -> Any:
-    if is_dataclass(value):
-        return {k: _to_json_compatible(v) for k, v in asdict(value).items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {k: _to_json_compatible(v) for k, v in asdict(cast("DataclassInstance", value)).items()}
     if isinstance(value, dict):
         return {str(k): _to_json_compatible(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):

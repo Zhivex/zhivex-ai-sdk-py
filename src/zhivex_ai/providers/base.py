@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, TypeVar
 
 from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
@@ -9,16 +9,20 @@ from ..types import (
     BatchesClient,
     CountTokensClient,
     ContainersClient,
+    EmbeddingContent,
     ConversationsClient,
     EmbeddingModel,
     FileSearchStoresClient,
     FilesClient,
+    FormulasClient,
     GroundedLanguageModel,
     GroundedModelGenerateInput,
     GroundedGenerateResult,
     LanguageModel,
     GenerateResult,
     ImagesClient,
+    InteractionsClient,
+    MediaClient,
     ModelGenerateInput,
     ModerationsClient,
     NativeSupport,
@@ -31,7 +35,10 @@ from ..types import (
     TranscriptionModel,
     TranscriptionOutput,
     UploadsClient,
+    VideosClient,
 )
+
+_ModelT = TypeVar("_ModelT")
 
 
 @dataclass(slots=True)
@@ -48,12 +55,16 @@ class ProviderAdapter:
     uploads_client_factory: Callable[[], UploadsClient] | None = None
     moderations_client_factory: Callable[[], ModerationsClient] | None = None
     batches_client_factory: Callable[[], BatchesClient] | None = None
+    videos_client_factory: Callable[[], VideosClient] | None = None
+    media_client_factory: Callable[[], MediaClient] | None = None
+    interactions_client_factory: Callable[[], InteractionsClient] | None = None
     containers_client_factory: Callable[[], ContainersClient] | None = None
     skills_client_factory: Callable[[], SkillsClient] | None = None
     count_tokens_client_factory: Callable[[], CountTokensClient] | None = None
     file_search_stores_client_factory: Callable[[], FileSearchStoresClient] | None = None
     responses_client_factory: Callable[[], ResponsesClient] | None = None
     conversations_client_factory: Callable[[], ConversationsClient] | None = None
+    formulas_client_factory: Callable[[], FormulasClient] | None = None
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
     _embedding_model_cache: dict[str, EmbeddingModel] = field(default_factory=dict, init=False, repr=False)
     _transcription_model_cache: dict[str, TranscriptionModel] = field(default_factory=dict, init=False, repr=False)
@@ -65,12 +76,16 @@ class ProviderAdapter:
     _uploads_client: UploadsClient | None = field(default=None, init=False, repr=False)
     _moderations_client: ModerationsClient | None = field(default=None, init=False, repr=False)
     _batches_client: BatchesClient | None = field(default=None, init=False, repr=False)
+    _videos_client: VideosClient | None = field(default=None, init=False, repr=False)
+    _media_client: MediaClient | None = field(default=None, init=False, repr=False)
+    _interactions_client: InteractionsClient | None = field(default=None, init=False, repr=False)
     _containers_client: ContainersClient | None = field(default=None, init=False, repr=False)
     _skills_client: SkillsClient | None = field(default=None, init=False, repr=False)
     _count_tokens_client: CountTokensClient | None = field(default=None, init=False, repr=False)
     _file_search_stores_client: FileSearchStoresClient | None = field(default=None, init=False, repr=False)
     _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
+    _formulas_client: FormulasClient | None = field(default=None, init=False, repr=False)
 
     def __call__(self, model_id: str) -> LanguageModel:
         return self.language_model(model_id)
@@ -138,6 +153,27 @@ class ProviderAdapter:
             self._batches_client = self.batches_client_factory()
         return self._batches_client
 
+    def videos(self) -> VideosClient:
+        if self.videos_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a videos client.')
+        if self._videos_client is None:
+            self._videos_client = self.videos_client_factory()
+        return self._videos_client
+
+    def media(self) -> MediaClient:
+        if self.media_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a media client.')
+        if self._media_client is None:
+            self._media_client = self.media_client_factory()
+        return self._media_client
+
+    def interactions(self) -> InteractionsClient:
+        if self.interactions_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose an interactions client.')
+        if self._interactions_client is None:
+            self._interactions_client = self.interactions_client_factory()
+        return self._interactions_client
+
     def containers(self) -> ContainersClient:
         if self.containers_client_factory is None:
             raise AttributeError(f'Provider "{self.name}" does not expose a containers client.')
@@ -180,8 +216,15 @@ class ProviderAdapter:
             self._conversations_client = self.conversations_client_factory()
         return self._conversations_client
 
+    def formulas(self) -> FormulasClient:
+        if self.formulas_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose a formulas client.')
+        if self._formulas_client is None:
+            self._formulas_client = self.formulas_client_factory()
+        return self._formulas_client
+
     @staticmethod
-    def _cached_model(cache: dict[str, object], factory: Callable[[str], object], model_id: str):
+    def _cached_model(cache: dict[str, _ModelT], factory: Callable[[str], _ModelT], model_id: str) -> _ModelT:
         model = cache.get(model_id)
         if model is None:
             model = factory(model_id)
@@ -239,7 +282,7 @@ class PortableEmbeddingModel:
     capabilities: object
     portable: bool = True
 
-    async def embed(self, values: list[str], options=None):
+    async def embed(self, values: list[EmbeddingContent], options=None):
         return await self.native_model.embed(values, options)
 
 
@@ -383,6 +426,15 @@ class ProviderBundle:
     def batches(self) -> BatchesClient:
         return self.native.batches()
 
+    def videos(self) -> VideosClient:
+        return self.native.videos()
+
+    def media(self) -> MediaClient:
+        return self.native.media()
+
+    def interactions(self) -> InteractionsClient:
+        return self.native.interactions()
+
     def containers(self) -> ContainersClient:
         return self.native.containers()
 
@@ -400,6 +452,9 @@ class ProviderBundle:
 
     def conversations(self) -> ConversationsClient:
         return self.native.conversations()
+
+    def formulas(self) -> FormulasClient:
+        return self.native.formulas()
 
 
 def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
@@ -420,6 +475,9 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         uploads=adapter.uploads_client_factory is not None,
         moderations=adapter.moderations_client_factory is not None,
         batches=adapter.batches_client_factory is not None,
+        videos=adapter.videos_client_factory is not None,
+        media=adapter.media_client_factory is not None,
+        interactions=adapter.interactions_client_factory is not None,
         containers=adapter.containers_client_factory is not None,
         skills=adapter.skills_client_factory is not None,
         responses=adapter.responses_client_factory is not None,

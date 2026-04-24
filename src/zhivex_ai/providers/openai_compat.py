@@ -130,6 +130,10 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
         return AgentCapabilities(
             support_tier="tier-c",
             tool_choice_none=True,
+            hosted_web_search=True,
+            hosted_file_search=True,
+            remote_mcp=True,
+            code_execution=True,
         )
     if provider_name == "kimi":
         return AgentCapabilities(
@@ -209,12 +213,15 @@ _PROVIDER_MANAGED_TOOL_NAMES = {
     "computer_call": "computer_use",
     "computer_call_output": "computer_use",
     "file_search_call": "file_search",
+    "image_search_call": "image_search",
     "image_generation_call": "image_generation",
     "local_shell_call": "local_shell",
     "mcp_call": "mcp",
     "shell_call": "shell",
     "tool_search_call": "tool_search",
+    "web_extractor_call": "web_extractor",
     "web_search_call": "web_search",
+    "web_search_image_call": "web_search_image",
 }
 
 _TERMINAL_RESPONSE_STATUSES = {"completed", "failed", "incomplete", "cancelled"}
@@ -343,6 +350,22 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
             content.append({"type": "input_image", "image_url": part.image})
         elif part.type == "file":
             content.append(_map_file_part(part))
+    return content
+
+
+def _map_qwen_message_content(message: ModelMessage) -> str | list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    text_chunks: list[str] = []
+    for part in message.parts:
+        if part.type == "text":
+            text_chunks.append(part.text)
+            content.append({"type": "text", "text": part.text})
+        elif part.type == "image":
+            content.append({"type": "input_image", "image_url": part.image})
+        elif part.type == "file":
+            content.append(_map_file_part(part))
+    if content and all(item.get("type") == "text" for item in content):
+        return "".join(text_chunks)
     return content
 
 
@@ -510,6 +533,46 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
                         }
                     )
         items.extend(_serialize_provider_data_input(message, provider_name))
+    return items
+
+
+def _to_qwen_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        if message.role == "system":
+            continue
+        if message.role == "tool":
+            for part in message.parts:
+                if isinstance(part, ToolResultPart):
+                    items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": part.tool_result.tool_call_id,
+                            "output": _serialize_tool_output(part.tool_result),
+                        }
+                    )
+            items.extend(_serialize_provider_data_input(message, "qwen"))
+            continue
+        content = _map_qwen_message_content(message)
+        if content:
+            items.append(
+                {
+                    "role": "assistant" if message.role == "assistant" else "user",
+                    "content": content,
+                }
+            )
+        if message.role == "assistant":
+            for part in message.parts:
+                if isinstance(part, ToolCallPart):
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": part.tool_call.id,
+                            "name": part.tool_call.name,
+                            "arguments": json.dumps(part.tool_call.input),
+                        }
+                    )
+        items.extend(_serialize_provider_data_input(message, "qwen"))
     return items
 
 
@@ -706,6 +769,12 @@ def _map_tool_choice(
         if provider_name == "openrouter" and tool_choice == "required":
             raise UnsupportedFeatureError('Provider "openrouter" does not support "tool_choice=\\"required\\"" in Responses API.')
         return tool_choice
+    if provider_name == "qwen":
+        return {
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [{"type": "function", "name": tool_choice.tool_name}],
+        }
     return {
         "type": "function",
         "name": tool_choice.tool_name,
@@ -731,6 +800,16 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
     if input.reasoning.budget_tokens is not None:
         raise UnsupportedFeatureError(f'Provider "{provider_name}" does not support "reasoning.budgetTokens".')
     return {"effort": input.reasoning.effort}
+
+
+def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
+    if input.reasoning is None:
+        return {}
+    if input.reasoning.budget_tokens is not None:
+        raise UnsupportedFeatureError('Provider "qwen" does not support "reasoning.budgetTokens" through the Responses API.')
+    if input.reasoning.effort is None:
+        return {}
+    return {"enable_thinking": input.reasoning.effort != "none"}
 
 
 def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
@@ -785,6 +864,8 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
         for content in item.get("content") or []:
             if isinstance(content, dict):
                 parts.extend(_parse_output_content_part(content))
+    elif item_type == "reasoning":
+        parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
     elif item_type == "function_call":
         parts.append(
             ToolCallPart(
@@ -871,11 +952,6 @@ def _parse_responses_message(payload: dict[str, Any], provider_name: str) -> Mod
 
 
 def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
-    if provider_name == "qwen" and input.tools:
-        raise UnsupportedFeatureError(
-            'Provider "qwen" tool calling is not currently supported through this Responses-compatible adapter. '
-            "Use a Qwen chat-completions-compatible path for tool calling."
-        )
     provider_options = deepcopy(input.provider_options or {})
     provider_tools = provider_options.pop("tools", None)
     if provider_tools is not None and not isinstance(provider_tools, list):
@@ -886,18 +962,21 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         merged_tools.extend(mapped_tools)
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
+    if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
+        raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')
     body = {
         "model": model_id,
         "instructions": _system_instructions(input.messages),
-        "input": _to_responses_input(input.messages, provider_name),
+        "input": _to_qwen_responses_input(input.messages) if provider_name == "qwen" else _to_responses_input(input.messages, provider_name),
         "tools": merged_tools or None,
         "tool_choice": _map_tool_choice(input.tool_choice, provider_name=provider_name),
         "text": _map_structured_output(input),
         "temperature": input.temperature,
         "max_output_tokens": input.max_tokens,
-        "reasoning": _map_reasoning(input, provider_name),
-        "parallel_tool_calls": True if merged_tools else None,
+        "reasoning": None if provider_name == "qwen" else _map_reasoning(input, provider_name),
+        "parallel_tool_calls": None if provider_name == "qwen" else True if merged_tools else None,
         **provider_options,
+        **(_qwen_reasoning_options(input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
     return drop_none(body)
@@ -3513,6 +3592,7 @@ def create_openai_compatible_provider(
     base_url: str,
     api_key: str | None = None,
     fetch: Fetcher | None = None,
+    responses_base_url: str | None = None,
     auth_header: str = "authorization",
     auth_prefix: str = "Bearer ",
     capabilities: ModelCapabilities | None = None,
@@ -3542,6 +3622,7 @@ def create_openai_compatible_provider(
         raise ConfigurationError(f"Missing {provider_name} API key.")
     requester = fetch or default_fetch
     base = base_url.rstrip("/")
+    responses_base = (responses_base_url or base).rstrip("/")
     provider_agent_capabilities = _openai_compat_agent_capabilities(provider_name)
     shared_capabilities = _with_agent_capabilities(capabilities or OPENAI_COMPAT_CAPABILITIES, provider_agent_capabilities)
     grounded_capabilities = _with_agent_capabilities(OPENAI_COMPAT_GROUNDED_CAPABILITIES, provider_agent_capabilities)
@@ -3554,7 +3635,7 @@ def create_openai_compatible_provider(
             provider=provider_name,
             model_id=model_id,
             api_key=resolved_key,
-            base_url=base,
+            base_url=responses_base,
             fetch=requester,
             auth_header=auth_header,
             auth_prefix=auth_prefix,
@@ -3613,7 +3694,7 @@ def create_openai_compatible_provider(
                 provider=provider_name,
                 model_id=model_id,
                 api_key=resolved_key,
-                base_url=base,
+                base_url=responses_base,
                 fetch=requester,
                 auth_header=auth_header,
                 auth_prefix=auth_prefix,

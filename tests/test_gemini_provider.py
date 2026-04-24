@@ -21,6 +21,7 @@ from zhivex_ai import (
     ToolChoiceName,
     create_gemini,
     create_vertex,
+    embed_content,
     gemini_code_execution_tool,
     gemini_computer_use_tool,
     gemini_file_search_tool,
@@ -56,6 +57,240 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
+    async def test_gemini_image_generation_client_uses_generate_content(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {"text": "done"},
+                                    {"inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgo="}},
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await provider.images().generate(prompt="draw a transit map", model="gemini-3.1-flash-image-preview")
+
+        self.assertEqual(result.images[0].b64_json, "iVBORw0KGgo=")
+        self.assertEqual(result.images[0].media_type, "image/png")
+        self.assertIn("/models/gemini-3.1-flash-image-preview:generateContent?key=test", requests[0]["url"])
+        self.assertEqual(requests[0]["json"]["generationConfig"]["responseModalities"], ["IMAGE"])
+
+    async def test_gemini_imagen_generation_client_uses_predict(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "predictions": [
+                        {"bytesBase64Encoded": "img-b64", "mimeType": "image/png", "revisedPrompt": "better prompt"}
+                    ]
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await provider.images().generate(
+            prompt="Robot holding a red skateboard",
+            model="imagen-4.0-generate-001",
+            size="2K",
+            extra_body={"parameters": {"sampleCount": 2, "aspectRatio": "16:9"}},
+        )
+
+        self.assertEqual(result.images[0].b64_json, "img-b64")
+        self.assertEqual(result.images[0].revised_prompt, "better prompt")
+        self.assertIn("/models/imagen-4.0-generate-001:predict?key=test", requests[0]["url"])
+        self.assertEqual(requests[0]["json"]["parameters"]["sampleCount"], 2)
+        self.assertEqual(requests[0]["json"]["parameters"]["aspectRatio"], "16:9")
+        self.assertEqual(requests[0]["json"]["parameters"]["imageSize"], "2K")
+
+    async def test_gemini_embedding_2_accepts_multimodal_content(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(status_code=200, payload={"embedding": {"values": [0.1, 0.2, 0.3]}})
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await embed_content(
+            model=provider.native.embedding_model("gemini-embedding-2"),
+            value=[
+                TextPart(text="Find similar visual docs"),
+                FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="doc.pdf"),
+                ImagePart(image="data:image/png;base64,aGVsbG8="),
+            ],
+        )
+
+        self.assertEqual(result.embeddings, [[0.1, 0.2, 0.3]])
+        parts = requests[0]["json"]["content"]["parts"]
+        self.assertEqual(parts[0]["text"], "Find similar visual docs")
+        self.assertEqual(parts[1]["inlineData"]["mimeType"], "application/pdf")
+        self.assertEqual(parts[2]["inlineData"]["mimeType"], "image/png")
+        self.assertIn("/models/gemini-embedding-2:embedContent?key=test", requests[0]["url"])
+
+    async def test_gemini_video_client_creates_and_polls_operation(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body})
+            if method == "GET":
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "name": "operations/video-1",
+                        "done": True,
+                        "response": {
+                            "generateVideoResponse": {
+                                "generatedSamples": [{"video": {"uri": "https://download.example.com/video.mp4"}}]
+                            }
+                        },
+                    },
+                )
+            return FakeResponse(status_code=200, payload={"name": "operations/video-1", "done": False})
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        operation = await provider.videos().generate(
+            model="veo-3.1-generate-preview",
+            prompt="A cinematic lion shot.",
+            config={"aspectRatio": "16:9"},
+        )
+        waited = await provider.videos().wait_operation(operation.name, poll_interval_ms=1, timeout_ms=100)
+
+        self.assertEqual(operation.name, "operations/video-1")
+        self.assertTrue(waited.done)
+        self.assertIn(":predictLongRunning?key=test", requests[0]["url"])
+        self.assertEqual(requests[0]["json"]["parameters"]["aspectRatio"], "16:9")
+        self.assertEqual(waited.raw_response["generated_media"][0].url, "https://download.example.com/video.mp4")
+
+    async def test_gemini_media_client_generates_lyria_audio(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {"text": "lyrics"},
+                                    {"inlineData": {"mimeType": "audio/mpeg", "data": "mp3-b64"}},
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        result = await provider.media().generate_music(prompt="Create a short folk song.")
+
+        self.assertEqual(result.text, "lyrics")
+        self.assertEqual(result.media[0].b64_data, "mp3-b64")
+        self.assertEqual(result.media[0].media_type, "audio/mpeg")
+        self.assertIn("/models/lyria-3-clip-preview:generateContent?key=test", requests[0]["url"])
+
+    async def test_gemini_batches_and_interactions_clients(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body, "stream": stream})
+            if "batchEmbedContents" in url:
+                return FakeResponse(status_code=200, payload={"name": "batches/embed-1", "done": False})
+            if "/interactions?" in url and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "int-1", "status": "in_progress"})
+            if "/interactions/int-1?" in url:
+                return FakeResponse(status_code=200, payload={"id": "int-1", "status": "completed"})
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        batch = await provider.batches().create_embeddings(
+            {"model": "gemini-embedding-001", "batch": {"displayName": "embeddings"}}
+        )
+        interaction = await provider.interactions().create(
+            {"input": "Research TPUs", "agent": "deep-research-pro-preview-12-2025"}
+        )
+        waited = await provider.interactions().wait("int-1", poll_interval_ms=1, timeout_ms=100)
+
+        self.assertEqual(batch["name"], "batches/embed-1")
+        self.assertEqual(interaction["id"], "int-1")
+        self.assertEqual(waited["status"], "completed")
+        self.assertTrue(requests[1]["json"]["background"])
+        self.assertTrue(requests[1]["json"]["store"])
+
+    async def test_vertex_media_clients_use_bearer_and_publisher_routes(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            if "predictLongRunning" in url:
+                return FakeResponse(status_code=200, payload={"name": "operations/vertex-video", "done": False})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [
+                        {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "vertex-img"}}]}}
+                    ]
+                },
+            )
+
+        provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
+        image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image-preview")
+        video = await provider.videos().generate(model="veo-3.1-generate-001", prompt="video")
+
+        self.assertEqual(image.images[0].b64_json, "vertex-img")
+        self.assertEqual(video.name, "operations/vertex-video")
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
+        self.assertIn("/publishers/google/models/gemini-3.1-flash-image-preview:generateContent", requests[0]["url"])
+        self.assertIn("/publishers/google/models/veo-3.1-generate-001:predictLongRunning", requests[1]["url"])
+
     async def test_gemini_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -346,7 +581,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider.native.language_model("gemini-3-flash-preview"),
+            model=provider.native.language_model("gemini-3.1-flash-preview"),
             prompt="Research this",
             provider_options={
                 "google_search": {"excludeDomains": ["example.com"]},
@@ -1044,7 +1279,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError) as context:
-            await generate_text(model=provider("gemini-3-flash-preview"), prompt="Research Apollo.")
+            await generate_text(model=provider("gemini-3.1-flash-preview"), prompt="Research Apollo.")
 
         self.assertIn("google_search", str(context.exception))
 

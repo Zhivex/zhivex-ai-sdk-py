@@ -25,6 +25,7 @@ make smoke
 ```
 
 It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`.
+Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 
 If a realtime example fails on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, that usually means the local Python install is missing CA roots. You can work around it per-command with:
@@ -62,12 +63,14 @@ Suggested order if you are new to the SDK:
 
 ```bash
 .venv/bin/python examples/text/openai_text.py
+.venv/bin/python examples/text/kimi_native.py
 .venv/bin/python examples/text/stream_text.py
 .venv/bin/python examples/text/structured_output.py
 .venv/bin/python examples/text/native_hosted_tools.py
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/stream_agent.py
 .venv/bin/python examples/agents/provider_managed_approvals.py
+.venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py
 .venv/bin/python examples/realtime/openai_realtime.py
 ```
@@ -78,6 +81,7 @@ Suggested order if you are new to the SDK:
 
 ```bash
 .venv/bin/python examples/text/openai_text.py
+.venv/bin/python examples/text/kimi_native.py
 .venv/bin/python examples/text/ollama_text.py
 .venv/bin/python examples/text/stream_text.py
 .venv/bin/python examples/text/stream_object.py
@@ -96,6 +100,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/messages_and_tools.py
 .venv/bin/python examples/agents/remote_tool.py
 .venv/bin/python examples/agents/provider_managed_approvals.py
+.venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py
 .venv/bin/python examples/agents/skills.py
 ```
@@ -146,12 +151,14 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 ## Notes
 
 - OpenAI and Azure OpenAI currently expose the richest Python feature surface for grounded text and realtime session bootstrap.
-- Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo.
+- Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo. Qwen also exposes native Qwen3-ASR transcription through `provider.native.transcription_model("qwen3-asr-flash")`.
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
+- `kimi_native.py` shows the native Kimi/Moonshot Chat Completions path plus Files, Batch, token estimation, and image/video input examples. It expects `MOONSHOT_API_KEY` or `KIMI_API_KEY`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `skills.py` shows the provider-agnostic agent-skill runtime, which is separate from the native OpenAI Skills API.
 - `native_hosted_tools.py` is the compact production-style example for mixing local callable tools with provider-managed hosted tools on OpenAI or Azure OpenAI native models.
 - `provider_managed_approvals.py` is the compact production-style example for OpenAI/Azure remote MCP approvals with `stream_agent(...)` and `approval_policy`.
+- `kimi_official_tools.py` loads Moonshot official Formulas tools through `provider.formulas().toolset(...)` and runs them inside the normal local tool loop.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, and Bedrock now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.

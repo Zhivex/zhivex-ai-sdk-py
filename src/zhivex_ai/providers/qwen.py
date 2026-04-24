@@ -9,20 +9,55 @@ from urllib.parse import urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
+from ..messages import hosted_tool
 from ..runtime import with_retry
-from ..types import AgentCapabilities, ModelCapabilities, PortableSupport, RetryOptions, SpeechModel, SpeechOutput
+from ..types import (
+    AgentCapabilities,
+    AudioInput,
+    HostedToolClass,
+    HostedToolDefinition,
+    ModelCapabilities,
+    PortableSupport,
+    RetryOptions,
+    SpeechModel,
+    SpeechOutput,
+    TranscriptionModel,
+    TranscriptionOutput,
+)
 from .base import create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OPENAI_COMPAT_SPEECH_CAPABILITIES,
+    OPENAI_COMPAT_TRANSCRIPTION_CAPABILITIES,
     create_openai_compatible_provider,
 )
+
+
+def _qwen_responses_base_url(base_url: str) -> str:
+    parsed = urlparse(base_url.rstrip("/"))
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/v2/apps/protocols/compatible-mode/v1"):
+        return base_url.rstrip("/")
+    for suffix in ("/compatible-mode/v1", "/compatible-mode"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            f"{path}/api/v2/apps/protocols/compatible-mode/v1",
+            "",
+            "",
+            "",
+        )
+    )
 
 
 def _qwen_speech_url(base_url: str) -> str:
     parsed = urlparse(base_url)
     path = parsed.path.rstrip("/")
-    for suffix in ("/compatible-mode/v1", "/compatible-mode", "/api/v1"):
+    for suffix in ("/api/v2/apps/protocols/compatible-mode/v1", "/compatible-mode/v1", "/compatible-mode", "/api/v1"):
         if path.endswith(suffix):
             path = path[: -len(suffix)]
             break
@@ -47,6 +82,152 @@ def _infer_qwen_media_type(url: str | None) -> str:
     if normalized.endswith(".pcm"):
         return "audio/pcm"
     return "audio/wav"
+
+
+def qwen_hosted_tool(
+    type: str,
+    *,
+    name: str | None = None,
+    tool_class: HostedToolClass | None = None,
+    **config: Any,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name or type,
+        provider="qwen",
+        type=type,
+        config=config or None,
+        tool_class=tool_class,
+    )
+
+
+def qwen_web_search_tool(**config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool("web_search", tool_class="web-search", **config)
+
+
+def qwen_web_extractor_tool(**config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool("web_extractor", tool_class="web-search", **config)
+
+
+def qwen_code_interpreter_tool(**config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool("code_interpreter", tool_class="code-execution", **config)
+
+
+def qwen_file_search_tool(*, vector_store_ids: list[str], **config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool(
+        "file_search",
+        tool_class="file-search",
+        vector_store_ids=list(vector_store_ids),
+        **config,
+    )
+
+
+def qwen_web_search_image_tool(**config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool("web_search_image", tool_class="web-search", **config)
+
+
+def qwen_image_search_tool(**config: Any) -> HostedToolDefinition:
+    return qwen_hosted_tool("image_search", **config)
+
+
+def qwen_mcp_tool(
+    *,
+    server_label: str,
+    server_url: str,
+    server_protocol: str = "sse",
+    server_description: str | None = None,
+    headers: dict[str, str] | None = None,
+    **config: Any,
+) -> HostedToolDefinition:
+    return qwen_hosted_tool(
+        "mcp",
+        tool_class="remote-mcp",
+        server_label=server_label,
+        server_url=server_url,
+        server_protocol=server_protocol,
+        server_description=server_description,
+        headers=headers,
+        **config,
+    )
+
+
+def _qwen_asr_audio_data(audio: AudioInput) -> str:
+    if isinstance(audio.data, str):
+        if audio.data.startswith(("http://", "https://", "data:")):
+            return audio.data
+        return f"data:{audio.media_type};base64,{audio.data}"
+    if isinstance(audio.data, memoryview):
+        raw = audio.data.tobytes()
+    else:
+        raw = bytes(audio.data)
+    return f"data:{audio.media_type};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+@dataclass(slots=True)
+class QwenTranscriptionModel(TranscriptionModel):
+    provider: str
+    model_id: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+    capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_TRANSCRIPTION_CAPABILITIES)
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "content-type": "application/json",
+            "authorization": f"Bearer {self.api_key}",
+        }
+
+    async def transcribe(
+        self,
+        *,
+        audio: AudioInput,
+        prompt: str | None = None,
+        language: str | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> TranscriptionOutput:
+        input_options = dict(provider_options or {})
+        asr_options = dict(input_options.pop("asr_options", {}))
+        if language:
+            asr_options["language"] = language
+        messages: list[dict[str, Any]] = []
+        if prompt:
+            messages.append({"role": "system", "content": [{"text": prompt}]})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": _qwen_asr_audio_data(audio)},
+                    }
+                ],
+            }
+        )
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url.rstrip('/')}/chat/completions",
+                headers=self._headers(),
+                json_body={
+                    "model": self.model_id,
+                    "messages": messages,
+                    "asr_options": asr_options or None,
+                    **input_options,
+                },
+                timeout_ms=options.timeout_ms if options else None,
+            ),
+            max_retries=options.max_retries if options and options.max_retries is not None else 0,
+            retry_backoff_ms=options.retry_backoff_ms if options and options.retry_backoff_ms is not None else 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f'Provider "{self.provider}" transcription request failed with status {response.status_code}.',
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        message = (((payload.get("choices") or [{}])[0]).get("message") or {})
+        return TranscriptionOutput(text=str(message.get("content") or ""), audio=audio, raw_response=payload)
 
 
 @dataclass(slots=True)
@@ -138,28 +319,40 @@ def create_qwen(
     *,
     api_key: str | None = None,
     base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    responses_base_url: str | None = None,
     fetch: Fetcher | None = None,
 ):
-    resolved_key = api_key or os.getenv("QWEN_API_KEY")
+    resolved_key = api_key or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing qwen API key.")
     requester = fetch or default_fetch
     capabilities = replace(
         OPENAI_COMPAT_CAPABILITIES,
-        tools=False,
-        tool_choice=False,
+        tools=True,
+        tool_choice=True,
         parallel_tool_calls=False,
+        web_search=True,
     )
     native = create_openai_compatible_provider(
         provider_name="qwen",
         env_var="QWEN_API_KEY",
         api_key=resolved_key,
         base_url=base_url,
+        responses_base_url=responses_base_url or _qwen_responses_base_url(base_url),
         fetch=requester,
         capabilities=capabilities,
+        supports_grounding=True,
+        default_grounding_tool={"type": "web_search"},
     )
     native = replace(
         native,
+        transcription_model_factory=lambda model_id: QwenTranscriptionModel(
+            provider="qwen",
+            model_id=model_id,
+            api_key=resolved_key,
+            base_url=base_url,
+            fetch=requester,
+        ),
         speech_model_factory=lambda model_id: QwenSpeechModel(
             provider="qwen",
             model_id=model_id,
@@ -176,11 +369,11 @@ def create_qwen(
             text_generation=True,
             streaming=True,
             structured_output=True,
-            tools=False,
+            tools=True,
             embeddings=True,
-            grounding=False,
+            grounding=True,
             retrieval=True,
-            transcription=False,
+            transcription=True,
             speech=True,
             portable_badge=False,
             tier="compatibility",

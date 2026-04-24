@@ -18,7 +18,7 @@ These APIs are the supported public contract for application code and production
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
-- Embeddings: `embed`, `embed_many`
+- Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
 - Agent runtime: `Agent`, `AgentSession`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
 - Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
 - Agent skill session controls: `set_agent_session_skills`, `get_agent_session_skills`, `clear_agent_session_skills`
@@ -46,6 +46,9 @@ These APIs are supported and documented, but they may still change between minor
 - Packaged skill APIs and installers: `load_skill_package`, `validate_skill`, `install_skill`, `list_installed_skills`, `run_skill`, `publish_skill`
 - Packaged skill types and artifacts: `SkillArtifact`, `SkillEntrypoint`, `SkillPermissions`, `SkillPackageManifest`, `InstalledSkill`, `SkillRegistryIndex`, `SkillRunResult`
 - Packaged skill runtime events: `AgentSkillResolvedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillArtifactCreatedEvent`
+- Google native media and job clients: `ImagesClient`, `VideosClient`, `MediaClient`, `BatchesClient`, `InteractionsClient`, `ProviderImage`, `GeneratedMedia`, `MediaResult`, `VideoOperation`, and `VideoResult`
+- Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
+- Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
 
@@ -75,4 +78,4 @@ In this repository, tier-1 means the provider is part of the stable surface stor
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 
-Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind.
+Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind. Kimi/Moonshot is a compatibility provider: its native Chat Completions, Files, Batch, token estimation, and Formulas paths are useful, but they are not part of the tier-1 portable contract.

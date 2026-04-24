@@ -173,7 +173,7 @@ class PermissionToolModel:
 
 class GeminiSearchOptInModel:
     provider = "gemini"
-    model_id = "gemini-3-flash-preview"
+    model_id = "gemini-3.1-flash-preview"
     capabilities = BASE_CAPABILITIES
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:

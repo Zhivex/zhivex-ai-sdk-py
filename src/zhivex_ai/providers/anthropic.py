@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
@@ -97,8 +97,14 @@ ANTHROPIC_GROUNDED_CAPABILITIES = ModelCapabilities(
 _ANTHROPIC_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
 _ANTHROPIC_MCP_BETA = "mcp-client-2025-04-04"
+_ANTHROPIC_CURRENT_MCP_BETA = "mcp-client-2025-11-20"
 _ANTHROPIC_CODE_EXECUTION_BETA = "code-execution-2025-08-25"
 _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20250305"
+AnthropicMcpVersion = Literal["legacy", "current"]
+_ANTHROPIC_MCP_BETA_BY_VERSION: dict[AnthropicMcpVersion, str] = {
+    "legacy": _ANTHROPIC_MCP_BETA,
+    "current": _ANTHROPIC_CURRENT_MCP_BETA,
+}
 _ANTHROPIC_UNSUPPORTED_SCHEMA_KEYS = {
     "minimum",
     "maximum",
@@ -135,6 +141,51 @@ def _merge_beta_headers(*values: str | list[str] | tuple[str, ...] | None) -> st
     return ",".join(merged) if merged else None
 
 
+def _coerce_mcp_beta(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError('Provider "anthropic" expects "anthropic_mcp_beta" to be a non-empty string.')
+    return value.strip()
+
+
+def _merge_mcp_beta(*values: str | None) -> str | None:
+    selected: str | None = None
+    for value in values:
+        if value is None:
+            continue
+        if selected is None:
+            selected = value
+        elif selected != value:
+            raise UnsupportedFeatureError('Provider "anthropic" received conflicting MCP beta header versions.')
+    return selected
+
+
+def _mcp_beta_from_tool(tool: HostedToolDefinition) -> str | None:
+    return _coerce_mcp_beta(tool.metadata.get("anthropic_mcp_beta"))
+
+
+def _extract_mcp_beta_from_tools(tools: dict[str, Any] | None) -> str | None:
+    selected: str | None = None
+    for tool in (tools or {}).values():
+        if is_callable_tool_definition(tool) or not isinstance(tool, HostedToolDefinition):
+            continue
+        if tool.type != "mcp_toolset":
+            continue
+        selected = _merge_mcp_beta(selected, _mcp_beta_from_tool(tool))
+    return selected
+
+
+def _extract_mcp_beta_from_server_options(value: Any) -> str | None:
+    if not isinstance(value, list):
+        return None
+    selected: str | None = None
+    for item in value:
+        if isinstance(item, HostedToolDefinition) and item.type == "mcp_toolset":
+            selected = _merge_mcp_beta(selected, _mcp_beta_from_tool(item))
+    return selected
+
+
 def anthropic_web_search_tool(
     *,
     name: str = "web_search",
@@ -166,6 +217,7 @@ def anthropic_mcp_server(
     *,
     url: str,
     name: str,
+    version: AnthropicMcpVersion = "legacy",
     authorization_token: str | None = None,
     enabled: bool | None = None,
     allowed_tools: list[str] | None = None,
@@ -177,6 +229,10 @@ def anthropic_mcp_server(
         config["enabled"] = enabled
     if allowed_tools is not None:
         config["allowed_tools"] = list(allowed_tools)
+    try:
+        mcp_beta = _ANTHROPIC_MCP_BETA_BY_VERSION[version]
+    except KeyError as exc:
+        raise ValidationError('Provider "anthropic" expects MCP helper version to be "legacy" or "current".') from exc
     return hosted_tool(
         name=name,
         provider="anthropic",
@@ -194,6 +250,7 @@ def anthropic_mcp_server(
                 **deepcopy(extra),
             }
         ),
+        metadata={"anthropic_mcp_beta": mcp_beta},
     )
 
 
@@ -236,10 +293,14 @@ def _has_uploaded_file_reference(messages: list[ModelMessage]) -> bool:
     return False
 
 
-def _extract_provider_options(provider_options: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
+def _extract_provider_options(provider_options: dict[str, Any] | None) -> tuple[dict[str, Any], list[str], str | None]:
     options = dict(provider_options or {})
     request_betas = _coerce_beta_headers(options.pop("anthropic_beta", None))
-    return options, request_betas
+    mcp_beta = _merge_mcp_beta(
+        _coerce_mcp_beta(options.pop("anthropic_mcp_beta", None)),
+        _extract_mcp_beta_from_server_options(options.get("mcp_servers")),
+    )
+    return options, request_betas, mcp_beta
 
 
 def _tool_type(tool: dict[str, Any]) -> str | None:
@@ -250,6 +311,8 @@ def _tool_type(tool: dict[str, Any]) -> str | None:
 def _tool_beta_headers(
     mapped_tools: list[dict[str, Any]] | None,
     provider_options: dict[str, Any],
+    *,
+    mcp_beta: str | None = None,
 ) -> list[str]:
     headers: list[str] = []
     tool_types = {
@@ -261,7 +324,7 @@ def _tool_beta_headers(
     }
     raw_mcp_servers = provider_options.get("mcp_servers")
     if raw_mcp_servers is not None or "mcp_tool" in tool_types or "mcp_tool_use" in tool_types:
-        headers.append(_ANTHROPIC_MCP_BETA)
+        headers.append(mcp_beta or _ANTHROPIC_MCP_BETA)
     if any(tool_type.startswith("code_execution") for tool_type in tool_types):
         headers.append(_ANTHROPIC_CODE_EXECUTION_BETA)
     return headers
@@ -976,11 +1039,12 @@ class _AnthropicBase:
         provider_options: dict[str, Any],
         body_tools: list[dict[str, Any]] | None = None,
         request_betas: list[str],
+        mcp_beta: str | None = None,
     ) -> list[str]:
         extra = list(request_betas)
         if _has_uploaded_file_reference(messages):
             extra.append(_ANTHROPIC_FILES_BETA)
-        extra.extend(_tool_beta_headers(body_tools, provider_options))
+        extra.extend(_tool_beta_headers(body_tools, provider_options, mcp_beta=mcp_beta))
         return extra
 
 
@@ -1006,7 +1070,8 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
         elif system:
             built_messages = [ModelMessage(role="system", parts=[TextPart(text=system)]), *built_messages]
         validate_message_parts(self, built_messages)
-        extracted_options, request_betas = _extract_provider_options(provider_options)
+        extracted_options, request_betas, mcp_beta = _extract_provider_options(provider_options)
+        mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(tools))
         body_tools, extracted_options = _merge_tool_payloads(
             _map_tools(tools),
             extracted_options,
@@ -1030,6 +1095,7 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
                         provider_options=extracted_options,
                         body_tools=body_tools,
                         request_betas=request_betas,
+                        mcp_beta=mcp_beta,
                     )
                 ),
                 json_body=body,
@@ -1067,7 +1133,8 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
-        provider_options, request_betas = _extract_provider_options(input.provider_options)
+        provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
             provider_options,
@@ -1096,6 +1163,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                         provider_options=provider_options,
                         body_tools=body_tools,
                         request_betas=request_betas,
+                        mcp_beta=mcp_beta,
                     )
                 ),
                 json_body=body,
@@ -1124,7 +1192,8 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
         validate_message_parts(self, input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
-        provider_options, request_betas = _extract_provider_options(input.provider_options)
+        provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
             provider_options,
@@ -1139,6 +1208,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                         provider_options=provider_options,
                         body_tools=body_tools,
                         request_betas=request_betas,
+                        mcp_beta=mcp_beta,
                     )
                 ),
                 json_body=drop_none(
@@ -1236,7 +1306,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
         validate_message_parts(self, input.messages)
-        provider_options, request_betas = _extract_provider_options(input.provider_options)
+        provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
         body_tools, remaining_options = _merge_tool_payloads([web_search_tool], remaining_options)
         response = await with_retry(
@@ -1248,6 +1318,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
                         provider_options=remaining_options,
                         body_tools=body_tools,
                         request_betas=request_betas,
+                        mcp_beta=mcp_beta,
                     )
                 ),
                 json_body=drop_none(

@@ -33,6 +33,10 @@ def _want(provider: str, selected: set[str] | None) -> bool:
     return selected is None or provider in selected
 
 
+def _enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def _run_openai() -> tuple[str, bool, str]:
     model = os.getenv("ZHIVEX_SMOKE_OPENAI_MODEL")
     if not os.getenv("OPENAI_API_KEY") or not model:
@@ -69,7 +73,28 @@ async def _run_gemini() -> tuple[str, bool, str]:
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
         raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
-    return ("gemini", True, f"ok: {model}, tokens={token_count.total_tokens}")
+    media_details = []
+    if _enabled("ZHIVEX_SMOKE_GOOGLE_MEDIA"):
+        image_model = os.getenv("ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL")
+        video_model = os.getenv("ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL")
+        media_model = os.getenv("ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL")
+        if image_model:
+            image = await provider.images().generate(model=image_model, prompt="A small blue square icon.")
+            if not image.images:
+                raise RuntimeError("Gemini image smoke returned no images")
+            media_details.append(f"image={image_model}")
+        if video_model:
+            operation = await provider.videos().generate(model=video_model, prompt="A two-second shot of a blue square.")
+            if not operation.name:
+                raise RuntimeError("Gemini video smoke returned no operation name")
+            media_details.append(f"video={video_model}")
+        if media_model:
+            media = await provider.media().generate_music(model=media_model, prompt="A very short soft synth sting.")
+            if not media.media:
+                raise RuntimeError("Gemini media smoke returned no media")
+            media_details.append(f"media={media_model}")
+    suffix = f", {', '.join(media_details)}" if media_details else ""
+    return ("gemini", True, f"ok: {model}, tokens={token_count.total_tokens}{suffix}")
 
 
 async def _run_anthropic() -> tuple[str, bool, str]:
@@ -118,7 +143,28 @@ async def _run_vertex() -> tuple[str, bool, str]:
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
         raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
-    return ("vertex", True, f"ok: {model}, tokens={token_count.total_tokens}")
+    media_details = []
+    if _enabled("ZHIVEX_SMOKE_GOOGLE_MEDIA"):
+        image_model = os.getenv("ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL")
+        video_model = os.getenv("ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL")
+        media_model = os.getenv("ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL")
+        if image_model:
+            image = await provider.images().generate(model=image_model, prompt="A small blue square icon.")
+            if not image.images:
+                raise RuntimeError("Vertex image smoke returned no images")
+            media_details.append(f"image={image_model}")
+        if video_model:
+            operation = await provider.videos().generate(model=video_model, prompt="A two-second shot of a blue square.")
+            if not operation.name:
+                raise RuntimeError("Vertex video smoke returned no operation name")
+            media_details.append(f"video={video_model}")
+        if media_model:
+            media = await provider.media().generate_music(model=media_model, prompt="A very short soft synth sting.")
+            if not media.media:
+                raise RuntimeError("Vertex media smoke returned no media")
+            media_details.append(f"media={media_model}")
+    suffix = f", {', '.join(media_details)}" if media_details else ""
+    return ("vertex", True, f"ok: {model}, tokens={token_count.total_tokens}{suffix}")
 
 
 async def _run_ollama() -> tuple[str, bool, str]:

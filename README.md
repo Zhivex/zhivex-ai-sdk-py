@@ -44,7 +44,8 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Grounded text for providers with web search support
 - Audio transcription and speech generation where the provider supports it
 - Experimental realtime/live voice sessions plus `stream_live_agent()` for voice-first agents
-- Embeddings support where the provider supports it
+- Text and multimodal embeddings support where the provider supports it
+- Google native media clients for Gemini/Vertex image, video, music, batch, and interaction workflows
 - Provider factories for hosted and local models
 - Beta provider agent capability metadata for support tiers and hosted-agent features
 - Beta first-class hosted tool definitions for provider-native tools in `tools={...}`
@@ -89,27 +90,27 @@ These providers back the stable surface for production API work in this SDK toda
 | azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
 | gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| kimi | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
+| kimi | compatibility | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
 | ollama | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
 | openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | openrouter | native-only | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
-| qwen | compatibility | No | Yes | Yes | Yes | No | Yes | No | Yes | No | Yes |
+| qwen | compatibility | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | vertex | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
 ### Native Extras
 
-| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Containers | Skills | Realtime | Responses | Conversations |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | No | No | No | No | No | No | No | No | No | No |
-| azure-openai | No | No | No | No | No | No | No | No | Yes | No | No |
-| bedrock | No | No | No | No | No | No | No | No | Yes | No | No |
-| gemini | Yes | Yes | No | No | No | No | No | No | Yes | No | No |
-| kimi | No | No | No | No | No | No | No | No | No | No | No |
-| ollama | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| openrouter | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | No | No | No | No | No | No | No | No | No | No | No |
-| vertex | No | No | No | No | No | No | No | No | Yes | No | No |
+| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| azure-openai | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| bedrock | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| gemini | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
+| kimi | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
+| ollama | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
+| openrouter | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| vertex | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
 
 ### Agent Capabilities
 
@@ -123,7 +124,7 @@ These providers back the stable surface for production API work in this SDK toda
 | ollama | tier-c | No | No | No | No | No | No | No | No |
 | openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
-| qwen | tier-c | Yes | No | No | No | No | No | No | No |
+| qwen | tier-c | Yes | No | Yes | Yes | Yes | No | Yes | No |
 | vertex | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 <!-- END GENERATED SUPPORT MATRIX -->
 
@@ -138,10 +139,15 @@ Tool support now follows the same rule everywhere:
 - The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
 - Anthropic is part of the tier-1 text-generation story in this SDK. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
+- Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
 - OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
+- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, but this SDK does not currently mirror OpenAI's native lifecycle clients for vector-store/file-search administration, Responses, or Conversations on the Azure provider bundle.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
+- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: text, tools, built-in web/code/file/MCP tools, embeddings, and Qwen3-ASR run through compatible endpoints; Qwen speech synthesis uses DashScope's multimodal generation endpoint. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
+- Kimi/Moonshot uses the official Chat Completions route for native text generation. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
+- Kimi native support includes Moonshot Files, Batch, token estimation, K2.6/K2.5 `thinking`, image/video chat inputs, and the beta `provider.formulas()` client for official tools such as `moonshot/web-search:latest`.
 - Ollama defaults to `base_url="http://localhost:11434/v1"` and `api_key="ollama"` for local compatibility setups. Use `provider.native.*` for Ollama examples and override `OLLAMA_API_KEY` only when you front it with a proxy or remote gateway that requires auth.
 
 ## Installation
@@ -475,6 +481,30 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Embedding multimodal Gemini content:
+
+```python
+import asyncio
+
+from zhivex_ai import FilePart, TextPart, create_gemini, embed_content
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    result = await embed_content(
+        model=gemini.native.embedding_model("gemini-embedding-2"),
+        value=[
+            TextPart(text="Find visually similar documents."),
+            FilePart(data="JVBERi0xLjQK", media_type="application/pdf", filename="brief.pdf"),
+        ],
+    )
+
+    print(len(result.embedding or []))
+
+
+asyncio.run(main())
+```
+
 Counting tokens before sending a request:
 
 ```python
@@ -632,6 +662,38 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Using Google native media and long-running clients:
+
+```python
+import asyncio
+
+from zhivex_ai import create_gemini
+
+
+async def main() -> None:
+    gemini = create_gemini()
+
+    image = await gemini.images().generate(
+        model="gemini-3.1-flash-image-preview",
+        prompt="A clean product diagram of a solar microgrid.",
+    )
+    operation = await gemini.videos().generate(
+        model="veo-3.1-generate-preview",
+        prompt="A slow cinematic flyover of that microgrid at sunrise.",
+    )
+    music = await gemini.media().generate_music(
+        model="lyria-3-clip-preview",
+        prompt="A 30-second optimistic ambient technology track.",
+    )
+
+    print(image.images[0].b64_json is not None)
+    print(operation.name)
+    print(music.media[0].media_type)
+
+
+asyncio.run(main())
+```
+
 ### Audio
 
 ```python
@@ -745,7 +807,7 @@ If you want Gemini research with provider-native web search in an agent run, put
 from zhivex_ai import create_gemini
 
 gemini = create_gemini()
-triage.model = gemini.native.language_model("gemini-3-flash-preview")
+triage.model = gemini.native.language_model("gemini-3.1-flash-preview")
 result = await run_agent(
     agent=triage,
     prompt="Research the Apollo migration status.",
@@ -757,7 +819,7 @@ Built-in Gemini tools can also be configured directly:
 
 ```python
 result = await generate_text(
-    model=gemini.native.language_model("gemini-3-flash-preview"),
+    model=gemini.native.language_model("gemini-3.1-flash-preview"),
     prompt="Research this page and show your work.",
     provider_options={
         "google_search": {"excludeDomains": ["example.com"]},
@@ -937,7 +999,59 @@ Native usage:
 
 Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
 
-OpenAI-compatible providers such as OpenRouter, Qwen, Kimi, and Ollama still reuse the same normalized adapter model internally, but they no longer imply portable parity.
+OpenAI-compatible providers such as OpenRouter, Qwen, and Ollama still reuse normalized adapter paths internally, but they no longer imply portable parity. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+
+Kimi/Moonshot native usage:
+
+```python
+import asyncio
+
+from zhivex_ai import ImagePart, ReasoningConfig, create_kimi, generate_text, user
+
+
+async def main() -> None:
+    kimi = create_kimi()  # MOONSHOT_API_KEY, then KIMI_API_KEY
+
+    result = await generate_text(
+        model=kimi.native.language_model("kimi-k2.6"),
+        messages=[
+            user(
+                [
+                    ImagePart(image="data:image/png;base64,..."),
+                ]
+            )
+        ],
+        reasoning=ReasoningConfig(effort="none"),
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Kimi files, batch jobs, token estimation, and official tools are native-only:
+
+```python
+kimi = create_kimi()
+
+uploaded = await kimi.files().upload(
+    data=b'{"custom_id":"1","method":"POST","url":"/v1/chat/completions","body":{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}}\n',
+    filename="batch.jsonl",
+    media_type="application/jsonl",
+    purpose="batch",
+)
+
+batch = await kimi.batches().create(
+    {
+        "input_file_id": uploaded.id,
+        "endpoint": "/v1/chat/completions",
+        "completion_window": "24h",
+    }
+)
+
+tokens = await kimi.tokens().count(model_id="kimi-k2.6", prompt="hello")
+tools = await kimi.formulas().toolset(["moonshot/web-search:latest"])
+```
 
 Local Ollama usage follows the same native escape hatch:
 
@@ -966,9 +1080,14 @@ Adapters may also expose optional factories such as:
 - `provider.native.realtime_model("gpt-realtime")`
 - `provider.files()`
 - `provider.images()`
+- `provider.videos()`
+- `provider.media()`
 - `provider.uploads()`
 - `provider.tokens()`
 - `provider.file_search_stores()`
+- `provider.batches()`
+- `provider.interactions()`
+- `provider.formulas()`
 - `provider.responses()`
 - `provider.conversations()`
 
@@ -997,7 +1116,7 @@ The canonical matrix now lives in runtime metadata:
 To regenerate the markdown tables used above:
 
 ```bash
-uv run python scripts/generate_support_matrix.py
+.venv/bin/python scripts/generate_support_matrix.py
 ```
 
 Notes:
@@ -1010,6 +1129,13 @@ Notes:
 - `anthropic_web_search_tool(...)`, `anthropic_mcp_server(...)`, and `anthropic_code_execution_tool(...)` build the current hosted-tool payloads for Claude-native runs.
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
+- `embed_content(...)` and `embed_content_many(...)` accept text plus `TextPart`, `ImagePart`, and `FilePart` values for Gemini Embedding 2 style multimodal embeddings; `embed(...)` and `embed_many(...)` remain text-compatible.
+- `create_gemini().images()` covers Gemini/Nano Banana image models through `generateContent` and Imagen 4 models through `predict`.
+- `create_vertex().images()` mirrors Google image routes through Vertex publisher model endpoints.
+- `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers.
+- `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it.
+- `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
+- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
 - `create_vertex().native.language_model(...)` and `create_vertex().native.grounded_language_model(...)` also accept `provider_options={"vertex_ai_search": {...}}` and `provider_options={"external_search": {...}}`, which are normalized into the Vertex tool payloads automatically.
@@ -1238,7 +1364,7 @@ export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`. Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

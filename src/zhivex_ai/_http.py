@@ -59,7 +59,7 @@ class BufferedResponse:
 class StreamingResponse:
     def __init__(self, response: httpx.Response) -> None:
         self.status_code = response.status_code
-        self.headers = dict(getattr(response, "headers", {}) or {})
+        self.headers: Mapping[str, str] = dict(getattr(response, "headers", {}) or {})
         self._response = response
         self._closed = False
         self._body_bytes: bytes | None = None
