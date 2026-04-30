@@ -721,7 +721,7 @@ class CountTokensClient(Protocol):
         *,
         model_id: str,
         prompt: str | None = None,
-        messages: list["ModelMessage"] | None = None,
+        messages: builtins.list["ModelMessage"] | None = None,
         system: str | None = None,
         tools: dict[str, "AnyToolDefinition"] | None = None,
         provider_options: dict[str, Any] | None = None,
@@ -730,7 +730,7 @@ class CountTokensClient(Protocol):
 
 
 class FormulasClient(Protocol):
-    async def list_tools(self, formula_uri: str, options: "RetryOptions | None" = None) -> list[dict[str, Any]]: ...
+    async def list_tools(self, formula_uri: str, options: "RetryOptions | None" = None) -> builtins.list[dict[str, Any]]: ...
 
     async def call_tool(
         self,
@@ -742,7 +742,7 @@ class FormulasClient(Protocol):
 
     async def toolset(
         self,
-        formula_uris: list[str],
+        formula_uris: builtins.list[str],
         options: "RetryOptions | None" = None,
     ) -> dict[str, "ToolDefinition"]: ...
 
@@ -945,7 +945,7 @@ class ResponsesClient(Protocol):
         self,
         response_id: str,
         *,
-        include: list[str] | None = None,
+        include: builtins.list[str] | None = None,
         stream: bool | None = None,
         starting_after: int | None = None,
         include_obfuscation: bool | None = None,

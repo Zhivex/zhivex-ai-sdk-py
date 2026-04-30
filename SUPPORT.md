@@ -20,6 +20,8 @@ Related documents:
 - Beta hosted-tool definitions and `provider-data` control parts describe the preferred native tool-registration path, but provider-specific execution semantics may still evolve between minor releases.
 - Beta provider-managed approval flows currently cover OpenAI and Azure OpenAI only, including typed `provider-data` payload parsing and agent-runtime approval-policy integration.
 - Beta response-reference helpers and `provider-data` UI chunks are supported for OpenAI/Azure continuation workflows and observability, but their exact ergonomics may still evolve between minor releases.
+- Beta agent platform helpers cover durable run stores, native subagent tools, replay/evaluation reports, hierarchical trace artifacts, run-tree cancellation, redaction policies, and budget guards.
+- Beta workflow agents cover declarative sequential, parallel, and loop orchestration with shared `session.state`; CLI/UI/deploy automation is intentionally outside this beta surface.
 - Beta Google native media/job clients cover Gemini/Vertex image, video, music/audio, batch, and interaction workflows where the official Google endpoints expose them. Preview Google models remain subject to Google availability, quota, and deprecation windows.
 - Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Kimi remains a compatibility provider rather than a tier-1 portable provider.
 - The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.

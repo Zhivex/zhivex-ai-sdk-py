@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from functools import lru_cache
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -60,7 +60,7 @@ class SchemaAdapter:
     @staticmethod
     def _to_adapter(schema: Any) -> _SchemaAdapterProtocol:
         if isinstance(schema, TypeAdapter):
-            return schema
+            return cast(_SchemaAdapterProtocol, schema)
         if _looks_like_json_schema(schema):
             return _RawJsonSchemaAdapter(schema)
         if isinstance(schema, type) and issubclass(schema, BaseModel):

@@ -11,7 +11,7 @@ Production maturity plan: see [MATURITY_PLAN.md](./MATURITY_PLAN.md).
 
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
-- one agent runtime with executable handoffs, shared sessions, memory summaries, approval policies, tool registries, and traces
+- one agent runtime with executable handoffs, native subagent tools, shared sessions, durable run state, evaluation helpers, safety policies, tool registries, and traces
 - one normalized foundation layer for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
 - thin provider adapters instead of provider-specific app logic everywhere
 - portable application code across the portable tier, with explicit native escape hatches for provider-specific features
@@ -37,7 +37,8 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 
 ## Highlights
 
-- Agent runtime with executable handoffs, input/output guardrails, registry-based orchestration, transcript + summary memory, permission-aware tool execution, and traces
+- Agent runtime with executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, transcript + summary memory, permission-aware tool execution, and traces
+- Declarative workflow agents with `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `session.state`, `output_key`, and templated step inputs
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
@@ -55,6 +56,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - HTTP/UI helpers for SSE, plain text streams, and UI message transport
 - Middleware for telemetry, caching, and circuit breaking
 - Model catalog helpers for cost and recommendation metadata
+- Platform helpers for replay, evaluation reports, hierarchical run traces, budget guards, redaction, and run cancellation
 
 ## Supported Providers
 
@@ -1208,17 +1210,31 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `stream_agent(...)`
 - `create_in_memory_agent_memory_store()`
 - `create_in_memory_checkpoint_store()`
+- `create_in_memory_agent_run_store()`
 - `create_sqlite_agent_memory_store(...)`
 - `create_sqlite_checkpoint_store(...)`
+- `create_sqlite_agent_run_store(...)`
 - `create_postgres_agent_memory_store(...)`
 - `create_postgres_checkpoint_store(...)`
+- `create_postgres_agent_run_store(...)`
 - `create_otel_agent_observer()`
+- `create_agent_trace_artifact(...)`
+- `summarize_agent_trace(...)`
+- `create_agent_run_snapshot(...)`
+- `replay_agent_run(...)`
+- `run_agent_evaluation(...)`
+- `create_agent_evaluation_report(...)`
+- `create_safety_policy(...)`
+- `apply_safety_policy_to_agent(...)`
 - `load_agent_session(...)`
 - `ApprovalDecision`, `ToolApprovalRequest`
 - `GuardrailResult`, `InputGuardrailRequest`, `OutputGuardrailRequest`
 - `permission_allowlist_approval_policy(...)`
 - input and output guardrails on `Agent(...)`
 - `handoff_to(...)`
+- `create_subagent_tool(...)`
+- `prepare_subagents_for_agent(...)`
+- `run_agent_group(...)`
 - `remote_tool(...)`
 - `skill(...)`
 - `load_skill(...)`
@@ -1228,7 +1244,55 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
-This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, shared sessions, transcript + summary memory, approval hooks, traces, durable Postgres-backed state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, native subagent tools, shared sessions, transcript + summary memory, approval hooks, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+
+Declarative workflows are available when the coordination pattern is known ahead of time:
+
+```python
+from zhivex_ai import SequentialAgent, WorkflowStep
+
+pipeline = SequentialAgent(
+    name="loan_pipeline",
+    steps=[
+        WorkflowStep("extract", extractor, prompt="Extract the application", output_key="application"),
+        WorkflowStep("validate", validator, input_template="Validate {application}", output_key="validation"),
+        WorkflowStep("decide", decider, input_template="Decide with {application} and {validation}"),
+    ],
+)
+
+result = await pipeline.run()
+```
+
+Use `ParallelAgent` for fan-out research and `LoopAgent` for bounded refinement loops. Workflow steps share `session.state`; `output_key` writes the step text into state, and `input_template` reads state keys with Python format placeholders.
+
+Durable run state can be attached directly to an agent:
+
+```python
+from zhivex_ai import Agent, create_in_memory_agent_run_store, run_agent
+
+store = create_in_memory_agent_run_store()
+agent = Agent(name="assistant", model=model, run_store=store)
+result = await run_agent(agent=agent, prompt="Draft a reply", idempotency_key="reply-1")
+state = await store.load(result.run_id)
+```
+
+Safety policies compose approval, redaction, and budget defaults without mutating the original agent:
+
+```python
+from zhivex_ai import apply_safety_policy_to_agent, create_safety_policy
+
+safe_agent = apply_safety_policy_to_agent(agent, create_safety_policy(preset="review_sensitive"))
+```
+
+Evaluation and trace helpers work from persisted state:
+
+```python
+from zhivex_ai import create_agent_trace_artifact, replay_agent_run, summarize_agent_trace
+
+trace = create_agent_trace_artifact(state)
+timeline = replay_agent_run(state)
+summary = summarize_agent_trace(state)
+```
 
 Agent skills are also available across the agent runtime. These are provider-agnostic workflow packs that inject task-specific instructions and optional tool dependencies before a run starts. They are distinct from the raw OpenAI Skills API:
 

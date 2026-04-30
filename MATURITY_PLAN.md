@@ -6,6 +6,7 @@ This document turns the current "works well and tests pass" state of the SDK int
 
 - Package builds successfully and the test suite is green locally.
 - Core areas already exist: provider adapters, foundation APIs, agent runtime, gateway, middleware, transport helpers, and release automation.
+- Platform parity areas now exist: durable agent run state, run stores, native subagent tools, declarative workflow agents, replay/evaluation helpers, trace artifacts, cancellation helpers, safety policies, redaction, and budget guards.
 - The package now declares `Development Status :: 4 - Beta`, so the product maturity signal is aligned with the documented public surface and current engineering gates.
 
 ## Product Goal
@@ -39,6 +40,9 @@ The first maturity milestone should explicitly define the stable product surface
 - middleware helpers
 - model catalog
 - Postgres-backed memory and checkpoint stores
+- durable agent run stores and hierarchical run tracing
+- replay/evaluation fixtures and safety/budget policy helpers
+- declarative sequential, parallel, and loop workflow agents
 - MCP-related helpers
 
 ### Proposed experimental surface

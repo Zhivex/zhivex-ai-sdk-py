@@ -26,6 +26,15 @@ from ._serde import (
     serialize_tool_execution_context,
 )
 from .errors import ProviderHTTPError, ValidationError
+from .agent_state import (
+    AgentChildRun,
+    AgentRunState,
+    AgentRunStatus,
+    AgentRunStep,
+    AgentRunStore,
+    agent_child_run_from_state,
+    serialize_agent_run_state,
+)
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
 from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
@@ -35,6 +44,7 @@ from .types import (
     FinishReason,
     GenerateTextOutput,
     GenerateTextStep,
+    JsonValue,
     LanguageModel,
     MCPServerConfig,
     MCPToolConfig,
@@ -426,6 +436,7 @@ class AgentSession:
     id: str = field(default_factory=lambda: _new_id("session"))
     messages: list[ModelMessage] = field(default_factory=list)
     summary: str | None = None
+    state: dict[str, JsonValue] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -858,6 +869,7 @@ class Agent:
     subagents: dict[str, "Agent"] = field(default_factory=dict)
     memory: AgentMemory | None = None
     checkpoint_store: AgentCheckpointStore | None = None
+    run_store: AgentRunStore | None = None
     approval_policy: ApprovalPolicy | None = None
     input_guardrails: list[InputGuardrail] = field(default_factory=list)
     output_guardrails: list[OutputGuardrail] = field(default_factory=list)
@@ -1124,6 +1136,7 @@ class AgentRunResult:
     handoff: AgentHandoff | None = None
     orchestration_path: list[str] = field(default_factory=list)
     resumed_from_checkpoint: AgentCheckpoint | None = None
+    state: AgentRunState | None = None
 
 
 class InMemoryAgentMemory:
@@ -1204,12 +1217,14 @@ def create_agent_session(
     id: str | None = None,
     messages: list[ModelMessage] | None = None,
     summary: str | None = None,
+    state: dict[str, JsonValue] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentSession:
     return AgentSession(
         id=id or _new_id("session"),
         messages=list(messages or []),
         summary=summary,
+        state=dict(state or {}),
         metadata=dict(metadata or {}),
     )
 
@@ -1784,13 +1799,17 @@ def permission_allowlist_approval_policy(*allowed_permissions: str) -> ApprovalP
 async def load_agent_session(agent: Agent, session_id: str, *, metadata: dict[str, Any] | None = None) -> AgentSession:
     messages: list[ModelMessage] = []
     summary: str | None = None
+    workflow_state: dict[str, JsonValue] = {}
     merged_metadata = dict(metadata or {})
     if agent.memory is not None:
         state = await agent.memory.load(session_id)
         messages = list(state.messages)
         summary = state.summary
+        raw_workflow_state = state.metadata.get("state") or state.metadata.get("workflow_state")
+        if isinstance(raw_workflow_state, dict):
+            workflow_state = dict(raw_workflow_state)
         merged_metadata = {**state.metadata, **merged_metadata}
-    return AgentSession(id=session_id, messages=messages, summary=summary, metadata=merged_metadata)
+    return AgentSession(id=session_id, messages=messages, summary=summary, state=workflow_state, metadata=merged_metadata)
 
 
 def _normalize_approval_decision(value: ApprovalDecision | bool | None) -> ApprovalDecision:
@@ -2271,6 +2290,85 @@ def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCa
     return calls
 
 
+def _step_status_from_result(result: GenerateTextOutput) -> AgentRunStatus:
+    return "failed" if result.finish_reason == "error" else "completed"
+
+
+def _child_runs_from_tool_results(results: list[ToolExecutionResult], parent_run_id: str) -> list[AgentChildRun]:
+    children: list[AgentChildRun] = []
+    for result in results:
+        output = result.output
+        if not isinstance(output, dict):
+            continue
+        raw_child = output.get("child_run")
+        if not isinstance(raw_child, dict):
+            continue
+        children.append(
+            AgentChildRun(
+                run_id=str(raw_child.get("run_id", "")),
+                agent_name=str(raw_child.get("agent_name", "")),
+                parent_run_id=str(raw_child.get("parent_run_id") or parent_run_id),
+                status=raw_child.get("status", "completed"),
+                output_text=str(raw_child.get("output_text", "")),
+                tool_name=result.tool_name,
+                error=raw_child.get("error"),
+                steps=int(raw_child.get("steps", 0)),
+                tool_calls=int(raw_child.get("tool_calls", 0)),
+                tool_errors=int(raw_child.get("tool_errors", 0)),
+            )
+        )
+    return children
+
+
+def _agent_run_state_from_result(
+    *,
+    result: AgentRunResult,
+    agent: Agent,
+    parent_run_id: str | None,
+    idempotency_key: str | None,
+    started_at_ms: int,
+    finished_at_ms: int,
+    error: str | None = None,
+) -> AgentRunState:
+    steps = [
+        AgentRunStep(
+            index=index,
+            status=_step_status_from_result(GenerateTextOutput(text=step.response.text or "", finish_reason=step.response.finish_reason)),
+            tool_calls=_extract_tool_calls_from_steps([step]),
+            tool_results=[],
+            usage=step.response.usage,
+            messages=_response_messages(step),
+            started_at_ms=started_at_ms,
+            finished_at_ms=finished_at_ms,
+        )
+        for index, step in enumerate(result.steps, start=1)
+    ]
+    status: AgentRunStatus = "failed" if error or result.finish_reason == "error" else "completed"
+    state = AgentRunState(
+        run_id=result.run_id,
+        agent_name=result.agent_name,
+        provider=str(getattr(agent.model, "provider", "")),
+        model_id=str(getattr(agent.model, "model_id", "")),
+        status=status,
+        session_id=result.session.id,
+        parent_run_id=parent_run_id,
+        idempotency_key=idempotency_key,
+        started_at_ms=started_at_ms,
+        updated_at_ms=finished_at_ms,
+        finished_at_ms=finished_at_ms,
+        current_step=len(result.steps),
+        steps=steps,
+        child_runs=_child_runs_from_tool_results(result.tool_results, result.run_id),
+        tool_results=list(result.tool_results),
+        usage=result.usage,
+        output_text=result.text,
+        finish_reason=result.finish_reason,
+        error=error,
+        metadata={"orchestration_path": list(result.orchestration_path)},
+    )
+    return state
+
+
 def _segment_text(result: GenerateTextOutput) -> str:
     if result.steps and result.steps[-1].response.text:
         return result.steps[-1].response.text or ""
@@ -2442,6 +2540,8 @@ class AgentRuntime:
         emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
         resumed_from_checkpoint: AgentCheckpoint | None = None,
         live_stream: bool = False,
+        parent_run_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> AgentRunResult:
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
@@ -2452,6 +2552,19 @@ class AgentRuntime:
 
         run_id = _new_id("run")
         started_at_ms = _now_ms()
+        if idempotency_key and agent.run_store is not None:
+            existing_state = await agent.run_store.find_by_idempotency_key(idempotency_key)
+            if existing_state is not None:
+                return AgentRunResult(
+                    run_id=existing_state.run_id,
+                    agent_name=existing_state.agent_name,
+                    session=resolved_session,
+                    text=existing_state.output_text,
+                    finish_reason=existing_state.finish_reason,
+                    usage=existing_state.usage,
+                    orchestration_path=[existing_state.agent_name],
+                    state=existing_state,
+                )
         trace = AgentTrace(
             run_id=run_id,
             session_id=resolved_session.id,
@@ -2466,6 +2579,21 @@ class AgentRuntime:
                 await emit(event)
 
         await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
+        if agent.run_store is not None:
+            await agent.run_store.save(
+                AgentRunState(
+                    run_id=run_id,
+                    agent_name=agent.name,
+                    provider=str(getattr(agent.model, "provider", "")),
+                    model_id=str(getattr(agent.model, "model_id", "")),
+                    session_id=resolved_session.id,
+                    parent_run_id=parent_run_id,
+                    idempotency_key=idempotency_key,
+                    started_at_ms=started_at_ms,
+                    updated_at_ms=started_at_ms,
+                    metadata={"orchestration_path": [agent.name]},
+                )
+            )
 
         current_agent = agent
         current_prompt = prompt
@@ -2516,7 +2644,7 @@ class AgentRuntime:
                         )
                     )
                     trace.finished_at_ms = _now_ms()
-                    return AgentRunResult(
+                    output = AgentRunResult(
                         run_id=run_id,
                         agent_name=segment_result.agent_name,
                         session=resolved_session,
@@ -2533,6 +2661,18 @@ class AgentRuntime:
                         orchestration_path=list(trace.orchestration_path),
                         resumed_from_checkpoint=resumed_from_checkpoint,
                     )
+                    state = _agent_run_state_from_result(
+                        result=output,
+                        agent=agent,
+                        parent_run_id=parent_run_id,
+                        idempotency_key=idempotency_key,
+                        started_at_ms=started_at_ms,
+                        finished_at_ms=trace.finished_at_ms,
+                    )
+                    output.state = state
+                    if agent.run_store is not None:
+                        await agent.run_store.save(state)
+                    return output
 
                 handoff = segment_result.handoff
                 await publish(AgentHandoffRequestedEvent(handoff=handoff))
@@ -2564,6 +2704,24 @@ class AgentRuntime:
         except Exception as error:
             await publish(AgentErrorEvent(error=error))
             trace.finished_at_ms = _now_ms()
+            if agent.run_store is not None:
+                await agent.run_store.save(
+                    AgentRunState(
+                        run_id=run_id,
+                        agent_name=agent.name,
+                        provider=str(getattr(agent.model, "provider", "")),
+                        model_id=str(getattr(agent.model, "model_id", "")),
+                        status="failed",
+                        session_id=resolved_session.id,
+                        parent_run_id=parent_run_id,
+                        idempotency_key=idempotency_key,
+                        started_at_ms=started_at_ms,
+                        updated_at_ms=trace.finished_at_ms,
+                        finished_at_ms=trace.finished_at_ms,
+                        error=str(error),
+                        metadata={"orchestration_path": list(trace.orchestration_path)},
+                    )
+                )
             raise
 
     async def _run_input_guardrails(
@@ -2750,6 +2908,13 @@ class AgentRuntime:
             emit=emit,
         )
         registry = _resolve_tool_registry(agent, tools)
+        if agent.subagents:
+            registry = registry.merge(
+                {
+                    name: create_subagent_tool(name=name, agent=subagent, parent_run_id=run_id)
+                    for name, subagent in agent.subagents.items()
+                }
+            )
         if skill_tools:
             registry = registry.merge(skill_tools)
         merged_tools = self._wrap_agent_tools(
@@ -2990,7 +3155,7 @@ class AgentRuntime:
                 state=AgentMemoryState(
                     messages=list(session.messages),
                     summary=session.summary,
-                    metadata=dict(session.metadata),
+                    metadata={**dict(session.metadata), "state": dict(session.state)},
                 ),
                 agent=agent,
             )
@@ -3002,7 +3167,7 @@ class AgentRuntime:
                 AgentMemoryState(
                     messages=list(session.messages),
                     summary=session.summary,
-                    metadata=dict(session.metadata),
+                    metadata={**dict(session.metadata), "state": dict(session.state)},
                 ),
             )
 
@@ -3309,6 +3474,95 @@ class LiveAgentStreamResult:
         return await self._runner
 
 
+def create_subagent_tool(
+    *,
+    name: str,
+    agent: Agent,
+    parent_run_id: str | None = None,
+    description: str | None = None,
+) -> ToolDefinition:
+    async def execute(input: Any) -> JsonValue:
+        prompt = input.get("prompt") if isinstance(input, dict) else str(input)
+        result = await run_agent(agent=agent, prompt=str(prompt or ""), parent_run_id=parent_run_id)
+        child_state = result.state
+        if child_state is None:
+            child_state = _agent_run_state_from_result(
+                result=result,
+                agent=agent,
+                parent_run_id=parent_run_id,
+                idempotency_key=None,
+                started_at_ms=result.trace.started_at_ms if result.trace else _now_ms(),
+                finished_at_ms=result.trace.finished_at_ms if result.trace and result.trace.finished_at_ms else _now_ms(),
+            )
+        return {
+            "text": result.text,
+            "child_run": serialize_agent_run_state(agent_child_run_from_state(child_state, tool_name=name)),
+        }
+
+    return ToolDefinition(
+        name=name,
+        description=description or f"Run the {agent.name} subagent.",
+        schema={
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}},
+            "required": ["prompt"],
+        },
+        execute=execute,
+        metadata={"type": "subagent", "agent_name": agent.name, "parent_run_id": parent_run_id},
+    )
+
+
+def prepare_subagents_for_agent(agent: Agent) -> Agent:
+    if not agent.subagents:
+        return agent
+    registry = _resolve_tool_registry(agent, None)
+    registry = registry.merge(
+        {name: create_subagent_tool(name=name, agent=subagent) for name, subagent in agent.subagents.items()}
+    )
+    return replace(agent, tools=registry)
+
+
+@dataclass(slots=True)
+class AgentGroupMember:
+    name: str
+    agent: Agent
+    prompt: str | None = None
+
+
+@dataclass(slots=True)
+class AgentGroupMemberResult:
+    name: str
+    output: AgentRunResult | None = None
+    error: Exception | None = None
+
+
+@dataclass(slots=True)
+class AgentGroupRunResult:
+    parent_run_id: str | None
+    outputs: list[AgentGroupMemberResult]
+
+
+async def run_agent_group(
+    members: list[AgentGroupMember],
+    *,
+    prompt: str | None = None,
+    parent_run_id: str | None = None,
+) -> AgentGroupRunResult:
+    async def run_member(member: AgentGroupMember) -> AgentGroupMemberResult:
+        try:
+            output = await run_agent(
+                agent=member.agent,
+                prompt=member.prompt if member.prompt is not None else prompt,
+                parent_run_id=parent_run_id,
+            )
+            return AgentGroupMemberResult(name=member.name, output=output)
+        except Exception as error:
+            return AgentGroupMemberResult(name=member.name, error=error)
+
+    outputs = await asyncio.gather(*(run_member(member) for member in members))
+    return AgentGroupRunResult(parent_run_id=parent_run_id, outputs=list(outputs))
+
+
 def run_agent(
     *,
     agent: Agent,
@@ -3331,6 +3585,8 @@ def run_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
+    parent_run_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> Awaitable[AgentRunResult]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     return resolved_runtime.run(
@@ -3351,6 +3607,8 @@ def run_agent(
         max_retries=max_retries,
         retry_backoff_ms=retry_backoff_ms,
         stop_on_handoff=stop_on_handoff,
+        parent_run_id=parent_run_id,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -3704,7 +3962,7 @@ def stream_live_agent(
                 state=AgentMemoryState(
                     messages=list(resolved_session.messages),
                     summary=resolved_session.summary,
-                    metadata=dict(resolved_session.metadata),
+                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
                 ),
                 agent=agent,
             )
@@ -3715,7 +3973,7 @@ def stream_live_agent(
                 AgentMemoryState(
                     messages=list(resolved_session.messages),
                     summary=resolved_session.summary,
-                    metadata=dict(resolved_session.metadata),
+                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
                 ),
             )
 

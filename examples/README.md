@@ -69,6 +69,10 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/text/native_hosted_tools.py
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/stream_agent.py
+.venv/bin/python examples/agents/platform_parity.py
+.venv/bin/python examples/agents/sequential_workflow.py
+.venv/bin/python examples/agents/parallel_workflow.py
+.venv/bin/python examples/agents/loop_workflow.py
 .venv/bin/python examples/agents/provider_managed_approvals.py
 .venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py

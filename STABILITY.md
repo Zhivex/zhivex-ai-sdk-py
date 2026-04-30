@@ -49,6 +49,8 @@ These APIs are supported and documented, but they may still change between minor
 - Google native media and job clients: `ImagesClient`, `VideosClient`, `MediaClient`, `BatchesClient`, `InteractionsClient`, `ProviderImage`, `GeneratedMedia`, `MediaResult`, `VideoOperation`, and `VideoResult`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
+- Agent platform helpers: durable `AgentRunState` stores, native subagent tools, evaluation fixtures/reports, replay, trace artifacts, run-tree cancellation, safety policies, redaction policies, and budget guards
+- Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, and workflow expectation helpers
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
 
