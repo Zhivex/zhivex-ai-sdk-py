@@ -57,6 +57,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Middleware for telemetry, caching, and circuit breaking
 - Model catalog helpers for cost and recommendation metadata
 - Platform helpers for replay, evaluation reports, hierarchical run traces, budget guards, redaction, and run cancellation
+- Offline reference apps for business workflows, including small-business loan and HR candidate selection flows that demonstrate repair/resume, human approval, fairness checks, trace replay, and app-owned storage without requiring provider credentials
 
 ## Supported Providers
 
@@ -1264,6 +1265,8 @@ result = await pipeline.run()
 ```
 
 Use `ParallelAgent` for fan-out research and `LoopAgent` for bounded refinement loops. Workflow steps share `session.state`; `output_key` writes the step text into state, and `input_template` reads state keys with Python format placeholders.
+
+For fuller business-workflow references, see [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py) and [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py). They model regulated financial review and HR candidate selection with extraction/intake, scoring, human review, validation, fairness/compliance checks, repair/resume, and trace replay. The SDK owns orchestration primitives; the examples keep credit policy, hiring policy, pricing/scoring, persistence, approval UI, ATS integrations, and compliance systems application-owned behind replaceable interfaces.
 
 Durable run state can be attached directly to an agent:
 

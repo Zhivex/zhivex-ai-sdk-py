@@ -70,6 +70,8 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/stream_agent.py
 .venv/bin/python examples/agents/platform_parity.py
+.venv/bin/python examples/agents/small_business_loan_agent.py
+.venv/bin/python examples/agents/hr_candidate_selection_agent.py
 .venv/bin/python examples/agents/sequential_workflow.py
 .venv/bin/python examples/agents/parallel_workflow.py
 .venv/bin/python examples/agents/loop_workflow.py
@@ -103,6 +105,8 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/resume_agent.py
 .venv/bin/python examples/agents/messages_and_tools.py
 .venv/bin/python examples/agents/remote_tool.py
+.venv/bin/python examples/agents/small_business_loan_agent.py
+.venv/bin/python examples/agents/hr_candidate_selection_agent.py
 .venv/bin/python examples/agents/provider_managed_approvals.py
 .venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py
@@ -159,6 +163,8 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - `kimi_native.py` shows the native Kimi/Moonshot Chat Completions path plus Files, Batch, token estimation, and image/video input examples. It expects `MOONSHOT_API_KEY` or `KIMI_API_KEY`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
+- `small_business_loan_agent.py` is an offline reference app for regulated, multi-step workflows: the SDK handles orchestration, repair/resume, approvals, traces, and replay, while the example keeps credit rules, pricing, persistence, and approval UI as application-owned components behind replaceable interfaces.
+- `hr_candidate_selection_agent.py` is an offline reference app for human-centered HR workflows: the SDK handles resume intake orchestration, interview steps, recruiter review, fairness checks, traces, and replay, while ATS integrations, hiring policy, and compliance systems stay application-owned.
 - `skills.py` shows the provider-agnostic agent-skill runtime, which is separate from the native OpenAI Skills API.
 - `native_hosted_tools.py` is the compact production-style example for mixing local callable tools with provider-managed hosted tools on OpenAI or Azure OpenAI native models.
 - `provider_managed_approvals.py` is the compact production-style example for OpenAI/Azure remote MCP approvals with `stream_agent(...)` and `approval_policy`.
