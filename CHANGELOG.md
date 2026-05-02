@@ -21,6 +21,7 @@ Related documents:
 
 ### Added
 
+- Tier-1 vLLM support with `create_vllm(...)`, covering the SDK's OpenAI-compatible text, streaming, structured output/tools, embeddings, transcription, and realtime ASR primitives.
 - Provider-agnostic agent skills with `Agent(..., skills=...)`, `skill(...)`, `load_skill(...)`, and `discover_skills(...)`.
 - `SKILL.md` loading with optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP dependency discovery.
 - Agent-skills example coverage in `examples/agents/skills.py`.

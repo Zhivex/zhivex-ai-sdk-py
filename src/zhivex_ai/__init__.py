@@ -364,6 +364,7 @@ _MODULE_EXPORTS = {
         "qwen_web_search_image_tool",
         "qwen_web_search_tool",
     ),
+    "providers.vllm": ("create_vllm",),
     "providers.vertex": (
         "create_vertex",
         "vertex_code_execution_tool",
@@ -742,6 +743,7 @@ __all__ = [
     "create_openai",
     "create_openrouter",
     "create_qwen",
+    "create_vllm",
     "qwen_code_interpreter_tool",
     "qwen_file_search_tool",
     "qwen_hosted_tool",

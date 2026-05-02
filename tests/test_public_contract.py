@@ -18,6 +18,7 @@ STABLE_EXPORTS = {
     "create_azure_openai",
     "create_gemini",
     "create_vertex",
+    "create_vllm",
     "generate_text",
     "stream_text",
     "generate_object",

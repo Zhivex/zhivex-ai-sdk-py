@@ -14,7 +14,7 @@ Related documents:
 
 These APIs are the supported public contract for application code and production integrations:
 
-- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`
+- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_vllm`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
@@ -75,9 +75,12 @@ The current tier-1 provider story for the stable surface is:
 - Azure OpenAI
 - Gemini
 - Vertex
+- vLLM
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, and support-matrix contract checks.
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
+
+vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 
 Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind. Kimi/Moonshot is a compatibility provider: its native Chat Completions, Files, Batch, token estimation, and Formulas paths are useful, but they are not part of the tier-1 portable contract.

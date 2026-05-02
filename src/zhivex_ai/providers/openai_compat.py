@@ -145,6 +145,11 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
             support_tier="tier-c",
             tool_choice_none=False,
         )
+    if provider_name == "vllm":
+        return AgentCapabilities(
+            support_tier="tier-b",
+            tool_choice_none=True,
+        )
     return AgentCapabilities()
 
 
@@ -2740,6 +2745,24 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                 is_final=True,
                 item_id=payload.get("item_id"),
                 response_id=payload.get("response_id"),
+                provider_metadata=payload,
+            )
+        ]
+    if event_type == "transcription.delta":
+        return [
+            RealtimeTranscriptEvent(
+                text=str(payload.get("delta") or payload.get("text") or ""),
+                role="user",
+                is_final=False,
+                provider_metadata=payload,
+            )
+        ]
+    if event_type == "transcription.done":
+        return [
+            RealtimeTranscriptEvent(
+                text=str(payload.get("text") or payload.get("transcript") or ""),
+                role="user",
+                is_final=True,
                 provider_metadata=payload,
             )
         ]

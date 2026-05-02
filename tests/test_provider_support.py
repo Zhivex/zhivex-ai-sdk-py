@@ -20,6 +20,7 @@ from zhivex_ai import (
     create_openai,
     create_openrouter,
     create_qwen,
+    create_vllm,
     create_vertex,
 )
 from zhivex_ai.provider_support import (
@@ -49,6 +50,7 @@ class ProviderSupportTests(TestCase):
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
                 create_ollama(),
+                create_vllm(api_key="test"),
             ]
         )
         tiers = {row.provider: (row.tier, row.portable_badge) for row in rows}
@@ -65,9 +67,12 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["qwen"], ("compatibility", False))
         self.assertEqual(tiers["kimi"], ("compatibility", False))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
+        self.assertEqual(tiers["vllm"], ("portable", True))
         self.assertFalse(rows[[row.provider for row in rows].index("kimi")].portable_support.embeddings)
         self.assertTrue(native["kimi"].files)
         self.assertTrue(native["kimi"].batches)
+        self.assertTrue(native["vllm"].realtime)
+        self.assertTrue(native["vllm"].transcription)
         self.assertFalse(native["kimi"].responses)
         self.assertTrue(native["openai"].images)
         self.assertTrue(native["openai"].uploads)
@@ -103,8 +108,10 @@ class ProviderSupportTests(TestCase):
         self.assertIn("### Tier-1 Providers", markdown)
         self.assertIn("- `openai`", markdown)
         self.assertIn("- `vertex`", markdown)
+        self.assertIn("- `vllm`", markdown)
         self.assertIn("### Portable Support", markdown)
         self.assertIn("| openai | portable | Yes |", markdown)
+        self.assertIn("| vllm | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
         self.assertIn("### Agent Capabilities", markdown)
@@ -119,10 +126,11 @@ class ProviderSupportTests(TestCase):
                 create_anthropic(api_key="test"),
                 create_gemini(api_key="test"),
                 create_vertex(access_token="test", project_id="project"),
+                create_vllm(api_key="test"),
             ]
         )
 
-        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex"))
+        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex", "vllm"))
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))

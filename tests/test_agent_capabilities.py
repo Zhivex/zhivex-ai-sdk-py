@@ -22,6 +22,7 @@ from zhivex_ai import (
     create_openai,
     create_openrouter,
     create_qwen,
+    create_vllm,
     create_vertex,
     get_agent_capabilities,
     get_agent_support_tier,
@@ -113,6 +114,7 @@ class AgentCapabilitiesTests(TestCase):
             (create_qwen(api_key="test"), "tier-c"),
             (create_kimi(api_key="test"), "tier-c"),
             (create_ollama(), "tier-c"),
+            (create_vllm(api_key="test"), "tier-b"),
         ]
 
         for provider, expected_tier in providers:

@@ -10,7 +10,15 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import create_anthropic, create_gemini, create_ollama, create_openai, create_vertex, generate_text
+from zhivex_ai import (
+    create_anthropic,
+    create_gemini,
+    create_ollama,
+    create_openai,
+    create_vertex,
+    create_vllm,
+    generate_text,
+)
 from zhivex_ai.errors import ZhivexAIError
 
 
@@ -186,6 +194,26 @@ async def _run_ollama() -> tuple[str, bool, str]:
     return ("ollama", True, f"ok: {model} @ {base_url}")
 
 
+async def _run_vllm() -> tuple[str, bool, str]:
+    model = os.getenv("ZHIVEX_SMOKE_VLLM_MODEL")
+    base_url = os.getenv("ZHIVEX_SMOKE_VLLM_BASE_URL", "http://localhost:8000/v1")
+    api_key = os.getenv("ZHIVEX_SMOKE_VLLM_API_KEY") or os.getenv("VLLM_API_KEY")
+    if not model:
+        return ("vllm", False, "skip: set ZHIVEX_SMOKE_VLLM_MODEL")
+    provider = create_vllm(api_key=api_key, base_url=base_url)
+    result = await generate_text(
+        model=provider(model),
+        prompt="Reply with exactly VLLM_SMOKE_OK.",
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if result.text.strip() != "VLLM_SMOKE_OK.":
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    return ("vllm", True, f"ok: {model} @ {base_url}")
+
+
 async def main() -> int:
     _load_dotenv_if_available()
     selected = _selected_providers()
@@ -200,6 +228,8 @@ async def main() -> int:
         checks.append(_run_vertex)
     if _want("ollama", selected):
         checks.append(_run_ollama)
+    if _want("vllm", selected):
+        checks.append(_run_vllm)
 
     failures = 0
     for check in checks:

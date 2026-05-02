@@ -15,6 +15,7 @@ __all__ = [
     "create_openai",
     "create_openrouter",
     "create_qwen",
+    "create_vllm",
     "create_vertex",
 ]
 
@@ -31,6 +32,7 @@ _EXPORTS = {
     "create_openai": ".openai",
     "create_openrouter": ".openrouter",
     "create_qwen": ".qwen",
+    "create_vllm": ".vllm",
     "create_vertex": ".vertex",
 }
 

@@ -68,7 +68,7 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
 
-For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
+For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
@@ -84,6 +84,7 @@ These providers back the stable surface for production API work in this SDK toda
 - `azure-openai`
 - `gemini`
 - `vertex`
+- `vllm`
 
 ### Portable Support
 
@@ -99,6 +100,7 @@ These providers back the stable surface for production API work in this SDK toda
 | openrouter | native-only | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
 | qwen | compatibility | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | vertex | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| vllm | portable | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No |
 
 ### Native Extras
 
@@ -114,6 +116,7 @@ These providers back the stable surface for production API work in this SDK toda
 | openrouter | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | qwen | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | vertex | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
+| vllm | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
 
 ### Agent Capabilities
 
@@ -129,6 +132,7 @@ These providers back the stable surface for production API work in this SDK toda
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
 | qwen | tier-c | Yes | No | Yes | Yes | Yes | No | Yes | No |
 | vertex | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
+| vllm | tier-b | Yes | No | No | No | No | No | No | No |
 <!-- END GENERATED SUPPORT MATRIX -->
 
 ### Tool Calling Notes
@@ -144,6 +148,7 @@ Tool support now follows the same rule everywhere:
 - Anthropic is part of the tier-1 text-generation story in this SDK. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
 - Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
 - OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
+- vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, but this SDK does not currently mirror OpenAI's native lifecycle clients for vector-store/file-search administration, Responses, or Conversations on the Azure provider bundle.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
@@ -974,6 +979,7 @@ The package currently exposes:
 - `create_anthropic()`
 - `create_gemini()`
 - `create_vertex()`
+- `create_vllm()`
 - `create_bedrock()`
 - `create_openrouter()`
 - `create_qwen()`
@@ -1002,7 +1008,29 @@ Native usage:
 
 Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
 
-OpenAI-compatible providers such as OpenRouter, Qwen, and Ollama still reuse normalized adapter paths internally, but they no longer imply portable parity. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM still reuse normalized adapter paths internally, but only vLLM participates in the tier-1 portable story. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+
+vLLM usage targets its OpenAI-compatible server:
+
+```python
+import asyncio
+
+from zhivex_ai import create_vllm, generate_text
+
+
+async def main() -> None:
+    provider = create_vllm(base_url="http://localhost:8000/v1")
+    result = await generate_text(
+        model=provider("NousResearch/Meta-Llama-3-8B-Instruct"),
+        prompt="Explain vLLM in one sentence.",
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+`create_vllm()` reads `VLLM_API_KEY` and `VLLM_BASE_URL`; local development can omit the API key and use the default compatibility token `vllm`. The tier-1 guarantee covers the SDK primitives vLLM exposes through OpenAI-compatible routes: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. Model-specific tasks still matter: embeddings require an embedding model, transcription/realtime require ASR-capable vLLM setup, and vLLM custom endpoints such as tokenize, rerank, classify, and score are intentionally outside the SDK surface for now.
 
 Kimi/Moonshot native usage:
 
@@ -1414,6 +1442,7 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
 - Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py)
 - Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
+- Local vLLM: [vllm_text.py](./examples/text/vllm_text.py)
 - Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
 - Agent skills: [skills.py](./examples/agents/skills.py)
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)

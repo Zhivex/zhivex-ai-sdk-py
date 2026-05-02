@@ -19,6 +19,7 @@ from zhivex_ai import (
     create_openai,
     create_openrouter,
     create_qwen,
+    create_vllm,
     create_vertex,
 )
 from zhivex_ai.provider_support import (
@@ -59,6 +60,7 @@ def main() -> None:
             create_qwen(api_key="test"),
             create_kimi(api_key="test"),
             create_ollama(),
+            create_vllm(api_key="test"),
         ]
     )
     rendered = render_provider_support_markdown(rows)

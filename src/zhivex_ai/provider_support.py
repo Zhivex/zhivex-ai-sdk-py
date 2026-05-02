@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from .providers.base import ProviderBundle
 from .types import AgentCapabilities, NativeSupport, PortableProviderTier, PortableSupport
 
-TIER_1_PROVIDERS = ("openai", "anthropic", "azure-openai", "gemini", "vertex")
+TIER_1_PROVIDERS = ("openai", "anthropic", "azure-openai", "gemini", "vertex", "vllm")
 README_SUPPORT_MATRIX_BEGIN = "<!-- BEGIN GENERATED SUPPORT MATRIX -->"
 README_SUPPORT_MATRIX_END = "<!-- END GENERATED SUPPORT MATRIX -->"
 
