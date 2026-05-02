@@ -61,6 +61,10 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
     ]
     native_headers = [
         "Provider",
+        "Text",
+        "Streaming",
+        "Structured Output",
+        "Tools",
         "Files",
         "File Search",
         "Images",
@@ -114,6 +118,10 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         [
             [
                 row.provider,
+                _yes_no(row.native_support.text_generation),
+                _yes_no(row.native_support.streaming),
+                _yes_no(row.native_support.structured_output),
+                _yes_no(row.native_support.tools),
                 _yes_no(row.native_support.files),
                 _yes_no(row.native_support.file_search),
                 _yes_no(row.native_support.images),

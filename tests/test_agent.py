@@ -18,6 +18,7 @@ from zhivex_ai import (  # noqa: E402
     AgentRegistry,
     AgentToolApprovalEvent,
     AgentToolCallEvent,
+    AgentToolResultEvent,
     GuardrailResult,
     GuardrailTripwireTriggered,
     ModelCapabilities,
@@ -47,8 +48,11 @@ from zhivex_ai.types import (  # noqa: E402
     StreamTextDeltaEvent,
     OpenAIMcpApprovalRequest,
     OpenAIMcpListTools,
+    StreamToolResultEvent,
     ToolCall,
     ToolCallPart,
+    ToolExecutionResult,
+    ToolResultPart,
     TokenUsage,
 )
 
@@ -319,6 +323,56 @@ class ProviderManagedApprovalModel:
         return generator()
 
 
+class ProviderManagedToolResultModel:
+    provider = "anthropic"
+    model_id = "claude-sonnet-4-6"
+    capabilities = BASE_CAPABILITIES
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[
+                        ToolCallPart(
+                            tool_call=ToolCall(
+                                id="mcp_1",
+                                name="docs_search",
+                                input={"query": "apollo"},
+                                provider_metadata={"provider_managed": True},
+                            )
+                        ),
+                        ToolResultPart(
+                            tool_result=ToolExecutionResult(
+                                tool_call_id="mcp_1",
+                                tool_name="mcp_tool_result",
+                                output=[{"type": "text", "text": "found"}],
+                                is_error=False,
+                            )
+                        ),
+                        create_text_message("assistant", "done").parts[0],
+                    ],
+                )
+            ],
+            text="done",
+        )
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            yield StreamToolResultEvent(
+                tool_result=ToolExecutionResult(
+                    tool_call_id="mcp_1",
+                    tool_name="mcp_tool_result",
+                    output=[{"type": "text", "text": "found"}],
+                    is_error=False,
+                )
+            )
+            yield StreamTextDeltaEvent(text_delta="done")
+            yield StreamFinishEvent(finish_reason="stop")
+
+        return generator()
+
+
 class UnsafeStreamingAgentModel:
     provider = "test"
     model_id = "unsafe-stream"
@@ -577,6 +631,43 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertTrue(approvals[0].provider_managed)
         self.assertEqual([event.tool_call.name for event in provider_tool_calls], ["docs_search", "mcp_list_tools"])
         self.assertLess(event_types.index("tool-approval"), event_types.index("tool-call"))
+
+    async def test_run_agent_emits_provider_managed_tool_results(self) -> None:
+        result = await run_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted provider tools.",
+                model=ProviderManagedToolResultModel(),
+            ),
+            prompt="search docs",
+        )
+
+        tool_calls = [event for event in result.trace.events if isinstance(event, AgentToolCallEvent)]
+        tool_results = [event for event in result.trace.events if isinstance(event, AgentToolResultEvent)]
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(tool_calls[0].tool_call.name, "docs_search")
+        self.assertEqual(tool_results[0].tool_result.tool_call_id, "mcp_1")
+        self.assertEqual(tool_results[0].tool_result.output, [{"type": "text", "text": "found"}])
+
+    async def test_stream_agent_emits_provider_managed_tool_results(self) -> None:
+        stream = stream_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted provider tools.",
+                model=ProviderManagedToolResultModel(),
+            ),
+            prompt="search docs",
+        )
+        events = [event async for event in stream.event_stream()]
+        final = await stream.collect()
+
+        tool_results = [event for event in events if isinstance(event, AgentToolResultEvent)]
+        text_deltas = [event.text_delta for event in events if event.type == "text-delta"]
+
+        self.assertEqual(final.text, "done")
+        self.assertEqual(tool_results[0].tool_result.tool_call_id, "mcp_1")
+        self.assertEqual(text_deltas, ["done"])
 
     async def test_run_agent_trips_input_guardrail_before_model_call(self) -> None:
         model = CountingEchoAgentModel()

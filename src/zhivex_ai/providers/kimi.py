@@ -61,7 +61,7 @@ KIMI_OFFICIAL_TOOL_URIS: tuple[str, ...] = (
 )
 
 
-KIMI_AGENT_CAPABILITIES = AgentCapabilities(support_tier="tier-c", tool_choice_none=True)
+KIMI_AGENT_CAPABILITIES = AgentCapabilities(support_tier="tier-b", tool_choice_none=True, toolsets=True)
 
 KIMI_CHAT_CAPABILITIES = ModelCapabilities(
     streaming=True,

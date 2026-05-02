@@ -30,6 +30,7 @@ from zhivex_ai import (
     generate_speech,
     generate_text,
     hosted_tool,
+    stream_text,
     tool,
     vertex_external_search_tool,
     vertex_google_maps_tool,
@@ -54,6 +55,10 @@ class FakeResponse:
 
     async def text(self) -> str:
         return self.body_text or json.dumps(self.payload)
+
+    async def iter_lines(self):
+        for line in self.body_text.splitlines():
+            yield line
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
@@ -1394,4 +1399,22 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "sunny")
         second_request_parts = requests[1]["contents"][1]["parts"]
         function_call_part = next(part for part in second_request_parts if "functionCall" in part)
-        self.assertEqual(function_call_part["thought_signature"], "sig-123")
+        self.assertEqual(function_call_part["thoughtSignature"], "sig-123")
+
+    async def test_gemini_stream_preserves_snake_case_thought_signature(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"weather","args":{"city":"Madrid"}},"thought_signature":"sig-456"}]},"finishReason":"STOP"}]}\n\n'
+                ),
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        stream = stream_text(model=provider("gemini-3-flash-preview"), prompt="weather")
+        events = [event async for event in stream.event_stream()]
+
+        tool_call = next(event.tool_call for event in events if event.type == "tool-call")
+        self.assertEqual(tool_call.provider_metadata["thought_signature"], "sig-456")

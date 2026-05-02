@@ -2290,6 +2290,17 @@ def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCa
     return calls
 
 
+def _extract_provider_tool_results_from_steps(steps: list[GenerateTextStep]) -> list[ToolExecutionResult]:
+    results: list[ToolExecutionResult] = []
+    for step in steps:
+        response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
+        for message in response_messages:
+            for part in message.parts:
+                if getattr(part, "type", None) == "tool-result":
+                    results.append(part.tool_result)
+    return results
+
+
 def _step_status_from_result(result: GenerateTextOutput) -> AgentRunStatus:
     return "failed" if result.finish_reason == "error" else "completed"
 
@@ -3113,6 +3124,8 @@ class AgentRuntime:
         if not emitted_live_tool_events:
             for tool_call in _extract_tool_calls_from_steps(accumulated_steps):
                 await emit(AgentToolCallEvent(tool_call=tool_call))
+            for tool_result in _extract_provider_tool_results_from_steps(accumulated_steps):
+                await emit(AgentToolResultEvent(tool_result=tool_result))
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
         segment_provider_finish_reason = _segment_provider_finish_reason(result)

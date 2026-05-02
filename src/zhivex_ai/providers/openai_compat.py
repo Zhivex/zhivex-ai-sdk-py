@@ -128,7 +128,7 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
         )
     if provider_name == "qwen":
         return AgentCapabilities(
-            support_tier="tier-c",
+            support_tier="tier-b",
             tool_choice_none=True,
             hosted_web_search=True,
             hosted_file_search=True,

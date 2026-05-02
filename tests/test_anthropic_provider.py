@@ -562,6 +562,8 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
                     'data: {"index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":\\"hi\\"}"}}\n\n'
                     'event: content_block_stop\n'
                     'data: {"index":1}\n\n'
+                    'event: content_block_start\n'
+                    'data: {"index":2,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcp_1","is_error":false,"content":[{"type":"text","text":"hi"}]}}\n\n'
                     'event: message_stop\n'
                     'data: {"stop_reason":"end_turn"}\n'
                 ),
@@ -579,6 +581,8 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(events[0].tool_call.provider_metadata["provider_managed"])
         self.assertEqual(events[0].tool_call.provider_metadata["server_name"], "example-mcp")
         self.assertEqual(events[0].tool_call.input, {"value": "hi"})
+        self.assertEqual(events[1].tool_result.tool_call_id, "mcp_1")
+        self.assertFalse(events[1].tool_result.is_error)
 
     async def test_anthropic_adds_legacy_mcp_beta_header_by_default(self) -> None:
         headers_seen: list[dict[str, str]] = []

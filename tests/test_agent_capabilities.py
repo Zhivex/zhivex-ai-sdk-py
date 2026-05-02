@@ -109,10 +109,10 @@ class AgentCapabilitiesTests(TestCase):
             (create_anthropic(api_key="test"), "tier-b"),
             (create_gemini(api_key="test"), "tier-b"),
             (create_vertex(access_token="test", project_id="project"), "tier-b"),
-            (create_bedrock(client=_FakeBedrockClient()), "tier-c"),
+            (create_bedrock(client=_FakeBedrockClient()), "tier-b"),
             (create_openrouter(api_key="test"), "tier-c"),
-            (create_qwen(api_key="test"), "tier-c"),
-            (create_kimi(api_key="test"), "tier-c"),
+            (create_qwen(api_key="test"), "tier-b"),
+            (create_kimi(api_key="test"), "tier-b"),
             (create_ollama(), "tier-c"),
             (create_vllm(api_key="test"), "tier-b"),
         ]

@@ -330,7 +330,7 @@ def _map_part(part: Any) -> dict[str, Any]:
         thought_signature = part.tool_call.provider_metadata.get("thought_signature")
         payload = {"functionCall": function_call}
         if thought_signature is not None:
-            payload["thought_signature"] = thought_signature
+            payload["thoughtSignature"] = thought_signature
         return payload
     if part.type == "tool-result":
         return {
@@ -732,6 +732,10 @@ def _normalize_video_media(payload: dict[str, Any], *, provider: str) -> list[Ge
             )
         )
     return media
+
+
+def _part_thought_signature(part: dict[str, Any]) -> Any:
+    return part.get("thoughtSignature") if part.get("thoughtSignature") is not None else part.get("thought_signature")
 
 
 def _parse_timestamp_ms(value: Any) -> int | None:
@@ -1633,8 +1637,9 @@ def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
         elif part.get("functionCall"):
             call = part["functionCall"]
             provider_metadata: dict[str, Any] = {}
-            if part.get("thoughtSignature") is not None:
-                provider_metadata["thought_signature"] = part["thoughtSignature"]
+            thought_signature = _part_thought_signature(part)
+            if thought_signature is not None:
+                provider_metadata["thought_signature"] = thought_signature
             parts.append(
                 ToolCallPart(
                     tool_call=ToolCall(
@@ -1798,8 +1803,9 @@ class GeminiLanguageModel(LanguageModel):
                     if part.get("functionCall"):
                         call = part["functionCall"]
                         provider_metadata: dict[str, Any] = {}
-                        if part.get("thoughtSignature") is not None:
-                            provider_metadata["thought_signature"] = part["thoughtSignature"]
+                        thought_signature = _part_thought_signature(part)
+                        if thought_signature is not None:
+                            provider_metadata["thought_signature"] = thought_signature
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
                                 id=f'{call["name"]}-0',

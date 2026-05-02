@@ -64,6 +64,29 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.provider, "openai")
 
+    async def test_default_model_catalog_tracks_reference_models(self) -> None:
+        expected = [
+            ("openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
+            ("openai", "gpt-5.4-mini", {"speed", "tools"}),
+            ("anthropic", "claude-opus-4-7", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
+            ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("gemini", "gemini-3-flash-preview", {"speed", "tools", "vision"}),
+            ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
+            ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
+            ("qwen", "qwen3.5-plus", {"reasoning", "tools", "vision"}),
+            ("kimi", "kimi-k2.6", {"reasoning", "tools", "vision"}),
+        ]
+
+        for provider, model_id, recommended in expected:
+            entry = default_model_catalog.find(provider, model_id)
+            self.assertIsNotNone(entry, f"{provider}/{model_id} missing from default catalog")
+            self.assertTrue(recommended.issubset(set(entry.recommended_for)))  # type: ignore[union-attr]
+
+        self.assertEqual(default_model_catalog.find("gemini", "gemini-pro-latest").model_id, "gemini-3.1-pro-preview")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
+
     async def test_cached_middleware_avoids_duplicate_generate_calls(self) -> None:
         model = CountingModel()
         wrapped = wrap_language_model(

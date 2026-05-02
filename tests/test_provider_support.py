@@ -101,8 +101,14 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(agent["gemini"].computer_use)
         self.assertTrue(agent["vertex"].hosted_file_search)
         self.assertTrue(agent["vertex"].computer_use)
-        self.assertEqual(agent["bedrock"].support_tier, "tier-c")
-        self.assertFalse(agent["bedrock"].tool_choice_none)
+        self.assertEqual(agent["qwen"].support_tier, "tier-b")
+        self.assertTrue(agent["qwen"].remote_mcp)
+        self.assertTrue(agent["qwen"].code_execution)
+        self.assertEqual(agent["kimi"].support_tier, "tier-b")
+        self.assertTrue(agent["kimi"].toolsets)
+        self.assertTrue(native["bedrock"].tools)
+        self.assertEqual(agent["bedrock"].support_tier, "tier-b")
+        self.assertTrue(agent["bedrock"].tool_choice_none)
 
         markdown = render_provider_support_markdown(rows)
         self.assertIn("### Tier-1 Providers", markdown)
@@ -114,9 +120,17 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| vllm | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
+        self.assertIn(
+            "| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images |",
+            markdown,
+        )
+        self.assertIn("| bedrock | Yes | Yes | No | Yes | No | No | No |", markdown)
         self.assertIn("### Agent Capabilities", markdown)
         self.assertIn("| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |", markdown)
         self.assertIn("| anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |", markdown)
+        self.assertIn("| bedrock | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
+        self.assertIn("| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |", markdown)
+        self.assertIn("| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(

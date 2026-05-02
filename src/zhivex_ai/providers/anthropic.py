@@ -35,6 +35,7 @@ from ..types import (
     StreamFinishEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
+    StreamToolResultEvent,
     TextPart,
     TokenCountDetail,
     TokenUsage,
@@ -765,6 +766,18 @@ def _anthropic_result_text(block: dict[str, Any]) -> str:
     return json.dumps(serialize_json_value(block))
 
 
+def _parse_provider_tool_result_block(block: dict[str, Any]) -> ToolResultPart:
+    block_type = str(block.get("type") or "")
+    return ToolResultPart(
+        tool_result=ToolExecutionResult(
+            tool_call_id=str(block.get("tool_use_id") or block.get("id") or ""),
+            tool_name=str(block.get("name") or block_type),
+            output=serialize_json_value(block.get("content") or block),
+            is_error=bool(block.get("is_error")),
+        )
+    )
+
+
 def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
     parts: list[Any] = []
     thinking_blocks: list[dict[str, Any]] = []
@@ -797,16 +810,7 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
                     )
                 )
         elif block_type in {"mcp_tool_result", "web_search_tool_result"}:
-            parts.append(
-                ToolResultPart(
-                    tool_result=ToolExecutionResult(
-                        tool_call_id=str(block.get("tool_use_id") or block.get("id") or ""),
-                        tool_name=str(block.get("name") or block_type),
-                        output=serialize_json_value(block.get("content") or block),
-                        is_error=False,
-                    )
-                )
-            )
+            parts.append(_parse_provider_tool_result_block(block))
         elif block_type.endswith("_code_execution_result") or block_type == "code_execution_result":
             parts.append(
                 CodeExecutionResultPart(
@@ -1266,6 +1270,13 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                             **({"server_name": block.get("server_name")} if block.get("server_name") is not None else {}),
                         },
                     }
+                elif event.event == "content_block_start" and payload.get("content_block", {}).get("type") in {
+                    "mcp_tool_result",
+                    "web_search_tool_result",
+                }:
+                    yield StreamToolResultEvent(
+                        tool_result=_parse_provider_tool_result_block(payload["content_block"]).tool_result
+                    )
                 elif event.event == "content_block_delta" and payload.get("delta", {}).get("type") == "input_json_delta":
                     current = tool_buffers.get(payload["index"])
                     if current is not None:

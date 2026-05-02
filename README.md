@@ -104,19 +104,19 @@ These providers back the stable surface for production API work in this SDK toda
 
 ### Native Extras
 
-| Provider | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| azure-openai | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
-| bedrock | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
-| gemini | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
-| kimi | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
-| ollama | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
-| openrouter | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| vertex | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
-| vllm | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| azure-openai | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
+| kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
+| ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
+| openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
+| vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
 
 ### Agent Capabilities
 
@@ -124,13 +124,13 @@ These providers back the stable surface for production API work in this SDK toda
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |
 | azure-openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
-| bedrock | tier-c | No | No | No | No | No | No | No | No |
+| bedrock | tier-b | Yes | No | No | No | No | No | No | No |
 | gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
-| kimi | tier-c | Yes | No | No | No | No | No | No | No |
+| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |
 | ollama | tier-c | No | No | No | No | No | No | No | No |
 | openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
-| qwen | tier-c | Yes | No | Yes | Yes | Yes | No | Yes | No |
+| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |
 | vertex | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 | vllm | tier-b | Yes | No | No | No | No | No | No | No |
 <!-- END GENERATED SUPPORT MATRIX -->
@@ -1143,6 +1143,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen, and Kimi. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 

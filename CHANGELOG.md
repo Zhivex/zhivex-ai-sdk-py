@@ -41,6 +41,7 @@ Related documents:
 - Google native model coverage for Gemini and Vertex: multimodal `embed_content(...)` / `embed_content_many(...)`, Gemini/Nano Banana and Imagen images, Veo long-running videos, Lyria media generation, Gemini Batch jobs, and Gemini Interactions/Deep Research clients.
 - Kimi/Moonshot native support for Chat Completions, Files, Batch, token estimation, and official Formulas tools through `provider.formulas()`, `KimiFormulaClient`, `kimi_formula_toolset(...)`, and `KIMI_OFFICIAL_TOOL_URIS`.
 - Qwen native updates for Alibaba Cloud Model Studio's current surface: `DASHSCOPE_API_KEY` fallback, `qwen_mcp_tool(...)`, Qwen3-ASR transcription via `provider.native.transcription_model("qwen3-asr-flash")`, and catalog entries for current Qwen3.5, Qwen3 Max, Coder, ASR, and TTS model IDs.
+- Refreshed `default_model_catalog` recommendations for the current reference-model set across OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen, and Kimi.
 - Beta agent platform parity helpers: durable `AgentRunState` stores, idempotent run reuse, run-tree cancellation, native subagent tools, `run_agent_group(...)`, replay/snapshot helpers, evaluation fixtures/reports, trace artifacts, redaction policies, and budget guards.
 - Declarative beta workflow agents with `WorkflowStep`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `AgentSession.state`, workflow trace events, and workflow expectation validation.
 - Mock model/tool helpers for deterministic agent evaluation and local examples without provider credentials.
@@ -58,6 +59,11 @@ Related documents:
 - The README support matrix is now intended to be rewritten from runtime metadata via `scripts/generate_support_matrix.py --write-readme`, keeping provider docs aligned with the generated portable/native/agent capability tables.
 - Clarified Azure OpenAI's hosted-tool helper scope separately from OpenAI-only lifecycle clients for vector-store/file-search administration, Responses, and Conversations.
 - Gemini text generation now preserves non-text inline outputs as image or file parts instead of silently dropping provider media payloads.
+- Promoted Qwen and Kimi agent-capability metadata to `tier-b` while keeping both providers in the compatibility tier for portable support.
+- Added Bedrock Converse native tool-use mapping for callable SDK tools and promoted Bedrock agent-capability metadata to `tier-b` without changing its native-only portable tier.
+- Agent runs now surface provider-managed tool result blocks, such as Anthropic MCP tool results, as `AgentToolResultEvent` events in both regular and streaming runs.
+- Gemini and Vertex tool-loop messages now preserve incoming `thoughtSignature` / `thought_signature` values and resend them as the official `thoughtSignature` field.
+- Added native Bedrock ConverseStream support for text deltas, incremental tool-use calls, finish reasons, and token usage.
 
 ### Fixed
 
