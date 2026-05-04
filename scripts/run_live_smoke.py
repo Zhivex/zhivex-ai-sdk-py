@@ -11,13 +11,18 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import (
+    AudioInput,
     create_anthropic,
     create_gemini,
     create_ollama,
     create_openai,
+    create_qwen,
     create_vertex,
     create_vllm,
+    embed,
+    generate_speech,
     generate_text,
+    transcribe_audio,
 )
 from zhivex_ai.errors import ZhivexAIError
 
@@ -194,6 +199,81 @@ async def _run_ollama() -> tuple[str, bool, str]:
     return ("ollama", True, f"ok: {model} @ {base_url}")
 
 
+async def _run_qwen() -> tuple[str, bool, str]:
+    model = os.getenv("ZHIVEX_SMOKE_QWEN_MODEL")
+    api_key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    region = os.getenv("ZHIVEX_SMOKE_QWEN_REGION", "intl")
+    base_url = os.getenv("ZHIVEX_SMOKE_QWEN_BASE_URL")
+    responses_base_url = os.getenv("ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL")
+    if not api_key or not model:
+        return ("qwen", False, "skip: set DASHSCOPE_API_KEY (or QWEN_API_KEY) and ZHIVEX_SMOKE_QWEN_MODEL")
+    provider = create_qwen(
+        api_key=api_key,
+        region=region,  # type: ignore[arg-type]
+        base_url=base_url,
+        responses_base_url=responses_base_url,
+    )
+    result = await generate_text(
+        model=provider.native.language_model(model),
+        prompt="Reply with exactly QWEN_SMOKE_OK.",
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if result.text.strip() != "QWEN_SMOKE_OK.":
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+
+    details = [f"ok: {model}", f"region={region}"]
+    embedding_model = os.getenv("ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL")
+    if embedding_model:
+        embedding = await embed(
+            model=provider.native.embedding_model(embedding_model),
+            value="smoke",
+            max_retries=1,
+            retry_backoff_ms=250,
+            timeout_ms=20_000,
+        )
+        if not embedding.embedding:
+            raise RuntimeError("Qwen embedding smoke returned an empty vector")
+        details.append(f"embedding={embedding_model}")
+
+    asr_model = os.getenv("ZHIVEX_SMOKE_QWEN_ASR_MODEL")
+    asr_audio_path = os.getenv("ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH")
+    if asr_model and asr_audio_path:
+        audio_path = Path(asr_audio_path)
+        if not audio_path.exists():
+            raise RuntimeError(f"Qwen ASR audio path does not exist: {asr_audio_path}")
+        transcript = await transcribe_audio(
+            model=provider.native.transcription_model(asr_model),
+            audio=AudioInput(data=audio_path.read_bytes(), media_type=os.getenv("ZHIVEX_SMOKE_QWEN_ASR_MEDIA_TYPE", "audio/wav"), filename=audio_path.name),
+            max_retries=1,
+            retry_backoff_ms=250,
+            timeout_ms=30_000,
+        )
+        if not transcript.text.strip():
+            raise RuntimeError("Qwen ASR smoke returned empty text")
+        details.append(f"asr={asr_model}")
+    elif asr_model:
+        details.append(f"asr={asr_model}:skip-audio")
+
+    tts_model = os.getenv("ZHIVEX_SMOKE_QWEN_TTS_MODEL")
+    if tts_model:
+        speech = await generate_speech(
+            model=provider.native.speech_model(tts_model),
+            input="Zhivex Qwen smoke test.",
+            provider_options={"language_type": os.getenv("ZHIVEX_SMOKE_QWEN_TTS_LANGUAGE_TYPE", "English")},
+            max_retries=1,
+            retry_backoff_ms=250,
+            timeout_ms=30_000,
+        )
+        if not speech.audio:
+            raise RuntimeError("Qwen TTS smoke returned empty audio")
+        details.append(f"tts={tts_model}")
+
+    return ("qwen", True, ", ".join(details))
+
+
 async def _run_vllm() -> tuple[str, bool, str]:
     model = os.getenv("ZHIVEX_SMOKE_VLLM_MODEL")
     base_url = os.getenv("ZHIVEX_SMOKE_VLLM_BASE_URL", "http://localhost:8000/v1")
@@ -228,6 +308,8 @@ async def main() -> int:
         checks.append(_run_vertex)
     if _want("ollama", selected):
         checks.append(_run_ollama)
+    if _want("qwen", selected):
+        checks.append(_run_qwen)
     if _want("vllm", selected):
         checks.append(_run_vllm)
 

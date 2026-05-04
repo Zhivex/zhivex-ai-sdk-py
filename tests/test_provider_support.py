@@ -104,6 +104,8 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(agent["qwen"].support_tier, "tier-b")
         self.assertTrue(agent["qwen"].remote_mcp)
         self.assertTrue(agent["qwen"].code_execution)
+        self.assertTrue(native["qwen"].responses)
+        self.assertFalse(native["qwen"].file_search)
         self.assertEqual(agent["kimi"].support_tier, "tier-b")
         self.assertTrue(agent["kimi"].toolsets)
         self.assertTrue(native["bedrock"].tools)

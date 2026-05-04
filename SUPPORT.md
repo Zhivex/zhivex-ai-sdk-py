@@ -56,6 +56,8 @@ Gemini and Vertex are tier-1 for the portable production surface. Google-specifi
 
 vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
 
+Qwen is supported as a compatibility provider through `provider.native`. `create_qwen(region="intl" | "us" | "cn")` maps to Alibaba Cloud Model Studio's documented OpenAI-compatible regions, while `base_url` and `responses_base_url` remain explicit overrides for custom gateways. Qwen exposes a raw `provider.responses()` client plus hosted web/file/code/MCP tool payloads for Responses, embeddings, Qwen3-ASR, and DashScope TTS through native paths. It does not expose file-search lifecycle clients or carry the portable badge yet.
+
 Kimi/Moonshot is supported as a compatibility provider through `provider.native`. Its native text generation uses the official Chat Completions API, with Files, Batch, token estimation, and Formulas exposed as beta native clients.
 
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.

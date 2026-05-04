@@ -40,7 +40,8 @@ Related documents:
 - Conservative Anthropic hosted-tool compatibility updates: current MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`, while current web search and newer code-execution tool versions remain explicit `tool_type` choices.
 - Google native model coverage for Gemini and Vertex: multimodal `embed_content(...)` / `embed_content_many(...)`, Gemini/Nano Banana and Imagen images, Veo long-running videos, Lyria media generation, Gemini Batch jobs, and Gemini Interactions/Deep Research clients.
 - Kimi/Moonshot native support for Chat Completions, Files, Batch, token estimation, and official Formulas tools through `provider.formulas()`, `KimiFormulaClient`, `kimi_formula_toolset(...)`, and `KIMI_OFFICIAL_TOOL_URIS`.
-- Qwen native updates for Alibaba Cloud Model Studio's current surface: `DASHSCOPE_API_KEY` fallback, `qwen_mcp_tool(...)`, Qwen3-ASR transcription via `provider.native.transcription_model("qwen3-asr-flash")`, and catalog entries for current Qwen3.5, Qwen3 Max, Coder, ASR, and TTS model IDs.
+- Qwen native updates for Alibaba Cloud Model Studio's current surface: `DASHSCOPE_API_KEY` fallback, `qwen_mcp_tool(...)`, Qwen3-ASR transcription via `provider.native.transcription_model("qwen3-asr-flash")`, and catalog entries for current Qwen 3.6, Qwen3.5, Qwen3 Max, Coder, embedding, rerank, ASR, and TTS model IDs.
+- Dedicated `examples/text/qwen_native.py` coverage for Qwen text, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
 - Refreshed `default_model_catalog` recommendations for the current reference-model set across OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen, and Kimi.
 - Beta agent platform parity helpers: durable `AgentRunState` stores, idempotent run reuse, run-tree cancellation, native subagent tools, `run_agent_group(...)`, replay/snapshot helpers, evaluation fixtures/reports, trace artifacts, redaction policies, and budget guards.
 - Declarative beta workflow agents with `WorkflowStep`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `AgentSession.state`, workflow trace events, and workflow expectation validation.
@@ -48,6 +49,7 @@ Related documents:
 
 ### Changed
 
+- `create_qwen()` now supports `region="intl" | "us" | "cn"` for Alibaba Cloud Model Studio's documented OpenAI-compatible endpoints while retaining explicit `base_url` and `responses_base_url` overrides.
 - `create_kimi()` now follows Moonshot's documented environment names and runtime surface: `MOONSHOT_API_KEY`, optional `MOONSHOT_BASE_URL`, Chat Completions for text generation, and `kimi-k2.6` as the catalog default.
 - Kimi provider metadata now reports native Files and Batch support, removes the unsupported embeddings claim, and keeps Kimi in the compatibility tier without the portable badge.
 - Clarified the documentation split between portable agent skills and the native OpenAI `provider.skills()` lifecycle client.
@@ -67,6 +69,7 @@ Related documents:
 
 ### Fixed
 
+- Moved Qwen provider coverage into dedicated tests, exposed the raw native Responses client, and hardened its native Responses contract for hosted tools, MCP, streaming, response continuation options, ASR, and TTS without promoting it beyond compatibility support.
 - Aligned beta provider agent-capability metadata with the hosted-tool helpers already supported by adapters, including Anthropic code execution and Gemini/Vertex file-search plus computer-use hosted tools.
 - Clarified across README, STABILITY, and SUPPORT that the generated `Agent Capabilities` matrix is beta guidance for hosted tools and provider-managed events, with provider-managed approval/runtime integration currently limited to OpenAI and Azure OpenAI.
 - Fixed the local `make check` type gate by tightening protocol annotations, dataclass serialization narrowing, schema-adapter typing, HTTP response headers, and provider model-cache generics.

@@ -114,7 +114,7 @@ These providers back the stable surface for production API work in this SDK toda
 | ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
 | openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No |
 | vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
 | vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
 
@@ -1010,6 +1010,31 @@ Portable model construction fails fast when the provider does not hold the porta
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM still reuse normalized adapter paths internally, but only vLLM participates in the tier-1 portable story. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
 
+Qwen/Alibaba Cloud Model Studio native usage:
+
+```python
+import asyncio
+
+from zhivex_ai import create_qwen, generate_text, qwen_web_search_tool
+
+
+async def main() -> None:
+    provider = create_qwen(region="us")  # intl, us, or cn
+    result = await generate_text(
+        model=provider.native.language_model("qwen3.6-plus"),
+        prompt="Summarize the latest Qwen hosted tool surface.",
+        tools={"search": qwen_web_search_tool()},
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+`create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"`; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Pass `base_url=...` or `responses_base_url=...` only for custom gateways or advanced endpoint overrides. Qwen remains a compatibility provider in this SDK: use `provider.native.*` for Responses tools/MCP, embeddings, Qwen3-ASR, and DashScope TTS until it receives the portable badge.
+
+See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen text, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
+
 vLLM usage targets its OpenAI-compatible server:
 
 ```python
@@ -1143,7 +1168,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen, and Kimi. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 
@@ -1458,10 +1483,12 @@ export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
+export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
+export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama`. Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama,qwen`. Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

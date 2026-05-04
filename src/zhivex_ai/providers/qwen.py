@@ -4,7 +4,7 @@ import base64
 import os
 from dataclasses import replace
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
@@ -29,8 +29,25 @@ from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OPENAI_COMPAT_SPEECH_CAPABILITIES,
     OPENAI_COMPAT_TRANSCRIPTION_CAPABILITIES,
+    OpenAICompatibleResponsesClient,
     create_openai_compatible_provider,
 )
+
+QwenRegion = Literal["intl", "us", "cn"]
+
+QWEN_REGION_BASE_URLS: dict[QwenRegion, str] = {
+    "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "us": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+    "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+
+
+def _qwen_base_url(region: QwenRegion) -> str:
+    try:
+        return QWEN_REGION_BASE_URLS[region]
+    except KeyError as exc:
+        supported = ", ".join(sorted(QWEN_REGION_BASE_URLS))
+        raise ConfigurationError(f'Unsupported qwen region "{region}". Supported regions: {supported}.') from exc
 
 
 def _qwen_responses_base_url(base_url: str) -> str:
@@ -318,7 +335,8 @@ class QwenSpeechModel(SpeechModel):
 def create_qwen(
     *,
     api_key: str | None = None,
-    base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    region: QwenRegion = "intl",
+    base_url: str | None = None,
     responses_base_url: str | None = None,
     fetch: Fetcher | None = None,
 ):
@@ -326,6 +344,8 @@ def create_qwen(
     if not resolved_key:
         raise ConfigurationError("Missing qwen API key.")
     requester = fetch or default_fetch
+    resolved_base_url = (base_url or _qwen_base_url(region)).rstrip("/")
+    resolved_responses_base_url = (responses_base_url or _qwen_responses_base_url(resolved_base_url)).rstrip("/")
     capabilities = replace(
         OPENAI_COMPAT_CAPABILITIES,
         tools=True,
@@ -337,12 +357,19 @@ def create_qwen(
         provider_name="qwen",
         env_var="QWEN_API_KEY",
         api_key=resolved_key,
-        base_url=base_url,
-        responses_base_url=responses_base_url or _qwen_responses_base_url(base_url),
+        base_url=resolved_base_url,
+        responses_base_url=resolved_responses_base_url,
         fetch=requester,
         capabilities=capabilities,
         supports_grounding=True,
         default_grounding_tool={"type": "web_search"},
+        responses_client_factory=lambda: OpenAICompatibleResponsesClient(
+            provider="qwen",
+            model_id="",
+            api_key=resolved_key,
+            base_url=resolved_responses_base_url,
+            fetch=requester,
+        ),
     )
     native = replace(
         native,
@@ -350,14 +377,14 @@ def create_qwen(
             provider="qwen",
             model_id=model_id,
             api_key=resolved_key,
-            base_url=base_url,
+            base_url=resolved_base_url,
             fetch=requester,
         ),
         speech_model_factory=lambda model_id: QwenSpeechModel(
             provider="qwen",
             model_id=model_id,
             api_key=resolved_key,
-            base_url=base_url,
+            base_url=resolved_base_url,
             fetch=requester,
         ),
     )
