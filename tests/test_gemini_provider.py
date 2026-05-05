@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from dataclasses import dataclass
 import sys
 from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -62,6 +64,24 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
+    async def test_create_gemini_accepts_google_api_key_alias(self) -> None:
+        requests: list[str] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(url)
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]},
+            )
+
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}, clear=True):
+            provider = create_gemini(fetch=fetch)
+            await generate_text(model=provider("gemini-test"), prompt="hi")
+
+        self.assertIn("key=google-key", requests[0])
+
     async def test_gemini_image_generation_client_uses_generate_content(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -1051,6 +1071,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             requests[0]["json"]["generateContentRequest"]["tools"],
             [{"googleSearch": {}}],
         )
+        self.assertEqual(requests[0]["json"]["generateContentRequest"]["model"], "models/gemini-2.5-flash")
         self.assertNotIn("google_search", requests[0]["json"]["generateContentRequest"])
 
     async def test_vertex_counts_tokens(self) -> None:

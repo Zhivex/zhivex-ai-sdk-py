@@ -992,6 +992,7 @@ class GeminiCountTokensClient(CountTokensClient):
         built_messages = _build_messages_for_request(prompt=prompt, messages=messages, system=system)
         request = drop_none(
             {
+                "model": f"models/{model_id}",
                 "contents": _map_messages(built_messages),
                 "systemInstruction": _system_instruction(built_messages),
                 "tools": _map_tools(tools, provider_options),
@@ -2684,7 +2685,12 @@ def create_gemini(
     auth_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
-    resolved_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+    resolved_key = (
+        api_key
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not resolved_key:
         raise ConfigurationError("Missing Gemini API key.")
     requester = fetch or default_fetch

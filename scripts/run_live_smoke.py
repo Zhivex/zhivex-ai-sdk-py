@@ -51,6 +51,14 @@ def _enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _gemini_api_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _matches_smoke_token(text: str, expected: str) -> bool:
+    return text.strip().rstrip(".") == expected.rstrip(".")
+
+
 async def _run_openai() -> tuple[str, bool, str]:
     model = os.getenv("ZHIVEX_SMOKE_OPENAI_MODEL")
     if not os.getenv("OPENAI_API_KEY") or not model:
@@ -64,15 +72,19 @@ async def _run_openai() -> tuple[str, bool, str]:
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
-    if result.text.strip() != "OPENAI_SMOKE_OK.":
+    if not _matches_smoke_token(result.text, "OPENAI_SMOKE_OK."):
         raise RuntimeError(f"unexpected response: {result.text!r}")
     return ("openai", True, f"ok: {model}")
 
 
 async def _run_gemini() -> tuple[str, bool, str]:
     model = os.getenv("ZHIVEX_SMOKE_GEMINI_MODEL")
-    if not os.getenv("GEMINI_API_KEY") or not model:
-        return ("gemini", False, "skip: set GEMINI_API_KEY and ZHIVEX_SMOKE_GEMINI_MODEL")
+    if not _gemini_api_key() or not model:
+        return (
+            "gemini",
+            False,
+            "skip: set GEMINI_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY or GOOGLE_API_KEY) and ZHIVEX_SMOKE_GEMINI_MODEL",
+        )
     provider = create_gemini()
     result = await generate_text(
         model=provider(model),
@@ -82,7 +94,7 @@ async def _run_gemini() -> tuple[str, bool, str]:
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
-    if result.text.strip() != "GEMINI_SMOKE_OK.":
+    if not _matches_smoke_token(result.text, "GEMINI_SMOKE_OK."):
         raise RuntimeError(f"unexpected response: {result.text!r}")
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:

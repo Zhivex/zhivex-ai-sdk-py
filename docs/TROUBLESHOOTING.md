@@ -40,7 +40,7 @@ Use `.env.example` as the variable checklist.
 - OpenAI: `OPENAI_API_KEY`
 - Anthropic: `ANTHROPIC_API_KEY`
 - Azure OpenAI: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and deployment model ID
-- Gemini: `GEMINI_API_KEY`
+- Gemini: `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, or `GOOGLE_API_KEY`
 - Vertex: `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN`, plus `GOOGLE_CLOUD_PROJECT`
 - vLLM: local server URL and served model ID
 
