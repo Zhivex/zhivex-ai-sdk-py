@@ -756,7 +756,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         while len(stack) > 1 and indent <= stack[-1][0]:
             stack.pop()
         if pending is not None and indent > pending[0]:
-            container = [] if stripped.startswith("- ") else {}
+            container: list[Any] | dict[str, Any] = [] if stripped.startswith("- ") else {}
             pending[1][pending[2]] = container
             stack.append((pending[0], container))
             pending = None

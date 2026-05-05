@@ -17,7 +17,7 @@ from .agent import (
     ToolApprovalRequest,
 )
 from .agent_state import AgentRunState
-from .types import JsonValue, ModelMessage, ToolExecutionOptions
+from .types import JsonValue, ModelMessage, TextPart, ToolExecutionOptions
 
 SafetyPolicyPreset = Literal["permissive", "review_sensitive", "locked_down"]
 ApprovalPolicyPreset = SafetyPolicyPreset
@@ -54,7 +54,7 @@ class RedactionPolicy:
 
         redacted: list[ModelMessage] = []
         for message in messages:
-            parts = [part for part in message.parts if getattr(part, "type", None) == "text"]
+            parts = [part for part in message.parts if isinstance(part, TextPart)]
             if len(parts) == len(message.parts):
                 redacted.append(create_text_message(message.role, self.redact_text("".join(part.text for part in parts))))
             else:
@@ -202,7 +202,7 @@ def create_redaction_policy(
         RedactionRule(r"\b(?:api[_-]?key|apikey|secret|token)\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}[\"']?", replacement, "api-key"),
     ]
     if include_emails:
-        default_rules.append(RedactionRule(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", replacement, "email"))
+        default_rules.append(RedactionRule(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", replacement, "email"))
     return RedactionPolicy([*default_rules, *(rules or [])])
 
 

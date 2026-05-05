@@ -21,6 +21,9 @@ Related documents:
 
 ### Added
 
+- Machine-readable API stability manifest in `src/zhivex_ai/api_stability.py`, with drift tests covering every symbol exported by `zhivex_ai.__all__`.
+- `py.typed` packaging marker so downstream type checkers can treat the package as typed.
+- Grouped local test targets for contract, core, providers, examples, and agent/workflow checks.
 - Tier-1 vLLM support with `create_vllm(...)`, covering the SDK's OpenAI-compatible text, streaming, structured output/tools, embeddings, transcription, and realtime ASR primitives.
 - Provider-agnostic agent skills with `Agent(..., skills=...)`, `skill(...)`, `load_skill(...)`, and `discover_skills(...)`.
 - `SKILL.md` loading with optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP dependency discovery.
@@ -46,9 +49,24 @@ Related documents:
 - Beta agent platform parity helpers: durable `AgentRunState` stores, idempotent run reuse, run-tree cancellation, native subagent tools, `run_agent_group(...)`, replay/snapshot helpers, evaluation fixtures/reports, trace artifacts, redaction policies, and budget guards.
 - Declarative beta workflow agents with `WorkflowStep`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `AgentSession.state`, workflow trace events, and workflow expectation validation.
 - Mock model/tool helpers for deterministic agent evaluation and local examples without provider credentials.
+- Shared offline tier-1 provider contract tests covering OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, and vLLM.
+- Tier-1 provider setup documentation in `docs/providers/tier-1.md` plus a focused `examples/text/tier1_providers.py` portable text example.
+- Shared offline agent-runtime contract tests covering run, stream, resume, approvals, handoffs, run-store idempotency, cancellation, replay, and failure persistence.
+- Production agent runtime documentation in `docs/AGENTS.md`, `docs/PRODUCTION.md`, and focused guides under `docs/agents/`.
+- Offline agent runtime examples for multi-agent handoff, human approval, durable resume, replay, and trace inspection.
+- Workflow production guidance in `docs/WORKFLOWS.md`, with offline examples for structured step validation, app-owned resume, document artifacts, and research/report synthesis.
+- Onboarding and DX documentation for quickstart, providers, gateway routing, observability, troubleshooting, TypeScript migration, parity/GA boundaries, `.env.example`, and contributor workflow.
+- Release artifact verification with fresh venv wheel/sdist install smoke, optional extras checks, CI/publish workflow hardening, and a release evidence template.
+- Production operations and security hardening guidance covering OpenTelemetry, request/session/run/gateway correlation IDs, retries, circuit breakers, provider error normalization, cost reporting, budget guards, concurrency, cancellation, serverless/worker deployment, MCP, hosted tools, file access, shell-like tools, and data retention.
+- Offline `examples/integrations/operations_hardening.py` reference for telemetry, circuit breakers, redaction, budget guards, retryable provider errors, and correlation metadata without live provider credentials.
 
 ### Changed
 
+- Expanded the `mypy` gate to cover additional public/core modules including provider base contracts, durable agent run state, serialization helpers, agent runtime, workflow/safety internals, realtime setup, and packaged-skill support.
+- Recorded provider adapter typing as explicit Phase 3 debt while keeping the Phase 2 internal quality gate passing through the documented provider override.
+- Expanded the main `mypy` gate to include tier-1 provider adapters and recorded DeepSeek as deferred for Python GA.
+- Added Azure OpenAI to the live smoke runner so every tier-1 provider has documented optional smoke coverage.
+- Promoted `AgentRuntime` and `AgentRegistry` into the stable manifest while keeping run stores, replay/evaluation, traces, safety helpers, and provider-managed approvals in beta.
 - `create_qwen()` now supports `region="intl" | "us" | "cn"` for Alibaba Cloud Model Studio's documented OpenAI-compatible endpoints while retaining explicit `base_url` and `responses_base_url` overrides.
 - `create_kimi()` now follows Moonshot's documented environment names and runtime surface: `MOONSHOT_API_KEY`, optional `MOONSHOT_BASE_URL`, Chat Completions for text generation, and `kimi-k2.6` as the catalog default.
 - Kimi provider metadata now reports native Files and Batch support, removes the unsupported embeddings claim, and keeps Kimi in the compatibility tier without the portable badge.

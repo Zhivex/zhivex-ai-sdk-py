@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (
     AudioInput,
     create_anthropic,
+    create_azure_openai,
     create_gemini,
     create_ollama,
     create_openai,
@@ -129,6 +130,30 @@ async def _run_anthropic() -> tuple[str, bool, str]:
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
         raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
     return ("anthropic", True, f"ok: {model}, tokens={token_count.total_tokens}")
+
+
+async def _run_azure_openai() -> tuple[str, bool, str]:
+    model = os.getenv("ZHIVEX_SMOKE_AZURE_OPENAI_MODEL")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    if not api_key or not endpoint or not model:
+        return (
+            "azure-openai",
+            False,
+            "skip: set AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and ZHIVEX_SMOKE_AZURE_OPENAI_MODEL",
+        )
+    provider = create_azure_openai(api_key=api_key, endpoint=endpoint)
+    result = await generate_text(
+        model=provider(model),
+        prompt="Reply with exactly AZURE_OPENAI_SMOKE_OK.",
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if result.text.strip() != "AZURE_OPENAI_SMOKE_OK.":
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    return ("azure-openai", True, f"ok: {model}")
 
 
 async def _run_vertex() -> tuple[str, bool, str]:
@@ -304,6 +329,8 @@ async def main() -> int:
         checks.append(_run_gemini)
     if _want("anthropic", selected):
         checks.append(_run_anthropic)
+    if _want("azure-openai", selected) or _want("azure", selected):
+        checks.append(_run_azure_openai)
     if _want("vertex", selected):
         checks.append(_run_vertex)
     if _want("ollama", selected):

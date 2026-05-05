@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -229,11 +229,11 @@ def hosted_tool(
     )
 
 
-def is_hosted_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> bool:
+def is_hosted_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> TypeGuard[HostedToolDefinition]:
     return isinstance(tool_definition, HostedToolDefinition) or getattr(tool_definition, "kind", None) == "hosted"
 
 
-def is_callable_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> bool:
+def is_callable_tool_definition(tool_definition: ToolDefinition | HostedToolDefinition) -> TypeGuard[ToolDefinition]:
     return not is_hosted_tool_definition(tool_definition)
 
 

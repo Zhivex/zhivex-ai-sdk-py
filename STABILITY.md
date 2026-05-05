@@ -4,11 +4,16 @@ Zhivex AI SDK uses three stability levels so production integrators can understa
 
 Supported public imports should come from `zhivex_ai`. Deep imports from internal modules are not part of the stable contract unless this document names an explicit exception.
 
+The machine-readable stability contract lives in `src/zhivex_ai/api_stability.py`. That manifest classifies every symbol exported through `zhivex_ai.__all__` as `stable`, `beta`, or `experimental`; tests fail when the public export list changes without a matching manifest and documentation update.
+
 Related documents:
 
 - [README.md](./README.md)
 - [VERSIONING.md](./VERSIONING.md)
 - [CHANGELOG.md](./CHANGELOG.md)
+- [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
+- [SECURITY.md](./SECURITY.md)
+- [docs/OPERATIONS.md](./docs/OPERATIONS.md)
 
 ## Stable
 
@@ -19,7 +24,7 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Agent runtime: `Agent`, `AgentSession`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
+- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
 - Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
 - Agent skill session controls: `set_agent_session_skills`, `get_agent_session_skills`, `clear_agent_session_skills`
 - Agent skill observability: `AgentSkillActivatedEvent`, `AgentSkillSkippedEvent`
@@ -50,11 +55,13 @@ These APIs are supported and documented, but they may still change between minor
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
 - Agent platform helpers: durable `AgentRunState` stores, native subagent tools, evaluation fixtures/reports, replay, trace artifacts, run-tree cancellation, safety policies, redaction policies, and budget guards
-- Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, and workflow expectation helpers
+- Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, workflow expectation helpers, and documented workflow examples in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
 
 The README support matrix is generated from runtime metadata. Its `Agent Capabilities` section is useful product guidance for hosted tools and provider-managed events, but it should be read with the same beta expectations as the APIs listed above.
+
+Agent production guidance lives in [docs/AGENTS.md](./docs/AGENTS.md), [docs/PRODUCTION.md](./docs/PRODUCTION.md), [docs/OPERATIONS.md](./docs/OPERATIONS.md), [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md), and [SECURITY.md](./SECURITY.md).
 
 ## Experimental
 
@@ -65,6 +72,10 @@ These areas are available for evaluation, but they should not be treated as a lo
 - Provider areas currently marked as `native-only` or `compatibility` in the support matrix
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate usage behind their own service layer before depending on them.
+
+## Deprecation pattern
+
+Stable APIs should not be removed or reclassified silently. When a stable API needs to change, first document the replacement path in this file and [VERSIONING.md](./VERSIONING.md), add a changelog entry with migration guidance, and keep the old top-level export available until a planned breaking release.
 
 ## Provider scope
 
@@ -77,7 +88,7 @@ The current tier-1 provider story for the stable surface is:
 - Vertex
 - vLLM
 
-In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, and support-matrix contract checks.
+In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 

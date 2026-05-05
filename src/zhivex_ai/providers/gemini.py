@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import builtins
 import json
 from copy import deepcopy
 from datetime import datetime
@@ -33,6 +34,7 @@ from ..types import (
     AudioInput,
     BatchesClient,
     CodeExecutionResultPart,
+    ContentPart,
     CountTokensClient,
     CountTokensResult,
     EmbedResult,
@@ -550,6 +552,8 @@ def _map_tool_config(tools: dict[str, Any] | None, tool_choice: str | ToolChoice
         return {"functionCallingConfig": {"mode": "NONE"}}
     if tool_choice == "required":
         return {"functionCallingConfig": {"mode": "ANY"}}
+    if not isinstance(tool_choice, ToolChoiceName):
+        raise UnsupportedFeatureError(f'Provider "gemini" does not support tool_choice={tool_choice!r}.')
     return {
         "functionCallingConfig": {
             "mode": "ANY",
@@ -698,7 +702,7 @@ def _normalize_inline_media_part(part: dict[str, Any], *, provider: str) -> Gene
 
 def _normalize_video_media(payload: dict[str, Any], *, provider: str) -> list[GeneratedMedia]:
     response = payload.get("response") if isinstance(payload.get("response"), dict) else payload
-    generate_response = {}
+    generate_response: dict[str, Any] = {}
     if isinstance(response, dict):
         generate_response = response.get("generateVideoResponse") or response.get("generate_video_response") or response
     samples = (
@@ -865,7 +869,7 @@ class GeminiFilesClient(FilesClient):
     ) -> ProviderFile:
         del purpose
         raw = _normalize_binary(data)
-        start_body = {"file": {"display_name": filename}}
+        start_body: dict[str, Any] = {"file": {"display_name": filename}}
         if metadata:
             start_body["file"]["custom_metadata"] = metadata
         start = await self.fetch(
@@ -1154,7 +1158,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         filename: str,
         media_type: str | None = None,
         display_name: str | None = None,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         raw = _normalize_binary(data)
@@ -1213,7 +1217,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         *,
         file_search_store_name: str,
         file_name: str,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         response = await self.fetch(
@@ -1312,7 +1316,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         name: str,
         *,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchDocument:
         del name, custom_metadata, chunking_config
@@ -1322,7 +1326,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        query: str | list[str],
+        query: str | builtins.list[str],
         filters: dict[str, Any] | None = None,
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
@@ -1335,8 +1339,8 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        file_names: list[str],
-        custom_metadata: list[dict[str, Any]] | None = None,
+        file_names: builtins.list[str],
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchBatch:
         del file_search_store_name, file_names, custom_metadata, chunking_config
@@ -1594,7 +1598,7 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
 
 
 def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
-    parts = []
+    parts: list[ContentPart] = []
     for part in ((candidate or {}).get("content") or {}).get("parts", []):
         if part.get("text"):
             parts.append(TextPart(text=part["text"]))

@@ -36,6 +36,23 @@ def _json_loads(value: str) -> dict[str, Any]:
     return payload
 
 
+def _json_value_or_none(value: Any) -> JsonValue | None:
+    plain = _to_plain(value)
+    if plain is None or isinstance(plain, (str, int, float)):
+        return plain
+    if isinstance(plain, list):
+        return [_json_value_or_none(item) for item in plain]
+    if isinstance(plain, dict):
+        return {str(key): _json_value_or_none(item) for key, item in plain.items()}
+    return str(plain)
+
+
+def _json_metadata_from_payload(payload: Any) -> dict[str, JsonValue]:
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): _json_value_or_none(value) for key, value in payload.items()}
+
+
 @dataclass(slots=True)
 class PendingApproval:
     id: str
@@ -161,12 +178,22 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
     for raw_step in payload.get("steps") or []:
         if not isinstance(raw_step, dict):
             continue
+        tool_calls: list[ToolCall] = []
+        for raw_call in raw_step.get("tool_calls") or []:
+            tool_call = _tool_call_from_payload(raw_call)
+            if tool_call is not None:
+                tool_calls.append(tool_call)
+        step_tool_results: list[ToolExecutionResult] = []
+        for raw_result in raw_step.get("tool_results") or []:
+            tool_result = _tool_result_from_payload(raw_result)
+            if tool_result is not None:
+                step_tool_results.append(tool_result)
         steps.append(
             AgentRunStep(
                 index=int(raw_step.get("index", 0)),
                 status=raw_step.get("status", "running"),
-                tool_calls=[item for raw in raw_step.get("tool_calls") or [] if (item := _tool_call_from_payload(raw))],
-                tool_results=[item for raw in raw_step.get("tool_results") or [] if (item := _tool_result_from_payload(raw))],
+                tool_calls=tool_calls,
+                tool_results=step_tool_results,
                 usage=_usage_from_payload(raw_step.get("usage")),
                 messages=[],
                 error=raw_step.get("error"),
@@ -202,6 +229,11 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
         for item in payload.get("pending_approvals") or []
         if isinstance(item, dict)
     ]
+    state_tool_results: list[ToolExecutionResult] = []
+    for raw_result in payload.get("tool_results") or []:
+        tool_result = _tool_result_from_payload(raw_result)
+        if tool_result is not None:
+            state_tool_results.append(tool_result)
     return AgentRunState(
         run_id=str(payload.get("run_id", "")),
         agent_name=str(payload.get("agent_name", "")),
@@ -218,13 +250,13 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
         steps=steps,
         child_runs=child_runs,
         pending_approvals=pending,
-        tool_results=[item for raw in payload.get("tool_results") or [] if (item := _tool_result_from_payload(raw))],
+        tool_results=state_tool_results,
         usage=_usage_from_payload(payload.get("usage")),
         output_text=str(payload.get("output_text", "")),
         finish_reason=payload.get("finish_reason"),
         error=payload.get("error"),
         cancellation_reason=payload.get("cancellation_reason"),
-        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        metadata=_json_metadata_from_payload(payload.get("metadata")),
     )
 
 
@@ -266,7 +298,8 @@ class SQLiteAgentRunStore:
         self._path = path
         self._namespace = namespace
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._path) as connection:
+        connection = sqlite3.connect(self._path)
+        try:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS zhivex_agent_runs (
@@ -286,34 +319,47 @@ class SQLiteAgentRunStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS zhivex_agent_runs_parent_idx ON zhivex_agent_runs (namespace, parent_run_id)"
             )
+            connection.commit()
+        finally:
+            connection.close()
 
     async def load(self, run_id: str) -> AgentRunState | None:
-        with sqlite3.connect(self._path) as connection:
+        connection = sqlite3.connect(self._path)
+        try:
             row = connection.execute(
                 "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND run_id = ?",
                 (self._namespace, run_id),
             ).fetchone()
+        finally:
+            connection.close()
         return agent_run_state_from_json(row[0]) if row else None
 
     async def find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
-        with sqlite3.connect(self._path) as connection:
+        connection = sqlite3.connect(self._path)
+        try:
             row = connection.execute(
                 "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND idempotency_key = ?",
                 (self._namespace, idempotency_key),
             ).fetchone()
+        finally:
+            connection.close()
         return agent_run_state_from_json(row[0]) if row else None
 
     async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
-        with sqlite3.connect(self._path) as connection:
+        connection = sqlite3.connect(self._path)
+        try:
             rows = connection.execute(
                 "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND parent_run_id = ? ORDER BY updated_at_ms",
                 (self._namespace, parent_run_id),
             ).fetchall()
+        finally:
+            connection.close()
         return [agent_run_state_from_json(row[0]) for row in rows]
 
     async def save(self, state: AgentRunState) -> None:
         payload = agent_run_state_to_json(state)
-        with sqlite3.connect(self._path) as connection:
+        connection = sqlite3.connect(self._path)
+        try:
             connection.execute(
                 """
                 INSERT INTO zhivex_agent_runs
@@ -328,6 +374,9 @@ class SQLiteAgentRunStore:
                 """,
                 (self._namespace, state.run_id, state.idempotency_key, state.parent_run_id, payload, state.updated_at_ms or 0),
             )
+            connection.commit()
+        finally:
+            connection.close()
 
 
 class PostgresAgentRunStore:
@@ -337,7 +386,7 @@ class PostgresAgentRunStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-not-found]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         connection = await asyncpg.connect(self._dsn)

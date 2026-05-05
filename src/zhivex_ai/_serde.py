@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 from .schema import create_schema_adapter
 from .types import (
@@ -25,12 +28,13 @@ from .types import (
     ToolExecutionError,
     ToolExecutionResult,
     ToolResultPart,
+    MessageRole,
 )
 
 
 def _json_compatible(value: Any) -> Any:
-    if is_dataclass(value):
-        return {key: _json_compatible(item) for key, item in asdict(value).items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {key: _json_compatible(item) for key, item in asdict(cast("DataclassInstance", value)).items()}
     if isinstance(value, dict):
         return {str(key): _json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -219,7 +223,7 @@ def serialize_message(message: ModelMessage) -> dict[str, Any]:
 
 def deserialize_message(payload: dict[str, Any]) -> ModelMessage:
     return ModelMessage(
-        role=str(payload.get("role", "user")),
+        role=cast("MessageRole", str(payload.get("role", "user"))),
         parts=[deserialize_content_part(dict(part)) for part in payload.get("parts") or []],
     )
 
@@ -309,34 +313,36 @@ def deserialize_mcp_tool_config(payload: dict[str, Any] | None) -> MCPToolConfig
 
 def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
     if isinstance(definition, HostedToolDefinition) or getattr(definition, "kind", None) == "hosted":
+        hosted = cast(HostedToolDefinition, definition)
         return {
             "kind": "hosted",
-            "name": definition.name,
-            "provider": definition.provider,
-            "type": definition.type,
-            "config": _json_compatible(definition.config),
-            "tool_class": definition.tool_class,
-            "requires_approval": definition.requires_approval,
-            "metadata": _json_compatible(definition.metadata),
+            "name": hosted.name,
+            "provider": hosted.provider,
+            "type": hosted.type,
+            "config": _json_compatible(hosted.config),
+            "tool_class": hosted.tool_class,
+            "requires_approval": hosted.requires_approval,
+            "metadata": _json_compatible(hosted.metadata),
         }
+    callable_definition = cast(ToolDefinition, definition)
     return {
-        "name": definition.name,
-        "description": definition.description,
-        "schema": _serialize_schema(definition.schema),
-        "input_examples": _json_compatible(definition.input_examples),
-        "strict": definition.strict,
-        "defer_loading": definition.defer_loading,
-        "eager_input_streaming": definition.eager_input_streaming,
-        "allowed_callers": list(definition.allowed_callers),
-        "cache_control": _json_compatible(definition.cache_control),
-        "tags": list(definition.tags),
-        "requires_approval": definition.requires_approval,
-        "permissions": list(definition.permissions),
-        "source": definition.source,
-        "metadata": _json_compatible(definition.metadata),
-        "supports_streaming": definition.supports_streaming,
-        "remote_config": serialize_remote_http_tool_config(definition.remote_config),
-        "mcp_config": serialize_mcp_tool_config(definition.mcp_config),
+        "name": callable_definition.name,
+        "description": callable_definition.description,
+        "schema": _serialize_schema(callable_definition.schema),
+        "input_examples": _json_compatible(callable_definition.input_examples),
+        "strict": callable_definition.strict,
+        "defer_loading": callable_definition.defer_loading,
+        "eager_input_streaming": callable_definition.eager_input_streaming,
+        "allowed_callers": list(callable_definition.allowed_callers),
+        "cache_control": _json_compatible(callable_definition.cache_control),
+        "tags": list(callable_definition.tags),
+        "requires_approval": callable_definition.requires_approval,
+        "permissions": list(callable_definition.permissions),
+        "source": callable_definition.source,
+        "metadata": _json_compatible(callable_definition.metadata),
+        "supports_streaming": callable_definition.supports_streaming,
+        "remote_config": serialize_remote_http_tool_config(callable_definition.remote_config),
+        "mcp_config": serialize_mcp_tool_config(callable_definition.mcp_config),
     }
 
 

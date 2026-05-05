@@ -35,6 +35,24 @@ Production integrations should import supported APIs from `zhivex_ai`, prefer th
 
 See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
+## Start Here
+
+- New backend setup: [docs/QUICKSTART.md](./docs/QUICKSTART.md)
+- Provider setup and smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
+- Agent runtime: [docs/AGENTS.md](./docs/AGENTS.md)
+- Declarative workflows: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
+- Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
+- Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
+- Operations runbook: [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- Security and threat model: [SECURITY.md](./SECURITY.md), [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md)
+- Troubleshooting: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+- Python vs TypeScript migration: [docs/MIGRATING_FROM_TYPESCRIPT.md](./docs/MIGRATING_FROM_TYPESCRIPT.md)
+- Parity and GA boundary: [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
+- RC readiness: [docs/RC_READINESS.md](./docs/RC_READINESS.md)
+- Contribution workflow: [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Local environment template: [.env.example](./.env.example)
+
 ## Highlights
 
 - Agent runtime with executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, transcript + summary memory, permission-aware tool execution, and traces
@@ -1231,7 +1249,7 @@ Zhivex AI SDK includes middleware helpers similar to the TypeScript SDK:
 
 These let you keep cross-cutting concerns outside provider adapters and application prompts.
 
-For production logging, request correlation, gateway attempt tracing, and OpenTelemetry guidance, see [OBSERVABILITY.md](./OBSERVABILITY.md).
+For production logging, request correlation, gateway attempt tracing, and OpenTelemetry guidance, see [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md).
 
 ## UI And Transport
 
@@ -1301,6 +1319,8 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 
 This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, native subagent tools, shared sessions, transcript + summary memory, approval hooks, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
 
+For production semantics, persistence, approvals, tool registries, event ordering, and recovery guidance, see [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).
+
 Declarative workflows are available when the coordination pattern is known ahead of time:
 
 ```python
@@ -1318,9 +1338,9 @@ pipeline = SequentialAgent(
 result = await pipeline.run()
 ```
 
-Use `ParallelAgent` for fan-out research and `LoopAgent` for bounded refinement loops. Workflow steps share `session.state`; `output_key` writes the step text into state, and `input_template` reads state keys with Python format placeholders.
+Use `ParallelAgent` for fan-out research and `LoopAgent` for bounded refinement loops. Workflow steps share `session.state`; `output_key` writes the step text into state, and `input_template` reads state keys with Python format placeholders. Workflow APIs are beta; see [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for structured outputs, resume patterns, error policy, replay, and evaluation guidance.
 
-For fuller business-workflow references, see [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py) and [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py). They model regulated financial review and HR candidate selection with extraction/intake, scoring, human review, validation, fairness/compliance checks, repair/resume, and trace replay. The SDK owns orchestration primitives; the examples keep credit policy, hiring policy, pricing/scoring, persistence, approval UI, ATS integrations, and compliance systems application-owned behind replaceable interfaces.
+For fuller business-workflow references, see [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py), [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py), and the focused workflow examples under `examples/agents/`. They model regulated financial review, HR candidate selection, structured step validation, workflow resume, document artifacts, and research reports. The SDK owns orchestration primitives; the examples keep credit policy, hiring policy, pricing/scoring, persistence, approval UI, ATS integrations, artifact storage, and compliance systems application-owned behind replaceable interfaces.
 
 Durable run state can be attached directly to an agent:
 
@@ -1481,14 +1501,16 @@ For real provider validation, the repo also includes a live smoke runner:
 export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
 export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
+export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+export ZHIVEX_SMOKE_VLLM_MODEL=your-vllm-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,gemini,ollama,qwen`. Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,vllm`. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

@@ -348,12 +348,14 @@ class ParallelAgent(_BaseWorkflow):
                     result = WorkflowStepResult(name=step.name, status="failed", error=raw)
                 else:
                     result = WorkflowStepResult(name=step.name, status="failed", error=raw)
-            else:
+            elif isinstance(raw, WorkflowStepResult):
                 result = raw
                 if result.output is not None and step.output_key is not None:
                     resolved_session.state[step.output_key] = result.output.text
                 if step.metadata_key is not None:
                     resolved_session.state[step.metadata_key] = _step_metadata(result)
+            else:
+                result = WorkflowStepResult(name=step.name, status="failed", error=RuntimeError(str(raw)))
             results.append(result)
             trace.append(WorkflowTraceEvent("workflow-step-finish", self.name, step.name, result.status, run_id=run_id, error=str(result.error) if result.error else None))
         return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)

@@ -73,14 +73,31 @@ zhivex-skills = "zhivex_ai.skill_cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/zhivex_ai"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/zhivex_ai/py.typed" = "zhivex_ai/py.typed"
+
 [tool.hatch.build.targets.sdist]
 include = [
   "/src",
   "/tests",
   "/examples",
+  "/docs",
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/MATURITY_PLAN.md",
+  "/PRODUCTION_APIS.md",
+  "/RELEASING.md",
   "/README.md",
+  "/SECURITY.md",
+  "/STABILITY.md",
+  "/SUPPORT.md",
+  "/VERSIONING.md",
+  "/.env.example",
   "/pyproject.toml"
 ]
+
+[tool.hatch.build.targets.sdist.force-include]
+".env.example" = ".env.example"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -100,15 +117,38 @@ select = ["E4", "E7", "E9", "F"]
 python_version = "3.11"
 files = [
   "src/zhivex_ai/__init__.py",
+  "src/zhivex_ai/_serde.py",
+  "src/zhivex_ai/api_stability.py",
+  "src/zhivex_ai/agent.py",
+  "src/zhivex_ai/agent_state.py",
   "src/zhivex_ai/errors.py",
   "src/zhivex_ai/gateway.py",
   "src/zhivex_ai/generate_object.py",
   "src/zhivex_ai/generate_text.py",
   "src/zhivex_ai/middleware.py",
+  "src/zhivex_ai/messages.py",
+  "src/zhivex_ai/realtime.py",
   "src/zhivex_ai/runtime.py",
+  "src/zhivex_ai/safety.py",
+  "src/zhivex_ai/schema.py",
+  "src/zhivex_ai/skillpacks.py",
+  "src/zhivex_ai/skills.py",
   "src/zhivex_ai/transport.py",
+  "src/zhivex_ai/types.py",
+  "src/zhivex_ai/workflow.py",
+  "src/zhivex_ai/providers/anthropic.py",
+  "src/zhivex_ai/providers/azure_openai.py",
+  "src/zhivex_ai/providers/base.py",
+  "src/zhivex_ai/providers/gemini.py",
+  "src/zhivex_ai/providers/openai.py",
+  "src/zhivex_ai/providers/vertex.py",
+  "src/zhivex_ai/providers/vllm.py",
 ]
 check_untyped_defs = true
 disallow_untyped_defs = false
 warn_return_any = false
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "zhivex_ai.providers.*"
+follow_imports = "skip"

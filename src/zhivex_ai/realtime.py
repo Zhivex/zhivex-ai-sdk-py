@@ -5,7 +5,7 @@ import base64
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .errors import UnsupportedFeatureError
 from .types import (
@@ -236,7 +236,7 @@ async def open_websocket_connection(
     websocket = await websockets.connect(
         url,
         additional_headers=headers or None,
-        subprotocols=list(options.subprotocols) if options and options.subprotocols else None,
+        subprotocols=cast(Any, list(options.subprotocols)) if options and options.subprotocols else None,
         open_timeout=(options.timeout_ms / 1000) if options and options.timeout_ms is not None else None,
     )
     return WebSocketRealtimeConnection(websocket)

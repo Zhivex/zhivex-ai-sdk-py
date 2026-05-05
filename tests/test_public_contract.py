@@ -10,9 +10,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import zhivex_ai
+from zhivex_ai.api_stability import STABLE_EXPORTS
 
 
-STABLE_EXPORTS = {
+DOCUMENTED_STABLE_EXPORTS = {
     "create_openai",
     "create_anthropic",
     "create_azure_openai",
@@ -26,7 +27,11 @@ STABLE_EXPORTS = {
     "generate_grounded_text",
     "embed",
     "embed_many",
+    "embed_content",
+    "embed_content_many",
     "Agent",
+    "AgentRegistry",
+    "AgentRuntime",
     "AgentSession",
     "AgentSkillActivatedEvent",
     "AgentSkillSkippedEvent",
@@ -77,12 +82,15 @@ STABLE_EXPORTS = {
 class PublicContractTests(TestCase):
     def test_stable_exports_are_available_from_top_level_package(self) -> None:
         exported = set(zhivex_ai.__all__)
-        self.assertTrue(STABLE_EXPORTS.issubset(exported))
+        self.assertTrue(DOCUMENTED_STABLE_EXPORTS.issubset(exported))
 
     def test_stability_doc_lists_the_stable_exports(self) -> None:
         stability = (ROOT / "STABILITY.md").read_text("utf-8")
-        for symbol in sorted(STABLE_EXPORTS):
+        for symbol in sorted(DOCUMENTED_STABLE_EXPORTS):
             self.assertIn(f"`{symbol}`", stability)
+
+    def test_stable_manifest_matches_public_contract(self) -> None:
+        self.assertEqual(DOCUMENTED_STABLE_EXPORTS, set(STABLE_EXPORTS))
 
     def test_core_docs_link_to_each_other(self) -> None:
         readme = (ROOT / "README.md").read_text("utf-8")

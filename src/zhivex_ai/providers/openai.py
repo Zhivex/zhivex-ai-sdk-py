@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError
@@ -61,9 +61,9 @@ def _drop_none(values: dict[str, Any]) -> dict[str, Any]:
 
 def _openai_raw_tool(tool: HostedToolDefinition | dict[str, Any]) -> dict[str, Any]:
     if isinstance(tool, HostedToolDefinition):
-        payload = {"type": tool.type}
+        payload: dict[str, Any] = {"type": tool.type}
         if isinstance(tool.config, dict):
-            payload.update(deepcopy(tool.config))
+            payload.update(cast(dict[str, Any], deepcopy(tool.config)))
         elif tool.config is not None:
             payload["config"] = deepcopy(tool.config)
         return _drop_none(payload)

@@ -575,7 +575,7 @@ class _network_policy:
         def _deny(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("Network access is disabled for this skill runtime.")
 
-        socket.socket = _deny  # type: ignore[assignment]
+        socket.socket = _deny  # type: ignore[assignment,misc]
         socket.create_connection = _deny  # type: ignore[assignment]
         socket.getaddrinfo = _deny  # type: ignore[assignment]
 

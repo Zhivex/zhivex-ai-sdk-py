@@ -20,11 +20,12 @@ Related documents:
 
 ## Stable surface rules
 
-The stable surface is defined in [STABILITY.md](./STABILITY.md). For that surface:
+The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by `src/zhivex_ai/api_stability.py`. For that surface:
 
 - Prefer additive changes over behavioral changes.
 - Do not rename, remove, or repurpose public stable exports without a deprecation path.
 - Keep top-level imports from `zhivex_ai` as the primary public entrypoint.
+- Update `src/zhivex_ai/api_stability.py` and its drift tests whenever `zhivex_ai.__all__` changes.
 
 ## Deprecation workflow
 
@@ -46,4 +47,4 @@ Experimental APIs are intended for evaluation. They should be consumed behind an
 
 ## Current maturity target
 
-This policy now governs the current `Beta` phase of the SDK. The goal of this phase is to keep the documented stable surface predictable while continuing to tighten provider contracts, support policy, and release discipline on the path toward a future stable release.
+This policy now governs the current `Beta` phase of the SDK. The maturity work needed for RC review is documented in [docs/RC_READINESS.md](./docs/RC_READINESS.md). The goal is to keep the documented stable surface predictable while final release evidence is captured from built artifacts before a future stable release.

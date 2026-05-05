@@ -11,7 +11,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from ._http import default_fetch
@@ -33,7 +33,6 @@ from .agent_state import (
     AgentRunStep,
     AgentRunStore,
     agent_child_run_from_state,
-    serialize_agent_run_state,
 )
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
@@ -75,7 +74,13 @@ from .types import (
     ToolSet,
     TokenUsage,
     ToolCall,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
 )
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 HANDOFF_MARKER = "__zhivex_agent_handoff__"
 SUMMARY_MARKER = "Conversation summary:\n"
@@ -91,7 +96,7 @@ def _new_id(prefix: str) -> str:
 
 
 def _text_from_message(message: ModelMessage) -> str:
-    return "".join(part.text for part in message.parts if getattr(part, "type", None) == "text")
+    return "".join(part.text for part in message.parts if isinstance(part, TextPart))
 
 
 def _message_text(messages: Iterable[ModelMessage]) -> str:
@@ -518,7 +523,7 @@ def _normalize_mcp_content_item(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize_mcp_content_item(item) for item in value]
     if is_dataclass(value):
-        return _normalize_mcp_content_item(asdict(value))
+        return _normalize_mcp_content_item(asdict(cast("DataclassInstance", value)))
     return value
 
 
@@ -563,9 +568,9 @@ class MCPToolRuntime:
 
     async def _load_client_api(self) -> tuple[Any, Any, Any]:
         try:
-            from mcp import ClientSession
-            from mcp.client.stdio import StdioServerParameters, stdio_client
-            from mcp.client.streamable_http import streamable_http_client
+            from mcp import ClientSession  # type: ignore[import-not-found]
+            from mcp.client.stdio import StdioServerParameters, stdio_client  # type: ignore[import-not-found]
+            from mcp.client.streamable_http import streamable_http_client  # type: ignore[import-not-found]
         except Exception as error:
             raise RuntimeError('MCP support requires the optional dependency "mcp".') from error
         return ClientSession, (StdioServerParameters, stdio_client), streamable_http_client
@@ -1527,7 +1532,7 @@ class PostgresAgentMemoryStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-not-found]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         return await asyncpg.connect(self._dsn)
@@ -1839,12 +1844,20 @@ def _effective_timeout_ms(limits: RunLimits, requested: int | None) -> int | Non
 def _detect_handoff(tool_results: list[ToolExecutionResult]) -> AgentHandoff | None:
     for result in reversed(tool_results):
         if isinstance(result.output, dict) and result.output.get(HANDOFF_MARKER):
+            handoff_input = result.output.get("input")
+            handoff_metadata = result.output.get("metadata")
             return AgentHandoff(
                 target_agent=str(result.output.get("target_agent")),
-                input=result.output.get("input"),
-                metadata=dict(result.output.get("metadata") or {}),
+                input=handoff_input if isinstance(handoff_input, str) else None,
+                metadata=dict(handoff_metadata) if isinstance(handoff_metadata, dict) else {},
             )
     return None
+
+
+def _int_from_json(value: JsonValue | None, default: int = 0) -> int:
+    if isinstance(value, (str, int, float)):
+        return int(value)
+    return default
 
 
 def _should_refresh_summary(memory: AgentMemory, session: AgentSession) -> bool:
@@ -1937,6 +1950,7 @@ def _parse_provider_managed_approval_part(part: Any) -> _ProviderManagedApproval
     if getattr(part, "type", None) != "provider-data":
         return None
     provider = str(getattr(part, "provider", "") or "")
+    parsed: Any
     if provider == "openai":
         from .providers.openai import parse_openai_provider_data_part
 
@@ -1965,7 +1979,11 @@ def _provider_managed_event_key(provider: str, payload: Any) -> str:
     if identifier:
         return f"{provider}:{event_type}:{identifier}"
     try:
-        stable_payload = json.dumps(asdict(payload) if is_dataclass(payload) else payload, sort_keys=True, default=str)
+        stable_payload = json.dumps(
+            asdict(cast("DataclassInstance", payload)) if is_dataclass(payload) and not isinstance(payload, type) else payload,
+            sort_keys=True,
+            default=str,
+        )
     except TypeError:
         stable_payload = repr(payload)
     return f"{provider}:{event_type}:{stable_payload}"
@@ -1975,6 +1993,8 @@ def _parse_provider_managed_tool_trace_part(part: Any) -> _ProviderManagedToolTr
     if getattr(part, "type", None) != "provider-data":
         return None
     provider = str(getattr(part, "provider", "") or "")
+    parsed: Any
+    tool_call: ToolCall | None
     if provider == "openai":
         from .providers.openai import openai_provider_data_tool_call, parse_openai_provider_data_part
 
@@ -2266,6 +2286,7 @@ def _extract_skill_artifacts(tool_results: list[ToolExecutionResult]) -> list[Sk
             artifact_path = str(item.get("path") or "").strip()
             if not artifact_path:
                 continue
+            artifact_metadata = item.get("metadata")
             artifacts.append(
                 SkillArtifact(
                     name=str(item.get("name") or Path(artifact_path).name),
@@ -2273,7 +2294,7 @@ def _extract_skill_artifacts(tool_results: list[ToolExecutionResult]) -> list[Sk
                     media_type=str(item.get("media_type") or "") or None,
                     role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
                     description=str(item.get("description") or "") or None,
-                    metadata=dict(item.get("metadata") or {}),
+                    metadata=cast(dict[str, Any], artifact_metadata) if isinstance(artifact_metadata, dict) else {},
                 )
             )
     return artifacts
@@ -2285,7 +2306,7 @@ def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCa
         response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
         for message in response_messages:
             for part in message.parts:
-                if getattr(part, "type", None) == "tool-call":
+                if isinstance(part, ToolCallPart):
                     calls.append(part.tool_call)
     return calls
 
@@ -2296,7 +2317,7 @@ def _extract_provider_tool_results_from_steps(steps: list[GenerateTextStep]) -> 
         response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
         for message in response_messages:
             for part in message.parts:
-                if getattr(part, "type", None) == "tool-result":
+                if isinstance(part, ToolResultPart):
                     results.append(part.tool_result)
     return results
 
@@ -2319,13 +2340,13 @@ def _child_runs_from_tool_results(results: list[ToolExecutionResult], parent_run
                 run_id=str(raw_child.get("run_id", "")),
                 agent_name=str(raw_child.get("agent_name", "")),
                 parent_run_id=str(raw_child.get("parent_run_id") or parent_run_id),
-                status=raw_child.get("status", "completed"),
+                status=cast(AgentRunStatus, raw_child.get("status", "completed")),
                 output_text=str(raw_child.get("output_text", "")),
                 tool_name=result.tool_name,
-                error=raw_child.get("error"),
-                steps=int(raw_child.get("steps", 0)),
-                tool_calls=int(raw_child.get("tool_calls", 0)),
-                tool_errors=int(raw_child.get("tool_errors", 0)),
+                error=str(raw_child.get("error")) if raw_child.get("error") is not None else None,
+                steps=_int_from_json(raw_child.get("steps")),
+                tool_calls=_int_from_json(raw_child.get("tool_calls")),
+                tool_errors=_int_from_json(raw_child.get("tool_errors")),
             )
         )
     return children
@@ -2672,7 +2693,7 @@ class AgentRuntime:
                         orchestration_path=list(trace.orchestration_path),
                         resumed_from_checkpoint=resumed_from_checkpoint,
                     )
-                    state = _agent_run_state_from_result(
+                    run_state = _agent_run_state_from_result(
                         result=output,
                         agent=agent,
                         parent_run_id=parent_run_id,
@@ -2680,9 +2701,9 @@ class AgentRuntime:
                         started_at_ms=started_at_ms,
                         finished_at_ms=trace.finished_at_ms,
                     )
-                    output.state = state
+                    output.state = run_state
                     if agent.run_store is not None:
-                        await agent.run_store.save(state)
+                        await agent.run_store.save(run_state)
                     return output
 
                 handoff = segment_result.handoff
@@ -3049,10 +3070,10 @@ class AgentRuntime:
                             pending_provider_responses.append(await resolve_provider_managed_approval(approval))
 
                     streamed = stream_text(
-                        model=agent.model,
+                        model=cast(LanguageModel, agent.model),
                         messages=conversation_messages,
                         tools=merged_tools or None,
-                        tool_choice=tool_choice,
+                        tool_choice=cast(Any, tool_choice),
                         tool_execution=tool_execution,
                         max_steps=remaining_steps,
                         temperature=temperature,
@@ -3067,10 +3088,10 @@ class AgentRuntime:
                     result = await streamed.collect()
                 else:
                     result = await generate_text(
-                        model=agent.model,
+                        model=cast(LanguageModel, agent.model),
                         messages=conversation_messages,
                         tools=merged_tools or None,
-                        tool_choice=tool_choice,
+                        tool_choice=cast(Any, tool_choice),
                         tool_execution=tool_execution,
                         max_steps=remaining_steps,
                         temperature=temperature,
@@ -3251,13 +3272,16 @@ class AgentRuntime:
         tool_limit = agent.run_limits.max_tool_calls
 
         for tool_name, definition in registry.items():
+            if not is_callable_tool_definition(definition):
+                continue
+            callable_definition = definition
 
             async def execute(
                 input: Any,
                 call_context: ToolExecutionContext | None = None,
                 *,
                 _tool_name: str = tool_name,
-                _definition: ToolDefinition = definition,
+                _definition: ToolDefinition = callable_definition,
             ) -> Any:
                 if agent.run_limits.max_wall_time_ms is not None and _now_ms() - started_at_ms > agent.run_limits.max_wall_time_ms:
                     raise RuntimeError("Agent run exceeded max wall time.")
@@ -3335,6 +3359,7 @@ class AgentRuntime:
                             if isinstance(item, dict):
                                 artifact_path = str(item.get("path") or "").strip()
                                 if artifact_path:
+                                    artifact_metadata = item.get("metadata")
                                     await emit(
                                         AgentSkillArtifactCreatedEvent(
                                             skill_name=skill_name,
@@ -3345,7 +3370,9 @@ class AgentRuntime:
                                                 media_type=str(item.get("media_type") or "") or None,
                                                 role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
                                                 description=str(item.get("description") or "") or None,
-                                                metadata=dict(item.get("metadata") or {}),
+                                                metadata=cast(dict[str, Any], artifact_metadata)
+                                                if isinstance(artifact_metadata, dict)
+                                                else {},
                                             ),
                                         )
                                     )
@@ -3509,7 +3536,7 @@ def create_subagent_tool(
             )
         return {
             "text": result.text,
-            "child_run": serialize_agent_run_state(agent_child_run_from_state(child_state, tool_name=name)),
+            "child_run": asdict(agent_child_run_from_state(child_state, tool_name=name)),
         }
 
     return ToolDefinition(
@@ -3851,7 +3878,7 @@ def stream_live_agent(
         live_config = realtime_config or RealtimeSessionConfig(
             instructions=combined_instructions,
             tools=wrapped_tools or None,
-            tool_choice=tool_choice,
+            tool_choice=cast(Any, tool_choice),
             provider_options=provider_options,
         )
         if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
@@ -3863,8 +3890,8 @@ def stream_live_agent(
         tool_results: list[ToolExecutionResult] = []
         assistant_buffer: list[str] = []
         last_assistant_text = ""
-        live_model = agent.model
-        live_session = await live_model.connect(config=live_config, options=connect_options)  # type: ignore[attr-defined]
+        live_model = cast(RealtimeModel, agent.model)
+        live_session = await live_model.connect(config=live_config, options=connect_options)
         live_session_future.set_result(live_session)
         resolved_session.metadata = {
             **resolved_session.metadata,
@@ -3901,7 +3928,7 @@ def stream_live_agent(
                 if isinstance(event, RealtimeToolCallEvent):
                     await emit_agent(AgentToolCallEvent(tool_call=event.tool_call))
                     definition = wrapped_tools.get(event.tool_call.name) if wrapped_tools else None
-                    if definition is None or definition.execute is None:
+                    if definition is None or not is_callable_tool_definition(definition) or definition.execute is None:
                         tool_result = ToolExecutionResult(
                             tool_call_id=event.tool_call.id,
                             tool_name=event.tool_call.name,

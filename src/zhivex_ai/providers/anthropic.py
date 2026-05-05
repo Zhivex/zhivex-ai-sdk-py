@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
@@ -456,15 +456,15 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
             if isinstance(raw_block, dict):
                 blocks.append(deepcopy(raw_block))
                 continue
-            block = {"type": "text", "text": part.text}
+            block: dict[str, Any] = {"type": "text", "text": part.text}
             if part.provider_metadata.get("cache_control") is not None:
                 block["cache_control"] = serialize_json_value(part.provider_metadata.get("cache_control"))
             blocks.append(block)
         elif part.type == "image":
-            block: dict[str, Any]
+            image_block: dict[str, Any]
             if part.image.startswith("data:") and ";base64," in part.image:
                 header, body = part.image[len("data:"):].split(";base64,", 1)
-                block = {
+                image_block = {
                     "type": "image",
                     "source": {
                         "type": "base64",
@@ -473,10 +473,10 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
                     },
                 }
             else:
-                block = {"type": "image", "source": {"type": "url", "url": part.image}}
+                image_block = {"type": "image", "source": {"type": "url", "url": part.image}}
             if part.provider_metadata.get("cache_control") is not None:
-                block["cache_control"] = serialize_json_value(part.provider_metadata.get("cache_control"))
-            blocks.append(block)
+                image_block["cache_control"] = serialize_json_value(part.provider_metadata.get("cache_control"))
+            blocks.append(image_block)
         elif part.type == "file":
             blocks.append(_anthropic_file_block(part))
         elif part.type == "tool-call":
@@ -543,42 +543,42 @@ def _map_tools(tools: dict[str, Any] | None) -> list[dict[str, Any]] | None:
                         f'Provider "anthropic" does not support multiple "mcp_toolset" entries for MCP server "{server_name}".'
                     )
                 mcp_toolset_names.add(server_name)
-                payload = {
+                mcp_payload: dict[str, Any] = {
                     "type": "mcp_toolset",
                     "mcp_server_name": server_name,
                 }
                 if config.get("default_config") is not None:
-                    payload["default_config"] = deepcopy(config["default_config"])
+                    mcp_payload["default_config"] = deepcopy(config["default_config"])
                 if config.get("configs") is not None:
-                    payload["configs"] = deepcopy(config["configs"])
+                    mcp_payload["configs"] = deepcopy(config["configs"])
                 if config.get("cache_control") is not None:
-                    payload["cache_control"] = deepcopy(config["cache_control"])
-                mapped.append(payload)
+                    mcp_payload["cache_control"] = deepcopy(config["cache_control"])
+                mapped.append(mcp_payload)
                 continue
 
-            payload = {"type": tool.type, "name": tool.name}
+            hosted_payload: dict[str, Any] = {"type": tool.type, "name": tool.name}
             if isinstance(tool.config, dict):
-                payload.update(deepcopy(tool.config))
-            mapped.append(payload)
+                hosted_payload.update(deepcopy(tool.config))
+            mapped.append(hosted_payload)
             continue
-        payload = {
+        callable_payload: dict[str, Any] = {
             "name": tool.name,
             "description": tool.description,
             "input_schema": _anthropic_schema(tool.schema),
         }
         if tool.input_examples:
-            payload["input_examples"] = [serialize_json_value(item) for item in tool.input_examples]
+            callable_payload["input_examples"] = [serialize_json_value(item) for item in tool.input_examples]
         if tool.strict is not None:
-            payload["strict"] = tool.strict
+            callable_payload["strict"] = tool.strict
         if tool.defer_loading is not None:
-            payload["defer_loading"] = tool.defer_loading
+            callable_payload["defer_loading"] = tool.defer_loading
         if tool.eager_input_streaming is not None:
-            payload["eager_input_streaming"] = tool.eager_input_streaming
+            callable_payload["eager_input_streaming"] = tool.eager_input_streaming
         if tool.allowed_callers:
-            payload["allowed_callers"] = list(tool.allowed_callers)
+            callable_payload["allowed_callers"] = list(tool.allowed_callers)
         if tool.cache_control is not None:
-            payload["cache_control"] = serialize_json_value(tool.cache_control)
-        mapped.append(payload)
+            callable_payload["cache_control"] = serialize_json_value(tool.cache_control)
+        mapped.append(callable_payload)
     return mapped
 
 
@@ -694,6 +694,8 @@ def _map_tool_choice(
         )
     if tool_choice == "required":
         return {"type": "any"}
+    if not isinstance(tool_choice, ToolChoiceName):
+        raise UnsupportedFeatureError(f'Provider "anthropic" does not support tool_choice={tool_choice!r}.')
     return {"type": "tool", "name": tool_choice.tool_name}
 
 
@@ -841,7 +843,7 @@ def _extract_web_search_sources(payload: dict[str, Any]) -> list[GroundingSource
             if not url:
                 continue
             results_by_url[url] = dict(item)
-            key = (url, None)
+            key: tuple[str, str | None] = (url, None)
             if key in seen:
                 continue
             seen.add(key)
@@ -1073,7 +1075,7 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
                 built_messages.insert(0, ModelMessage(role="system", parts=[TextPart(text=system)]))
         elif system:
             built_messages = [ModelMessage(role="system", parts=[TextPart(text=system)]), *built_messages]
-        validate_message_parts(self, built_messages)
+        validate_message_parts(cast(Any, self), built_messages)
         extracted_options, request_betas, mcp_beta = _extract_provider_options(provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(tools))
         body_tools, extracted_options = _merge_tool_payloads(
@@ -1135,7 +1137,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: ANTHROPIC_CAPABILITIES)
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
-        validate_message_parts(self, input.messages)
+        validate_message_parts(cast(Any, self), input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
@@ -1194,7 +1196,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         )
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
-        validate_message_parts(self, input.messages)
+        validate_message_parts(cast(Any, self), input.messages)
         extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
@@ -1316,7 +1318,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: ANTHROPIC_GROUNDED_CAPABILITIES)
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
-        validate_message_parts(self, input.messages)
+        validate_message_parts(cast(Any, self), input.messages)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
         body_tools, remaining_options = _merge_tool_payloads([web_search_tool], remaining_options)

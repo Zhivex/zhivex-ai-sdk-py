@@ -7,7 +7,10 @@ Related examples:
 - [`examples/integrations/fastapi_chat_api.py`](./examples/integrations/fastapi_chat_api.py)
 - [`examples/integrations/fastapi_streaming_api.py`](./examples/integrations/fastapi_streaming_api.py)
 - [`examples/integrations/fastapi_gateway_api.py`](./examples/integrations/fastapi_gateway_api.py)
-- [OBSERVABILITY.md](./OBSERVABILITY.md)
+- [docs/GATEWAY.md](./docs/GATEWAY.md)
+- [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
+- [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- [SECURITY.md](./SECURITY.md)
 
 ## Install
 
@@ -82,3 +85,15 @@ The gateway example uses OpenAI as primary and Anthropic as fallback, but the pa
 For the strongest compatibility story, prefer tier-1 providers for the API paths you want to treat as part of your long-term contract.
 
 For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than vLLM custom endpoints. Text, streaming, structured output/tools, embeddings, transcription, and realtime ASR are supported through the OpenAI-compatible server when the served model/task supports them; custom endpoints such as tokenize, rerank, classify, and score should stay behind app-owned code if needed.
+
+## Agent APIs
+
+For agent-backed API servers, keep application policy outside the SDK:
+
+- use `idempotency_key` for retryable user actions
+- attach memory/checkpoint stores when sessions need recovery
+- attach run stores when you need replay, snapshots, or cancellation records
+- keep human approval queues and authorization in application storage
+- pass request ids through agent metadata and logs
+
+See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.

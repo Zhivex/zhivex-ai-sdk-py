@@ -3,14 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
 from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
+from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, HostedToolDefinition, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
@@ -55,23 +55,23 @@ _VERTEX_VERTEX_AI_SEARCH_PROVIDER_OPTIONS = ("vertex_ai_search", "vertexAiSearch
 _VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS = ("external_search", "externalSearch")
 
 
-def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
+def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> HostedToolDefinition:
     return gemini_google_search_tool(exclude_domains=exclude_domains, **extra)
 
 
-def vertex_google_maps_tool(**config: Any) -> dict[str, Any]:
+def vertex_google_maps_tool(**config: Any) -> HostedToolDefinition:
     return gemini_google_maps_tool(**config)
 
 
-def vertex_url_context_tool(**config: Any) -> dict[str, Any]:
+def vertex_url_context_tool(**config: Any) -> HostedToolDefinition:
     return gemini_url_context_tool(**config)
 
 
-def vertex_code_execution_tool(**config: Any) -> dict[str, Any]:
+def vertex_code_execution_tool(**config: Any) -> HostedToolDefinition:
     return gemini_code_execution_tool(**config)
 
 
-def vertex_computer_use_tool(**config: Any) -> dict[str, Any]:
+def vertex_computer_use_tool(**config: Any) -> HostedToolDefinition:
     return gemini_computer_use_tool(**config)
 
 
@@ -249,7 +249,7 @@ def create_vertex(
                 request_kwargs["body"] = body
             return await requester(url, **request_kwargs)
 
-    wrapped_fetch = VertexFetcher()
+    wrapped_fetch = cast(Fetcher, VertexFetcher())
 
     class VertexLanguageModel(GeminiLanguageModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
