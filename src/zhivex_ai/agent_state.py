@@ -386,7 +386,7 @@ class PostgresAgentRunStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg  # type: ignore[import-not-found]
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         connection = await asyncpg.connect(self._dsn)

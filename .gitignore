@@ -35,6 +35,7 @@ htmlcov/
 # Local environment and secrets
 .env
 .env.*
+!.env.example
 
 # IDE/editor files
 .idea/

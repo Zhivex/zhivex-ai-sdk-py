@@ -1532,7 +1532,7 @@ class PostgresAgentMemoryStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg  # type: ignore[import-not-found]
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         return await asyncpg.connect(self._dsn)
@@ -1608,7 +1608,7 @@ class PostgresAgentCheckpointStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         return await asyncpg.connect(self._dsn)

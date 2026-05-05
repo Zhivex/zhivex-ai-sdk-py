@@ -21,6 +21,28 @@ Related documents:
 
 ### Added
 
+- None.
+
+### Changed
+
+- None.
+
+### Fixed
+
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.6.0
+
+### Added
+
 - Machine-readable API stability manifest in `src/zhivex_ai/api_stability.py`, with drift tests covering every symbol exported by `zhivex_ai.__all__`.
 - `py.typed` packaging marker so downstream type checkers can treat the package as typed.
 - Grouped local test targets for contract, core, providers, examples, and agent/workflow checks.
