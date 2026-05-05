@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -18,9 +19,14 @@ from zhivex_ai import (
     create_openai,
     create_openrouter,
     create_qwen,
+    create_vllm,
     create_vertex,
 )
-from zhivex_ai.provider_support import build_provider_support_rows, render_provider_support_markdown
+from zhivex_ai.provider_support import (
+    build_provider_support_rows,
+    render_provider_support_markdown,
+    replace_readme_support_matrix,
+)
 
 
 class _FakeBedrockClient:
@@ -29,6 +35,19 @@ class _FakeBedrockClient:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Render or sync the provider support matrix from runtime metadata.")
+    parser.add_argument(
+        "--write-readme",
+        action="store_true",
+        help="Rewrite the generated support-matrix block in README.md.",
+    )
+    parser.add_argument(
+        "--check-readme",
+        action="store_true",
+        help="Exit non-zero when README.md does not match the generated support-matrix block.",
+    )
+    args = parser.parse_args()
+
     rows = build_provider_support_rows(
         [
             create_openai(api_key="test"),
@@ -41,9 +60,22 @@ def main() -> None:
             create_qwen(api_key="test"),
             create_kimi(api_key="test"),
             create_ollama(),
+            create_vllm(api_key="test"),
         ]
     )
-    print(render_provider_support_markdown(rows))
+    rendered = render_provider_support_markdown(rows)
+
+    if args.write_readme or args.check_readme:
+        readme_path = ROOT / "README.md"
+        current = readme_path.read_text(encoding="utf-8")
+        updated = replace_readme_support_matrix(current, rows)
+        if args.check_readme:
+            raise SystemExit(0 if current == updated else 1)
+        readme_path.write_text(updated, encoding="utf-8")
+        print(f"Updated {readme_path.relative_to(ROOT)}")
+        return
+
+    print(rendered)
 
 
 if __name__ == "__main__":

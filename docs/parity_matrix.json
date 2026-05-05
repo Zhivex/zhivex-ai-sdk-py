@@ -1,0 +1,142 @@
+{
+  "description": "Machine-readable maturity boundary for the Python SDK product areas.",
+  "columns": ["implemented", "documented", "offline_tested", "live_smoked", "stability"],
+  "areas": [
+    {
+      "area": "Public API manifest",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "stable contract"
+    },
+    {
+      "area": "Text and streaming",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "yes",
+      "stability": "stable"
+    },
+    {
+      "area": "Structured output",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "yes",
+      "stability": "stable"
+    },
+    {
+      "area": "Embeddings",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "stable"
+    },
+    {
+      "area": "Grounded text",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "stable"
+    },
+    {
+      "area": "Gateway fallback",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "stable"
+    },
+    {
+      "area": "Tier-1 provider adapters",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "optional",
+      "stability": "stable provider story"
+    },
+    {
+      "area": "Agent core runtime",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "stable"
+    },
+    {
+      "area": "Agent run stores and replay",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "beta"
+    },
+    {
+      "area": "Human approval policies",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "beta"
+    },
+    {
+      "area": "MCP helpers and registries",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "partial",
+      "live_smoked": "optional",
+      "stability": "stable helper path"
+    },
+    {
+      "area": "Declarative workflows",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "beta"
+    },
+    {
+      "area": "Packaged skills",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "beta"
+    },
+    {
+      "area": "Realtime/live agents",
+      "implemented": "yes",
+      "documented": "partial",
+      "offline_tested": "yes",
+      "live_smoked": "optional",
+      "stability": "experimental"
+    },
+    {
+      "area": "Google native media clients",
+      "implemented": "yes",
+      "documented": "provider docs",
+      "offline_tested": "provider tests",
+      "live_smoked": "optional",
+      "stability": "beta/native"
+    },
+    {
+      "area": "Release install verification",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "beta release gate"
+    },
+    {
+      "area": "Security and operations guides",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
+      "stability": "beta guidance"
+    }
+  ]
+}

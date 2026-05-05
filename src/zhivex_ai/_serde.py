@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 from .schema import create_schema_adapter
 from .types import (
+    AnyToolDefinition,
     CodeExecutionResultPart,
     GenerateResult,
     GeneratedCodePart,
+    HostedToolDefinition,
     MCPServerConfig,
     MCPToolConfig,
     ModelGenerateInput,
     ModelMessage,
+    ProviderDataPart,
     RemoteHTTPToolConfig,
     StructuredOutputConfig,
     TokenUsage,
@@ -22,12 +28,13 @@ from .types import (
     ToolExecutionError,
     ToolExecutionResult,
     ToolResultPart,
+    MessageRole,
 )
 
 
 def _json_compatible(value: Any) -> Any:
-    if is_dataclass(value):
-        return {key: _json_compatible(item) for key, item in asdict(value).items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {key: _json_compatible(item) for key, item in asdict(cast("DataclassInstance", value)).items()}
     if isinstance(value, dict):
         return {str(key): _json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -125,6 +132,12 @@ def serialize_content_part(part: Any) -> dict[str, Any]:
             "cache_control": _json_compatible(getattr(part, "cache_control", None)),
             "provider_metadata": _json_compatible(getattr(part, "provider_metadata", {})),
         }
+    if getattr(part, "type", None) == "provider-data":
+        return {
+            "type": "provider-data",
+            "provider": getattr(part, "provider", ""),
+            "data": _json_compatible(getattr(part, "data", None)),
+        }
     if getattr(part, "type", None) == "tool-call":
         return {"type": "tool-call", "tool_call": serialize_tool_call(part.tool_call)}
     if getattr(part, "type", None) == "tool-result":
@@ -181,6 +194,11 @@ def deserialize_content_part(payload: dict[str, Any]) -> Any:
         )
     if part_type == "tool-call":
         return ToolCallPart(tool_call=deserialize_tool_call(dict(payload.get("tool_call") or {})))
+    if part_type == "provider-data":
+        return ProviderDataPart(
+            provider=str(payload.get("provider", "")),
+            data=payload.get("data"),
+        )
     if part_type == "tool-result":
         return ToolResultPart(tool_result=deserialize_tool_execution_result(dict(payload.get("tool_result") or {})))
     if part_type == "generated-code":
@@ -205,7 +223,7 @@ def serialize_message(message: ModelMessage) -> dict[str, Any]:
 
 def deserialize_message(payload: dict[str, Any]) -> ModelMessage:
     return ModelMessage(
-        role=str(payload.get("role", "user")),
+        role=cast("MessageRole", str(payload.get("role", "user"))),
         parts=[deserialize_content_part(dict(part)) for part in payload.get("parts") or []],
     )
 
@@ -293,29 +311,52 @@ def deserialize_mcp_tool_config(payload: dict[str, Any] | None) -> MCPToolConfig
     return MCPToolConfig(server=server, tool_name=str(payload.get("tool_name", "")))
 
 
-def serialize_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
+def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
+    if isinstance(definition, HostedToolDefinition) or getattr(definition, "kind", None) == "hosted":
+        hosted = cast(HostedToolDefinition, definition)
+        return {
+            "kind": "hosted",
+            "name": hosted.name,
+            "provider": hosted.provider,
+            "type": hosted.type,
+            "config": _json_compatible(hosted.config),
+            "tool_class": hosted.tool_class,
+            "requires_approval": hosted.requires_approval,
+            "metadata": _json_compatible(hosted.metadata),
+        }
+    callable_definition = cast(ToolDefinition, definition)
     return {
-        "name": definition.name,
-        "description": definition.description,
-        "schema": _serialize_schema(definition.schema),
-        "input_examples": _json_compatible(definition.input_examples),
-        "strict": definition.strict,
-        "defer_loading": definition.defer_loading,
-        "eager_input_streaming": definition.eager_input_streaming,
-        "allowed_callers": list(definition.allowed_callers),
-        "cache_control": _json_compatible(definition.cache_control),
-        "tags": list(definition.tags),
-        "requires_approval": definition.requires_approval,
-        "permissions": list(definition.permissions),
-        "source": definition.source,
-        "metadata": _json_compatible(definition.metadata),
-        "supports_streaming": definition.supports_streaming,
-        "remote_config": serialize_remote_http_tool_config(definition.remote_config),
-        "mcp_config": serialize_mcp_tool_config(definition.mcp_config),
+        "name": callable_definition.name,
+        "description": callable_definition.description,
+        "schema": _serialize_schema(callable_definition.schema),
+        "input_examples": _json_compatible(callable_definition.input_examples),
+        "strict": callable_definition.strict,
+        "defer_loading": callable_definition.defer_loading,
+        "eager_input_streaming": callable_definition.eager_input_streaming,
+        "allowed_callers": list(callable_definition.allowed_callers),
+        "cache_control": _json_compatible(callable_definition.cache_control),
+        "tags": list(callable_definition.tags),
+        "requires_approval": callable_definition.requires_approval,
+        "permissions": list(callable_definition.permissions),
+        "source": callable_definition.source,
+        "metadata": _json_compatible(callable_definition.metadata),
+        "supports_streaming": callable_definition.supports_streaming,
+        "remote_config": serialize_remote_http_tool_config(callable_definition.remote_config),
+        "mcp_config": serialize_mcp_tool_config(callable_definition.mcp_config),
     }
 
 
-def deserialize_tool_definition(payload: dict[str, Any]) -> ToolDefinition:
+def deserialize_tool_definition(payload: dict[str, Any]) -> AnyToolDefinition:
+    if payload.get("kind") == "hosted":
+        return HostedToolDefinition(
+            name=str(payload.get("name", "")),
+            provider=payload.get("provider"),
+            type=str(payload.get("type", "")),
+            config=payload.get("config"),
+            tool_class=payload.get("tool_class"),
+            requires_approval=payload.get("requires_approval"),
+            metadata=dict(payload.get("metadata") or {}),
+        )
     schema_payload = payload.get("schema")
     schema: Any = {}
     if isinstance(schema_payload, dict):

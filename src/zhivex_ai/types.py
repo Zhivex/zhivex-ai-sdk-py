@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeAlias, TypeVar
@@ -13,6 +14,8 @@ FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "error"
 StructuredOutputMode = Literal["auto", "native", "prompted"]
 ToolChoiceMode = Literal["none", "auto", "required"]
 PortableProviderTier = Literal["portable", "native-only", "compatibility"]
+AgentSupportTier = Literal["tier-a", "tier-b", "tier-c"]
+HostedToolClass = Literal["web-search", "file-search", "remote-mcp", "computer-use", "code-execution", "toolset", "custom"]
 
 
 @dataclass(slots=True)
@@ -54,10 +57,26 @@ class NativeSupport:
     uploads: bool = False
     moderations: bool = False
     batches: bool = False
+    videos: bool = False
+    media: bool = False
+    interactions: bool = False
     containers: bool = False
     skills: bool = False
     responses: bool = False
     conversations: bool = False
+
+
+@dataclass(slots=True)
+class AgentCapabilities:
+    support_tier: AgentSupportTier = "tier-c"
+    tool_choice_none: bool = False
+    approval_requests: bool = False
+    hosted_web_search: bool = False
+    hosted_file_search: bool = False
+    remote_mcp: bool = False
+    computer_use: bool = False
+    code_execution: bool = False
+    toolsets: bool = False
 
 
 @dataclass(slots=True)
@@ -165,6 +184,119 @@ class FilePart:
 
 
 @dataclass(slots=True)
+class ProviderDataPart:
+    type: Literal["provider-data"] = "provider-data"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
+class OpenAIResponseReference:
+    response_id: str
+
+
+@dataclass(slots=True)
+class OpenAIMcpApprovalRequest:
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+
+
+@dataclass(slots=True)
+class OpenAIMcpApprovalResponse:
+    type: Literal["mcp_approval_response"] = "mcp_approval_response"
+    approval_request_id: str = ""
+    approve: bool = False
+    id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class OpenAIMcpCall:
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: Literal["in_progress", "completed", "incomplete", "calling", "failed"] | None = None
+
+
+@dataclass(slots=True)
+class OpenAIMcpListTools:
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str | None = None
+    server_label: str | None = None
+    tools: JsonValue | None = None
+
+
+OpenAIProviderData: TypeAlias = (
+    OpenAIResponseReference
+    | OpenAIMcpApprovalRequest
+    | OpenAIMcpApprovalResponse
+    | OpenAIMcpCall
+    | OpenAIMcpListTools
+)
+
+
+@dataclass(slots=True)
+class AzureOpenAIResponseReference:
+    response_id: str
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpApprovalRequest:
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpApprovalResponse:
+    type: Literal["mcp_approval_response"] = "mcp_approval_response"
+    approval_request_id: str = ""
+    approve: bool = False
+    id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpCall:
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str = ""
+    arguments: str = ""
+    name: str = ""
+    server_label: str = ""
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: Literal["in_progress", "completed", "incomplete", "calling", "failed"] | None = None
+
+
+@dataclass(slots=True)
+class AzureOpenAIMcpListTools:
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str | None = None
+    server_label: str | None = None
+    tools: JsonValue | None = None
+
+
+AzureOpenAIProviderData: TypeAlias = (
+    AzureOpenAIResponseReference
+    | AzureOpenAIMcpApprovalRequest
+    | AzureOpenAIMcpApprovalResponse
+    | AzureOpenAIMcpCall
+    | AzureOpenAIMcpListTools
+)
+
+
+@dataclass(slots=True)
 class ProviderFile:
     provider: str
     id: str
@@ -193,6 +325,41 @@ class ProviderImage:
 class ImagesResult:
     images: list[ProviderImage] = field(default_factory=list)
     created_at: str | int | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class GeneratedMedia:
+    provider: str
+    data: bytes | None = None
+    b64_data: str | None = None
+    url: str | None = None
+    file_uri: str | None = None
+    media_type: str | None = None
+    text: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MediaResult:
+    media: list[GeneratedMedia] = field(default_factory=list)
+    text: str | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class VideoOperation:
+    name: str
+    done: bool = False
+    response: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class VideoResult:
+    videos: list[GeneratedMedia] = field(default_factory=list)
+    operation: VideoOperation | None = None
     raw_response: Any = None
 
 
@@ -358,6 +525,71 @@ class BatchesClient(Protocol):
     async def cancel(self, batch_id: str, options: "RetryOptions | None" = None) -> dict[str, Any]: ...
 
 
+class VideosClient(Protocol):
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        config: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> VideoOperation: ...
+
+    async def get_operation(self, name: str, options: "RetryOptions | None" = None) -> VideoOperation: ...
+
+    async def wait_operation(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 10_000,
+        timeout_ms: int | None = None,
+    ) -> VideoOperation: ...
+
+    async def download(self, uri: str, options: "RetryOptions | None" = None) -> bytes: ...
+
+
+class MediaClient(Protocol):
+    async def generate_music(
+        self,
+        *,
+        prompt: str,
+        model: str = "lyria-3-clip-preview",
+        parts: list["EmbeddingPart"] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> MediaResult: ...
+
+
+class InteractionsClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
+
+    async def retrieve(
+        self,
+        interaction_id: str,
+        *,
+        stream: bool | None = None,
+        last_event_id: str | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def stream(
+        self,
+        interaction_id: str,
+        *,
+        last_event_id: str | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, Any]: ...
+
+    async def wait(
+        self,
+        interaction_id: str,
+        *,
+        poll_interval_ms: int = 10_000,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class ContainersClient(Protocol):
     async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> dict[str, Any]: ...
 
@@ -390,7 +622,7 @@ class ContainersClient(Protocol):
         after: str | None = None,
         limit: int | None = None,
         options: "RetryOptions | None" = None,
-    ) -> list[ProviderFile]: ...
+    ) -> builtins.list[ProviderFile]: ...
 
     async def retrieve_file(
         self,
@@ -489,12 +721,30 @@ class CountTokensClient(Protocol):
         *,
         model_id: str,
         prompt: str | None = None,
-        messages: list["ModelMessage"] | None = None,
+        messages: builtins.list["ModelMessage"] | None = None,
         system: str | None = None,
-        tools: dict[str, "ToolDefinition"] | None = None,
+        tools: dict[str, "AnyToolDefinition"] | None = None,
         provider_options: dict[str, Any] | None = None,
         options: "RetryOptions | None" = None,
     ) -> CountTokensResult: ...
+
+
+class FormulasClient(Protocol):
+    async def list_tools(self, formula_uri: str, options: "RetryOptions | None" = None) -> builtins.list[dict[str, Any]]: ...
+
+    async def call_tool(
+        self,
+        formula_uri: str,
+        function_name: str,
+        arguments: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> JsonValue: ...
+
+    async def toolset(
+        self,
+        formula_uris: builtins.list[str],
+        options: "RetryOptions | None" = None,
+    ) -> dict[str, "ToolDefinition"]: ...
 
 
 @dataclass(slots=True)
@@ -595,7 +845,7 @@ class FileSearchStoresClient(Protocol):
         filename: str,
         media_type: str | None = None,
         display_name: str | None = None,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation: ...
 
@@ -604,7 +854,7 @@ class FileSearchStoresClient(Protocol):
         *,
         file_search_store_name: str,
         file_name: str,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation: ...
 
@@ -626,7 +876,7 @@ class FileSearchStoresClient(Protocol):
         self,
         name: str,
         *,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchDocument: ...
 
@@ -634,7 +884,7 @@ class FileSearchStoresClient(Protocol):
         self,
         *,
         file_search_store_name: str,
-        query: str | list[str],
+        query: str | builtins.list[str],
         filters: dict[str, Any] | None = None,
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
@@ -645,8 +895,8 @@ class FileSearchStoresClient(Protocol):
         self,
         *,
         file_search_store_name: str,
-        file_names: list[str],
-        custom_metadata: list[dict[str, Any]] | None = None,
+        file_names: builtins.list[str],
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchBatch: ...
 
@@ -695,7 +945,7 @@ class ResponsesClient(Protocol):
         self,
         response_id: str,
         *,
-        include: list[str] | None = None,
+        include: builtins.list[str] | None = None,
         stream: bool | None = None,
         starting_after: int | None = None,
         include_obfuscation: bool | None = None,
@@ -824,7 +1074,9 @@ class CodeExecutionResultPart:
     outcome: str | None = None
 
 
-ContentPart: TypeAlias = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart
+ContentPart: TypeAlias = (
+    TextPart | ImagePart | FilePart | ProviderDataPart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart
+)
 
 
 @dataclass(slots=True)
@@ -867,6 +1119,15 @@ class UIMessageToolResultChunk:
 
 
 @dataclass(slots=True)
+class UIMessageProviderDataChunk:
+    type: Literal["provider-data"] = "provider-data"
+    message_id: str = ""
+    role: Literal["assistant"] = "assistant"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
 class UIMessageFinishChunk:
     type: Literal["finish"] = "finish"
     message_id: str = ""
@@ -886,6 +1147,7 @@ UIMessageChunk: TypeAlias = (
     UIMessageTextChunk
     | UIMessageToolCallChunk
     | UIMessageToolResultChunk
+    | UIMessageProviderDataChunk
     | UIMessageFinishChunk
     | UIMessageErrorChunk
 )
@@ -906,6 +1168,7 @@ class ModelCapabilities:
     embeddings: bool
     reasoning: bool
     web_search: bool
+    agent_capabilities: AgentCapabilities | None = None
     realtime: bool = False
     realtime_audio_input: bool = False
     realtime_audio_output: bool = False
@@ -1018,6 +1281,13 @@ class StreamToolResultEvent:
 
 
 @dataclass(slots=True)
+class StreamProviderDataEvent:
+    type: Literal["provider-data"] = "provider-data"
+    provider: str = ""
+    data: Any = None
+
+
+@dataclass(slots=True)
 class StreamFinishEvent:
     type: Literal["finish"] = "finish"
     finish_reason: FinishReason | None = None
@@ -1032,7 +1302,12 @@ class StreamErrorEvent:
 
 
 StreamEvent: TypeAlias = (
-    StreamTextDeltaEvent | StreamToolCallEvent | StreamToolResultEvent | StreamFinishEvent | StreamErrorEvent
+    StreamTextDeltaEvent
+    | StreamToolCallEvent
+    | StreamToolResultEvent
+    | StreamProviderDataEvent
+    | StreamFinishEvent
+    | StreamErrorEvent
 )
 
 
@@ -1126,7 +1401,7 @@ ProviderOptions = dict[str, Any]
 class RealtimeSessionConfig:
     instructions: str | None = None
     voice: str | None = None
-    tools: dict[str, "ToolDefinition"] | None = None
+    tools: dict[str, "AnyToolDefinition"] | None = None
     tool_choice: ToolChoice | None = None
     input_audio_media_type: str | None = None
     output_audio_media_type: str | None = None
@@ -1149,7 +1424,7 @@ class RealtimeTokenResult:
 @dataclass(slots=True)
 class ModelGenerateInput(RetryOptions):
     messages: list[ModelMessage] = field(default_factory=list)
-    tools: dict[str, "ToolDefinition[Any]"] | None = None
+    tools: dict[str, "AnyToolDefinition"] | None = None
     tool_choice: ToolChoice | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -1190,7 +1465,7 @@ class EmbeddingModel(Protocol):
     model_id: str
     capabilities: ModelCapabilities
 
-    async def embed(self, values: list[str], options: RetryOptions | None = None) -> EmbedResult: ...
+    async def embed(self, values: list["EmbeddingContent"], options: RetryOptions | None = None) -> EmbedResult: ...
 
 
 class TranscriptionModel(Protocol):
@@ -1347,7 +1622,7 @@ class RealtimeSession(Protocol):
         *,
         instructions: str | None = None,
         voice: str | None = None,
-        tools: dict[str, "ToolDefinition"] | None = None,
+        tools: dict[str, "AnyToolDefinition"] | None = None,
         tool_choice: ToolChoice | None = None,
         turn_detection: dict[str, Any] | None = None,
         provider_options: ProviderOptions | None = None,
@@ -1401,7 +1676,20 @@ class ToolDefinition:
     mcp_config: MCPToolConfig | None = None
 
 
-ToolSet = dict[str, ToolDefinition]
+@dataclass(slots=True)
+class HostedToolDefinition:
+    kind: Literal["hosted"] = "hosted"
+    name: str = ""
+    provider: str | None = None
+    type: str = ""
+    config: JsonValue | None = None
+    tool_class: HostedToolClass | None = None
+    requires_approval: bool | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+AnyToolDefinition: TypeAlias = ToolDefinition | HostedToolDefinition
+ToolSet = dict[str, AnyToolDefinition]
 
 
 @dataclass(slots=True)
@@ -1462,3 +1750,11 @@ class StreamObjectResult(Protocol):
 @dataclass(slots=True)
 class EmbedOutput(EmbedResult):
     values: list[str] = field(default_factory=list)
+
+    @property
+    def embedding(self) -> list[float] | None:
+        return self.embeddings[0] if self.embeddings else None
+
+
+EmbeddingPart: TypeAlias = TextPart | ImagePart | FilePart
+EmbeddingContent: TypeAlias = str | EmbeddingPart | list[EmbeddingPart]

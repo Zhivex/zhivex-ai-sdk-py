@@ -20,6 +20,7 @@ from zhivex_ai import (
     create_openai,
     create_openrouter,
     create_qwen,
+    create_vllm,
     create_vertex,
 )
 from zhivex_ai.provider_support import (
@@ -49,10 +50,12 @@ class ProviderSupportTests(TestCase):
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
                 create_ollama(),
+                create_vllm(api_key="test"),
             ]
         )
         tiers = {row.provider: (row.tier, row.portable_badge) for row in rows}
         native = {row.provider: row.native_support for row in rows}
+        agent = {row.provider: row.agent_capabilities for row in rows}
 
         self.assertEqual(tiers["openai"], ("portable", True))
         self.assertEqual(tiers["anthropic"], ("portable", True))
@@ -64,6 +67,13 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["qwen"], ("compatibility", False))
         self.assertEqual(tiers["kimi"], ("compatibility", False))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
+        self.assertEqual(tiers["vllm"], ("portable", True))
+        self.assertFalse(rows[[row.provider for row in rows].index("kimi")].portable_support.embeddings)
+        self.assertTrue(native["kimi"].files)
+        self.assertTrue(native["kimi"].batches)
+        self.assertTrue(native["vllm"].realtime)
+        self.assertTrue(native["vllm"].transcription)
+        self.assertFalse(native["kimi"].responses)
         self.assertTrue(native["openai"].images)
         self.assertTrue(native["openai"].uploads)
         self.assertTrue(native["openai"].moderations)
@@ -71,15 +81,58 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["openai"].containers)
         self.assertTrue(native["openai"].skills)
         self.assertTrue(native["anthropic"].files)
+        self.assertTrue(native["gemini"].images)
+        self.assertTrue(native["gemini"].videos)
+        self.assertTrue(native["gemini"].media)
+        self.assertTrue(native["gemini"].batches)
+        self.assertTrue(native["gemini"].interactions)
+        self.assertTrue(native["vertex"].images)
+        self.assertTrue(native["vertex"].videos)
+        self.assertTrue(native["vertex"].media)
+        self.assertFalse(native["vertex"].batches)
+        self.assertFalse(native["vertex"].interactions)
+        self.assertEqual(agent["openai"].support_tier, "tier-a")
+        self.assertTrue(agent["openai"].approval_requests)
+        self.assertTrue(agent["openai"].remote_mcp)
+        self.assertEqual(agent["anthropic"].support_tier, "tier-b")
+        self.assertTrue(agent["anthropic"].code_execution)
+        self.assertTrue(agent["anthropic"].toolsets)
+        self.assertTrue(agent["gemini"].hosted_file_search)
+        self.assertTrue(agent["gemini"].computer_use)
+        self.assertTrue(agent["vertex"].hosted_file_search)
+        self.assertTrue(agent["vertex"].computer_use)
+        self.assertEqual(agent["qwen"].support_tier, "tier-b")
+        self.assertTrue(agent["qwen"].remote_mcp)
+        self.assertTrue(agent["qwen"].code_execution)
+        self.assertTrue(native["qwen"].responses)
+        self.assertFalse(native["qwen"].file_search)
+        self.assertEqual(agent["kimi"].support_tier, "tier-b")
+        self.assertTrue(agent["kimi"].toolsets)
+        self.assertTrue(native["bedrock"].tools)
+        self.assertEqual(agent["bedrock"].support_tier, "tier-b")
+        self.assertTrue(agent["bedrock"].tool_choice_none)
 
         markdown = render_provider_support_markdown(rows)
         self.assertIn("### Tier-1 Providers", markdown)
         self.assertIn("- `openai`", markdown)
         self.assertIn("- `vertex`", markdown)
+        self.assertIn("- `vllm`", markdown)
         self.assertIn("### Portable Support", markdown)
         self.assertIn("| openai | portable | Yes |", markdown)
+        self.assertIn("| vllm | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
+        self.assertIn(
+            "| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images |",
+            markdown,
+        )
+        self.assertIn("| bedrock | Yes | Yes | No | Yes | No | No | No |", markdown)
+        self.assertIn("### Agent Capabilities", markdown)
+        self.assertIn("| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |", markdown)
+        self.assertIn("| anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |", markdown)
+        self.assertIn("| bedrock | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
+        self.assertIn("| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |", markdown)
+        self.assertIn("| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(
@@ -89,10 +142,11 @@ class ProviderSupportTests(TestCase):
                 create_anthropic(api_key="test"),
                 create_gemini(api_key="test"),
                 create_vertex(access_token="test", project_id="project"),
+                create_vllm(api_key="test"),
             ]
         )
 
-        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex"))
+        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex", "vllm"))
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))

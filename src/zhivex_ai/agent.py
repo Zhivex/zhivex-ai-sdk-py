@@ -11,7 +11,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from ._http import default_fetch
@@ -26,14 +26,24 @@ from ._serde import (
     serialize_tool_execution_context,
 )
 from .errors import ProviderHTTPError, ValidationError
+from .agent_state import (
+    AgentChildRun,
+    AgentRunState,
+    AgentRunStatus,
+    AgentRunStep,
+    AgentRunStore,
+    agent_child_run_from_state,
+)
 from .generate_text import generate_text, stream_text
-from .messages import create_text_message, tool_result_part
-from .skills import SkillDefinition, SkillRegistry, SkillSet
+from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
+from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
 from .types import (
+    AnyToolDefinition,
     AudioFrame,
     FinishReason,
     GenerateTextOutput,
     GenerateTextStep,
+    JsonValue,
     LanguageModel,
     MCPServerConfig,
     MCPToolConfig,
@@ -51,6 +61,7 @@ from .types import (
     RealtimeToolCallEvent,
     RealtimeToolResultEvent,
     RealtimeTranscriptEvent,
+    StreamProviderDataEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     StreamToolResultEvent,
@@ -63,7 +74,13 @@ from .types import (
     ToolSet,
     TokenUsage,
     ToolCall,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
 )
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 HANDOFF_MARKER = "__zhivex_agent_handoff__"
 SUMMARY_MARKER = "Conversation summary:\n"
@@ -79,7 +96,7 @@ def _new_id(prefix: str) -> str:
 
 
 def _text_from_message(message: ModelMessage) -> str:
-    return "".join(part.text for part in message.parts if getattr(part, "type", None) == "text")
+    return "".join(part.text for part in message.parts if isinstance(part, TextPart))
 
 
 def _message_text(messages: Iterable[ModelMessage]) -> str:
@@ -184,6 +201,8 @@ def _skill_system_message(skill: SkillDefinition) -> str:
         f"[Active skill: {_skill_reference_name(skill)}]",
         f"Description: {skill.description}",
     ]
+    if skill.version:
+        lines.append(f"Version: {skill.version}")
     if skill.path:
         lines.append(f"Skill file: {skill.path}")
         skill_dir = str(Path(skill.path).resolve().parent)
@@ -195,6 +214,10 @@ def _skill_system_message(skill: SkillDefinition) -> str:
         ):
             if directory.exists():
                 lines.append(f"Available {label}: {directory}")
+    if skill.resources:
+        lines.append(f"Available resources: {', '.join(skill.resources)}")
+    if skill.entrypoints:
+        lines.append(f"Available entrypoints: {', '.join(item.name for item in skill.entrypoints)}")
     if skill.default_prompt:
         lines.append(f"Suggested surrounding prompt: {skill.default_prompt}")
     lines.append("Follow these skill instructions for the current task:")
@@ -418,17 +441,20 @@ class AgentSession:
     id: str = field(default_factory=lambda: _new_id("session"))
     messages: list[ModelMessage] = field(default_factory=list)
     summary: str | None = None
+    state: dict[str, JsonValue] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ToolRuntime(Protocol):
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any: ...
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any: ...
 
     async def aclose(self) -> None: ...
 
 
 class LocalToolRuntime:
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the local tool runtime.')
         if definition.execute is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define a local executor.')
         result = _invoke_tool_callable(definition.execute, input, context)
@@ -442,7 +468,7 @@ class UnsupportedToolRuntime:
     def __init__(self, source: str) -> None:
         self._source = source
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
         raise RuntimeError(
             f'Tool "{definition.name}" uses source "{self._source}", but no runtime is configured for that source.'
         )
@@ -455,7 +481,9 @@ class HTTPRemoteToolRuntime:
     def __init__(self, *, fetch: Any = None) -> None:
         self._fetch = fetch or default_fetch
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the remote tool runtime.')
         config: RemoteHTTPToolConfig | None = definition.remote_config
         if config is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define a remote_config.')
@@ -495,7 +523,7 @@ def _normalize_mcp_content_item(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize_mcp_content_item(item) for item in value]
     if is_dataclass(value):
-        return _normalize_mcp_content_item(asdict(value))
+        return _normalize_mcp_content_item(asdict(cast("DataclassInstance", value)))
     return value
 
 
@@ -540,9 +568,9 @@ class MCPToolRuntime:
 
     async def _load_client_api(self) -> tuple[Any, Any, Any]:
         try:
-            from mcp import ClientSession
-            from mcp.client.stdio import StdioServerParameters, stdio_client
-            from mcp.client.streamable_http import streamable_http_client
+            from mcp import ClientSession  # type: ignore[import-not-found]
+            from mcp.client.stdio import StdioServerParameters, stdio_client  # type: ignore[import-not-found]
+            from mcp.client.streamable_http import streamable_http_client  # type: ignore[import-not-found]
         except Exception as error:
             raise RuntimeError('MCP support requires the optional dependency "mcp".') from error
         return ClientSession, (StdioServerParameters, stdio_client), streamable_http_client
@@ -594,7 +622,9 @@ class MCPToolRuntime:
             tools = result.get("tools")
         return list(tools or [])
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the MCP tool runtime.')
         config: MCPToolConfig | None = definition.mcp_config
         if config is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define an mcp_config.')
@@ -626,14 +656,14 @@ class ToolRegistry:
         }
         self._runtimes.update(runtimes or {})
 
-    def register(self, definition: ToolDefinition) -> ToolDefinition:
+    def register(self, definition: AnyToolDefinition) -> AnyToolDefinition:
         self._tools[definition.name] = definition
         return definition
 
-    def get(self, name: str) -> ToolDefinition | None:
+    def get(self, name: str) -> AnyToolDefinition | None:
         return self._tools.get(name)
 
-    def items(self) -> list[tuple[str, ToolDefinition]]:
+    def items(self) -> list[tuple[str, AnyToolDefinition]]:
         return list(self._tools.items())
 
     async def __aenter__(self) -> "ToolRegistry":
@@ -653,7 +683,9 @@ class ToolRegistry:
             merged.register(definition)
         return merged
 
-    async def execute(self, definition: ToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+    async def execute(self, definition: AnyToolDefinition, input: Any, context: ToolExecutionContext) -> Any:
+        if not is_callable_tool_definition(definition):
+            raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the local agent runtime.')
         runtime = self._runtimes.get(definition.source, UnsupportedToolRuntime(definition.source))
         return await runtime.execute(definition, input, context)
 
@@ -842,6 +874,7 @@ class Agent:
     subagents: dict[str, "Agent"] = field(default_factory=dict)
     memory: AgentMemory | None = None
     checkpoint_store: AgentCheckpointStore | None = None
+    run_store: AgentRunStore | None = None
     approval_policy: ApprovalPolicy | None = None
     input_guardrails: list[InputGuardrail] = field(default_factory=list)
     output_guardrails: list[OutputGuardrail] = field(default_factory=list)
@@ -903,6 +936,11 @@ class AgentToolApprovalEvent:
     tool_input: Any = None
     approved: bool = True
     reason: str | None = None
+    provider: str | None = None
+    provider_managed: bool = False
+    approval_request_id: str | None = None
+    tool_source: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -923,12 +961,52 @@ class AgentSkillActivatedEvent:
 
 
 @dataclass(slots=True)
+class AgentSkillResolvedEvent:
+    type: str = "skill-resolved"
+    skill_name: str = ""
+    skill_version: str | None = None
+    entrypoints: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AgentSkillDependencyCheckEvent:
+    type: str = "skill-dependency-check"
+    skill_name: str = ""
+    dependency_type: str = ""
+    dependency_value: str = ""
+    available: bool = True
+
+
+@dataclass(slots=True)
 class AgentSkillSkippedEvent:
     type: str = "skill-skipped"
     skill_name: str = ""
     activation: SkillActivationMode = "sticky"
     reason: str = ""
     path: str | None = None
+
+
+@dataclass(slots=True)
+class AgentSkillExecutionStartEvent:
+    type: str = "skill-execution-start"
+    skill_name: str = ""
+    entrypoint: str = ""
+
+
+@dataclass(slots=True)
+class AgentSkillExecutionFinishEvent:
+    type: str = "skill-execution-finish"
+    skill_name: str = ""
+    entrypoint: str = ""
+    ok: bool = True
+
+
+@dataclass(slots=True)
+class AgentSkillArtifactCreatedEvent:
+    type: str = "skill-artifact-created"
+    skill_name: str = ""
+    entrypoint: str = ""
+    artifact: SkillArtifact | None = None
 
 
 @dataclass(slots=True)
@@ -1004,7 +1082,12 @@ AgentEvent: TypeAlias = (
     | AgentToolApprovalEvent
     | AgentToolResultEvent
     | AgentSkillActivatedEvent
+    | AgentSkillResolvedEvent
+    | AgentSkillDependencyCheckEvent
     | AgentSkillSkippedEvent
+    | AgentSkillExecutionStartEvent
+    | AgentSkillExecutionFinishEvent
+    | AgentSkillArtifactCreatedEvent
     | AgentGuardrailEvent
     | AgentCheckpointEvent
     | AgentSummaryUpdateEvent
@@ -1053,10 +1136,12 @@ class AgentRunResult:
     steps: list[GenerateTextStep] = field(default_factory=list)
     messages: list[ModelMessage] = field(default_factory=list)
     tool_results: list[ToolExecutionResult] = field(default_factory=list)
+    artifacts: list[SkillArtifact] = field(default_factory=list)
     trace: AgentTrace | None = None
     handoff: AgentHandoff | None = None
     orchestration_path: list[str] = field(default_factory=list)
     resumed_from_checkpoint: AgentCheckpoint | None = None
+    state: AgentRunState | None = None
 
 
 class InMemoryAgentMemory:
@@ -1137,12 +1222,14 @@ def create_agent_session(
     id: str | None = None,
     messages: list[ModelMessage] | None = None,
     summary: str | None = None,
+    state: dict[str, JsonValue] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> AgentSession:
     return AgentSession(
         id=id or _new_id("session"),
         messages=list(messages or []),
         summary=summary,
+        state=dict(state or {}),
         metadata=dict(metadata or {}),
     )
 
@@ -1445,7 +1532,7 @@ class PostgresAgentMemoryStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         return await asyncpg.connect(self._dsn)
@@ -1521,7 +1608,7 @@ class PostgresAgentCheckpointStore:
 
     async def _connect(self) -> Any:
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         return await asyncpg.connect(self._dsn)
@@ -1717,13 +1804,17 @@ def permission_allowlist_approval_policy(*allowed_permissions: str) -> ApprovalP
 async def load_agent_session(agent: Agent, session_id: str, *, metadata: dict[str, Any] | None = None) -> AgentSession:
     messages: list[ModelMessage] = []
     summary: str | None = None
+    workflow_state: dict[str, JsonValue] = {}
     merged_metadata = dict(metadata or {})
     if agent.memory is not None:
         state = await agent.memory.load(session_id)
         messages = list(state.messages)
         summary = state.summary
+        raw_workflow_state = state.metadata.get("state") or state.metadata.get("workflow_state")
+        if isinstance(raw_workflow_state, dict):
+            workflow_state = dict(raw_workflow_state)
         merged_metadata = {**state.metadata, **merged_metadata}
-    return AgentSession(id=session_id, messages=messages, summary=summary, metadata=merged_metadata)
+    return AgentSession(id=session_id, messages=messages, summary=summary, state=workflow_state, metadata=merged_metadata)
 
 
 def _normalize_approval_decision(value: ApprovalDecision | bool | None) -> ApprovalDecision:
@@ -1753,12 +1844,20 @@ def _effective_timeout_ms(limits: RunLimits, requested: int | None) -> int | Non
 def _detect_handoff(tool_results: list[ToolExecutionResult]) -> AgentHandoff | None:
     for result in reversed(tool_results):
         if isinstance(result.output, dict) and result.output.get(HANDOFF_MARKER):
+            handoff_input = result.output.get("input")
+            handoff_metadata = result.output.get("metadata")
             return AgentHandoff(
                 target_agent=str(result.output.get("target_agent")),
-                input=result.output.get("input"),
-                metadata=dict(result.output.get("metadata") or {}),
+                input=handoff_input if isinstance(handoff_input, str) else None,
+                metadata=dict(handoff_metadata) if isinstance(handoff_metadata, dict) else {},
             )
     return None
+
+
+def _int_from_json(value: JsonValue | None, default: int = 0) -> int:
+    if isinstance(value, (str, int, float)):
+        return int(value)
+    return default
 
 
 def _should_refresh_summary(memory: AgentMemory, session: AgentSession) -> bool:
@@ -1820,6 +1919,129 @@ def _normalize_guardrail_result(value: GuardrailResult | bool | None) -> Guardra
     raise TypeError("Guardrails must return GuardrailResult, bool, or None.")
 
 
+@dataclass(slots=True)
+class _ProviderManagedApproval:
+    provider: str
+    approval_request_id: str
+    tool_name: str
+    tool_input: Any
+    server_label: str | None
+    raw_payload: Any
+
+
+@dataclass(slots=True)
+class _ProviderManagedToolTraceEvent:
+    provider: str
+    event_key: str
+    tool_call: ToolCall
+    raw_payload: Any
+
+
+def _decode_provider_managed_arguments(arguments: Any) -> Any:
+    if not isinstance(arguments, str):
+        return arguments
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+
+
+def _parse_provider_managed_approval_part(part: Any) -> _ProviderManagedApproval | None:
+    if getattr(part, "type", None) != "provider-data":
+        return None
+    provider = str(getattr(part, "provider", "") or "")
+    parsed: Any
+    if provider == "openai":
+        from .providers.openai import parse_openai_provider_data_part
+
+        parsed = parse_openai_provider_data_part(part)
+    elif provider == "azure-openai":
+        from .providers.azure_openai import parse_azure_openai_provider_data_part
+
+        parsed = parse_azure_openai_provider_data_part(part)
+    else:
+        return None
+    if parsed is None or getattr(parsed, "type", None) != "mcp_approval_request":
+        return None
+    return _ProviderManagedApproval(
+        provider=provider,
+        approval_request_id=str(getattr(parsed, "id", "") or ""),
+        tool_name=str(getattr(parsed, "name", "") or ""),
+        tool_input=_decode_provider_managed_arguments(getattr(parsed, "arguments", "")),
+        server_label=str(getattr(parsed, "server_label", "") or "") or None,
+        raw_payload=parsed,
+    )
+
+
+def _provider_managed_event_key(provider: str, payload: Any) -> str:
+    event_type = str(getattr(payload, "type", "") or payload.__class__.__name__)
+    identifier = getattr(payload, "id", None) or getattr(payload, "approval_request_id", None) or getattr(payload, "response_id", None)
+    if identifier:
+        return f"{provider}:{event_type}:{identifier}"
+    try:
+        stable_payload = json.dumps(
+            asdict(cast("DataclassInstance", payload)) if is_dataclass(payload) and not isinstance(payload, type) else payload,
+            sort_keys=True,
+            default=str,
+        )
+    except TypeError:
+        stable_payload = repr(payload)
+    return f"{provider}:{event_type}:{stable_payload}"
+
+
+def _parse_provider_managed_tool_trace_part(part: Any) -> _ProviderManagedToolTraceEvent | None:
+    if getattr(part, "type", None) != "provider-data":
+        return None
+    provider = str(getattr(part, "provider", "") or "")
+    parsed: Any
+    tool_call: ToolCall | None
+    if provider == "openai":
+        from .providers.openai import openai_provider_data_tool_call, parse_openai_provider_data_part
+
+        parsed = parse_openai_provider_data_part(part)
+        tool_call = openai_provider_data_tool_call(parsed) if parsed is not None else None
+    elif provider == "azure-openai":
+        from .providers.azure_openai import azure_openai_provider_data_tool_call, parse_azure_openai_provider_data_part
+
+        parsed = parse_azure_openai_provider_data_part(part)
+        tool_call = azure_openai_provider_data_tool_call(parsed) if parsed is not None else None
+    else:
+        return None
+    if parsed is None or tool_call is None:
+        return None
+    return _ProviderManagedToolTraceEvent(
+        provider=provider,
+        event_key=_provider_managed_event_key(provider, parsed),
+        tool_call=tool_call,
+        raw_payload=parsed,
+    )
+
+
+def _provider_managed_approval_response_message(
+    approval: _ProviderManagedApproval,
+    *,
+    approved: bool,
+    reason: str | None = None,
+) -> ModelMessage:
+    if approval.provider == "openai":
+        from .providers.openai import openai_mcp_approval_response
+
+        part = openai_mcp_approval_response(
+            approval_request_id=approval.approval_request_id,
+            approve=approved,
+            reason=reason,
+        )
+    else:
+        from .providers.azure_openai import azure_openai_mcp_approval_response
+
+        part = azure_openai_mcp_approval_response(
+            approval_request_id=approval.approval_request_id,
+            approve=approved,
+            reason=reason,
+        )
+    return ModelMessage(role="assistant", parts=[part])
+
+
 def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMessage]:
     messages = list(result.messages)
     if messages:
@@ -1854,9 +2076,13 @@ def _sticky_skill_names(session: AgentSession) -> list[str]:
 
 async def _resolve_skill_tools(skill: SkillDefinition) -> ToolSet:
     resolved: ToolSet = dict(skill.tools)
+    if skill.entrypoints:
+        from .skillpacks import build_skill_entrypoint_tools
+
+        resolved.update(build_skill_entrypoint_tools(skill))
     for dependency in skill.dependencies:
         if dependency.type != "mcp":
-            raise ValidationError(f'Unsupported skill dependency type "{dependency.type}".')
+            continue
         if dependency.transport == "stdio":
             if not dependency.command:
                 raise ValidationError(f'Skill "{skill.name}" requires "command" for stdio MCP dependencies.')
@@ -1986,12 +2212,20 @@ def _persist_active_skills(session: AgentSession, active_skills: list[_SkillActi
                 "name": item.skill.name,
                 "path": item.skill.path,
                 "metadata_path": item.skill.metadata_path,
+                "version": item.skill.version,
+                "entrypoints": [entrypoint.name for entrypoint in item.skill.entrypoints],
                 "activation": item.mode,
                 "priority": item.skill.priority,
             }
             for item in active_skills
         ],
         "sticky_skills": sticky_skill_names,
+        "skill_versions": {item.skill.name: item.skill.version for item in active_skills if item.skill.version},
+        "skill_entrypoints": {
+            item.skill.name: [entrypoint.name for entrypoint in item.skill.entrypoints]
+            for item in active_skills
+            if item.skill.entrypoints
+        },
     }
 
 
@@ -2019,6 +2253,51 @@ async def _emit_skill_events(
                 description=activation.skill.description,
             )
         )
+        if activation.skill.version or activation.skill.entrypoints:
+            await emit(
+                AgentSkillResolvedEvent(
+                    skill_name=activation.skill.name,
+                    skill_version=activation.skill.version,
+                    entrypoints=[item.name for item in activation.skill.entrypoints],
+                )
+            )
+        for dependency in activation.skill.dependencies:
+            await emit(
+                AgentSkillDependencyCheckEvent(
+                    skill_name=activation.skill.name,
+                    dependency_type=dependency.type,
+                    dependency_value=dependency.value,
+                    available=True,
+                )
+            )
+
+
+def _extract_skill_artifacts(tool_results: list[ToolExecutionResult]) -> list[SkillArtifact]:
+    artifacts: list[SkillArtifact] = []
+    for result in tool_results:
+        if not isinstance(result.output, dict):
+            continue
+        payload = result.output.get("artifacts")
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            artifact_path = str(item.get("path") or "").strip()
+            if not artifact_path:
+                continue
+            artifact_metadata = item.get("metadata")
+            artifacts.append(
+                SkillArtifact(
+                    name=str(item.get("name") or Path(artifact_path).name),
+                    path=artifact_path,
+                    media_type=str(item.get("media_type") or "") or None,
+                    role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
+                    description=str(item.get("description") or "") or None,
+                    metadata=cast(dict[str, Any], artifact_metadata) if isinstance(artifact_metadata, dict) else {},
+                )
+            )
+    return artifacts
 
 
 def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCall]:
@@ -2027,9 +2306,99 @@ def _extract_tool_calls_from_steps(steps: list[GenerateTextStep]) -> list[ToolCa
         response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
         for message in response_messages:
             for part in message.parts:
-                if getattr(part, "type", None) == "tool-call":
+                if isinstance(part, ToolCallPart):
                     calls.append(part.tool_call)
     return calls
+
+
+def _extract_provider_tool_results_from_steps(steps: list[GenerateTextStep]) -> list[ToolExecutionResult]:
+    results: list[ToolExecutionResult] = []
+    for step in steps:
+        response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
+        for message in response_messages:
+            for part in message.parts:
+                if isinstance(part, ToolResultPart):
+                    results.append(part.tool_result)
+    return results
+
+
+def _step_status_from_result(result: GenerateTextOutput) -> AgentRunStatus:
+    return "failed" if result.finish_reason == "error" else "completed"
+
+
+def _child_runs_from_tool_results(results: list[ToolExecutionResult], parent_run_id: str) -> list[AgentChildRun]:
+    children: list[AgentChildRun] = []
+    for result in results:
+        output = result.output
+        if not isinstance(output, dict):
+            continue
+        raw_child = output.get("child_run")
+        if not isinstance(raw_child, dict):
+            continue
+        children.append(
+            AgentChildRun(
+                run_id=str(raw_child.get("run_id", "")),
+                agent_name=str(raw_child.get("agent_name", "")),
+                parent_run_id=str(raw_child.get("parent_run_id") or parent_run_id),
+                status=cast(AgentRunStatus, raw_child.get("status", "completed")),
+                output_text=str(raw_child.get("output_text", "")),
+                tool_name=result.tool_name,
+                error=str(raw_child.get("error")) if raw_child.get("error") is not None else None,
+                steps=_int_from_json(raw_child.get("steps")),
+                tool_calls=_int_from_json(raw_child.get("tool_calls")),
+                tool_errors=_int_from_json(raw_child.get("tool_errors")),
+            )
+        )
+    return children
+
+
+def _agent_run_state_from_result(
+    *,
+    result: AgentRunResult,
+    agent: Agent,
+    parent_run_id: str | None,
+    idempotency_key: str | None,
+    started_at_ms: int,
+    finished_at_ms: int,
+    error: str | None = None,
+) -> AgentRunState:
+    steps = [
+        AgentRunStep(
+            index=index,
+            status=_step_status_from_result(GenerateTextOutput(text=step.response.text or "", finish_reason=step.response.finish_reason)),
+            tool_calls=_extract_tool_calls_from_steps([step]),
+            tool_results=[],
+            usage=step.response.usage,
+            messages=_response_messages(step),
+            started_at_ms=started_at_ms,
+            finished_at_ms=finished_at_ms,
+        )
+        for index, step in enumerate(result.steps, start=1)
+    ]
+    status: AgentRunStatus = "failed" if error or result.finish_reason == "error" else "completed"
+    state = AgentRunState(
+        run_id=result.run_id,
+        agent_name=result.agent_name,
+        provider=str(getattr(agent.model, "provider", "")),
+        model_id=str(getattr(agent.model, "model_id", "")),
+        status=status,
+        session_id=result.session.id,
+        parent_run_id=parent_run_id,
+        idempotency_key=idempotency_key,
+        started_at_ms=started_at_ms,
+        updated_at_ms=finished_at_ms,
+        finished_at_ms=finished_at_ms,
+        current_step=len(result.steps),
+        steps=steps,
+        child_runs=_child_runs_from_tool_results(result.tool_results, result.run_id),
+        tool_results=list(result.tool_results),
+        usage=result.usage,
+        output_text=result.text,
+        finish_reason=result.finish_reason,
+        error=error,
+        metadata={"orchestration_path": list(result.orchestration_path)},
+    )
+    return state
 
 
 def _segment_text(result: GenerateTextOutput) -> str:
@@ -2048,6 +2417,28 @@ def _segment_provider_finish_reason(result: GenerateTextOutput) -> str | None:
     if result.steps:
         return result.steps[-1].response.provider_finish_reason
     return result.provider_finish_reason
+
+
+def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
+    present = [usage for usage in usages if usage is not None]
+    if not present:
+        return None
+    input_tokens = (
+        sum(usage.input_tokens for usage in present if usage.input_tokens is not None)
+        if all(usage.input_tokens is not None for usage in present)
+        else None
+    )
+    output_tokens = (
+        sum(usage.output_tokens for usage in present if usage.output_tokens is not None)
+        if all(usage.output_tokens is not None for usage in present)
+        else None
+    )
+    total_tokens = (
+        sum(usage.total_tokens for usage in present if usage.total_tokens is not None)
+        if all(usage.total_tokens is not None for usage in present)
+        else None
+    )
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
 
 
 def _response_messages(step: GenerateTextStep) -> list[ModelMessage]:
@@ -2181,6 +2572,8 @@ class AgentRuntime:
         emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
         resumed_from_checkpoint: AgentCheckpoint | None = None,
         live_stream: bool = False,
+        parent_run_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> AgentRunResult:
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
@@ -2191,6 +2584,19 @@ class AgentRuntime:
 
         run_id = _new_id("run")
         started_at_ms = _now_ms()
+        if idempotency_key and agent.run_store is not None:
+            existing_state = await agent.run_store.find_by_idempotency_key(idempotency_key)
+            if existing_state is not None:
+                return AgentRunResult(
+                    run_id=existing_state.run_id,
+                    agent_name=existing_state.agent_name,
+                    session=resolved_session,
+                    text=existing_state.output_text,
+                    finish_reason=existing_state.finish_reason,
+                    usage=existing_state.usage,
+                    orchestration_path=[existing_state.agent_name],
+                    state=existing_state,
+                )
         trace = AgentTrace(
             run_id=run_id,
             session_id=resolved_session.id,
@@ -2205,6 +2611,21 @@ class AgentRuntime:
                 await emit(event)
 
         await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
+        if agent.run_store is not None:
+            await agent.run_store.save(
+                AgentRunState(
+                    run_id=run_id,
+                    agent_name=agent.name,
+                    provider=str(getattr(agent.model, "provider", "")),
+                    model_id=str(getattr(agent.model, "model_id", "")),
+                    session_id=resolved_session.id,
+                    parent_run_id=parent_run_id,
+                    idempotency_key=idempotency_key,
+                    started_at_ms=started_at_ms,
+                    updated_at_ms=started_at_ms,
+                    metadata={"orchestration_path": [agent.name]},
+                )
+            )
 
         current_agent = agent
         current_prompt = prompt
@@ -2255,7 +2676,7 @@ class AgentRuntime:
                         )
                     )
                     trace.finished_at_ms = _now_ms()
-                    return AgentRunResult(
+                    output = AgentRunResult(
                         run_id=run_id,
                         agent_name=segment_result.agent_name,
                         session=resolved_session,
@@ -2266,11 +2687,24 @@ class AgentRuntime:
                         steps=segment_result.steps,
                         messages=segment_result.messages,
                         tool_results=segment_result.tool_results,
+                        artifacts=segment_result.artifacts,
                         trace=trace,
                         handoff=final_handoff,
                         orchestration_path=list(trace.orchestration_path),
                         resumed_from_checkpoint=resumed_from_checkpoint,
                     )
+                    run_state = _agent_run_state_from_result(
+                        result=output,
+                        agent=agent,
+                        parent_run_id=parent_run_id,
+                        idempotency_key=idempotency_key,
+                        started_at_ms=started_at_ms,
+                        finished_at_ms=trace.finished_at_ms,
+                    )
+                    output.state = run_state
+                    if agent.run_store is not None:
+                        await agent.run_store.save(run_state)
+                    return output
 
                 handoff = segment_result.handoff
                 await publish(AgentHandoffRequestedEvent(handoff=handoff))
@@ -2302,6 +2736,24 @@ class AgentRuntime:
         except Exception as error:
             await publish(AgentErrorEvent(error=error))
             trace.finished_at_ms = _now_ms()
+            if agent.run_store is not None:
+                await agent.run_store.save(
+                    AgentRunState(
+                        run_id=run_id,
+                        agent_name=agent.name,
+                        provider=str(getattr(agent.model, "provider", "")),
+                        model_id=str(getattr(agent.model, "model_id", "")),
+                        status="failed",
+                        session_id=resolved_session.id,
+                        parent_run_id=parent_run_id,
+                        idempotency_key=idempotency_key,
+                        started_at_ms=started_at_ms,
+                        updated_at_ms=trace.finished_at_ms,
+                        finished_at_ms=trace.finished_at_ms,
+                        error=str(error),
+                        metadata={"orchestration_path": list(trace.orchestration_path)},
+                    )
+                )
             raise
 
     async def _run_input_guardrails(
@@ -2488,6 +2940,13 @@ class AgentRuntime:
             emit=emit,
         )
         registry = _resolve_tool_registry(agent, tools)
+        if agent.subagents:
+            registry = registry.merge(
+                {
+                    name: create_subagent_tool(name=name, agent=subagent, parent_run_id=run_id)
+                    for name, subagent in agent.subagents.items()
+                }
+            )
         if skill_tools:
             registry = registry.merge(skill_tools)
         merged_tools = self._wrap_agent_tools(
@@ -2511,74 +2970,190 @@ class AgentRuntime:
         )
         buffer_live_text = live_stream and agent.model.capabilities.streaming and bool(agent.output_guardrails)
         buffered_text_deltas: list[str] = []
+        accumulated_steps: list[GenerateTextStep] = []
+        accumulated_tool_results: list[ToolExecutionResult] = []
+        conversation_messages = list(built_messages)
+        persisted_run_messages: list[ModelMessage] = []
+        remaining_steps = _effective_max_steps(agent.run_limits, max_steps)
+
+        async def resolve_provider_managed_approval(
+            approval: _ProviderManagedApproval,
+        ) -> ModelMessage:
+            if agent.approval_policy is None:
+                raise RuntimeError(
+                    "Provider-managed approvals require an approval_policy on the agent."
+                )
+            trace.approval_count += 1
+            request = ToolApprovalRequest(
+                run_id=run_id,
+                session_id=session.id,
+                agent_name=agent.name,
+                tool_name=approval.tool_name,
+                tool_input=approval.tool_input,
+                tool_permissions=[],
+                tool_source="hosted",
+                tool_metadata={
+                    "provider": approval.provider,
+                    "server_label": approval.server_label,
+                    "hosted_tool_class": "remote-mcp",
+                    "provider_event_type": "mcp_approval_request",
+                    "raw_provider_payload": approval.raw_payload,
+                },
+                context=context,
+                handoff_path=list(trace.orchestration_path),
+            )
+            decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
+            await emit(
+                AgentToolApprovalEvent(
+                    tool_name=approval.tool_name,
+                    tool_input=approval.tool_input,
+                    approved=decision.approved,
+                    reason=decision.reason,
+                    provider=approval.provider,
+                    provider_managed=True,
+                    approval_request_id=approval.approval_request_id,
+                    tool_source="hosted",
+                    metadata={
+                        "provider": approval.provider,
+                        "server_label": approval.server_label,
+                        "hosted_tool_class": "remote-mcp",
+                        "provider_event_type": "mcp_approval_request",
+                        "raw_provider_payload": approval.raw_payload,
+                    },
+                )
+            )
+            return _provider_managed_approval_response_message(
+                approval,
+                approved=decision.approved,
+                reason=decision.reason,
+            )
+
         try:
             emitted_live_text = False
             emitted_live_tool_events = False
-            if live_stream and agent.model.capabilities.streaming:
+            while True:
+                if remaining_steps is not None and remaining_steps <= 0:
+                    raise RuntimeError("Agent run exceeded max steps while handling provider-managed approvals.")
+                pending_provider_responses: list[ModelMessage] = []
+                handled_provider_approvals: set[str] = set()
+                handled_provider_tool_events: set[str] = set()
+                if live_stream and agent.model.capabilities.streaming:
 
-                async def handle_stream_event(event: Any) -> None:
-                    nonlocal emitted_live_text, emitted_live_tool_events
-                    if isinstance(event, StreamTextDeltaEvent):
-                        if buffer_live_text:
-                            buffered_text_deltas.append(event.text_delta)
-                        else:
-                            emitted_live_text = True
-                            await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
-                    elif isinstance(event, StreamToolCallEvent):
-                        emitted_live_tool_events = True
-                        await emit(AgentToolCallEvent(tool_call=event.tool_call))
-                    elif isinstance(event, StreamToolResultEvent):
-                        emitted_live_tool_events = True
-                        await emit(AgentToolResultEvent(tool_result=event.tool_result))
+                    async def handle_stream_event(event: Any) -> None:
+                        nonlocal emitted_live_text, emitted_live_tool_events
+                        if isinstance(event, StreamTextDeltaEvent):
+                            if buffer_live_text:
+                                buffered_text_deltas.append(event.text_delta)
+                            else:
+                                emitted_live_text = True
+                                await emit(AgentTextDeltaEvent(text_delta=event.text_delta))
+                        elif isinstance(event, StreamToolCallEvent):
+                            emitted_live_tool_events = True
+                            await emit(AgentToolCallEvent(tool_call=event.tool_call))
+                        elif isinstance(event, StreamToolResultEvent):
+                            emitted_live_tool_events = True
+                            await emit(AgentToolResultEvent(tool_result=event.tool_result))
+                        elif isinstance(event, StreamProviderDataEvent):
+                            provider_part = provider_data_part(event.provider, event.data)
+                            provider_tool_event = _parse_provider_managed_tool_trace_part(provider_part)
+                            if (
+                                provider_tool_event is not None
+                                and provider_tool_event.event_key not in handled_provider_tool_events
+                            ):
+                                handled_provider_tool_events.add(provider_tool_event.event_key)
+                                emitted_live_tool_events = True
+                                await emit(AgentToolCallEvent(tool_call=provider_tool_event.tool_call))
+                            approval = _parse_provider_managed_approval_part(provider_part)
+                            if approval is None or approval.approval_request_id in handled_provider_approvals:
+                                return
+                            handled_provider_approvals.add(approval.approval_request_id)
+                            pending_provider_responses.append(await resolve_provider_managed_approval(approval))
 
-                streamed = stream_text(
-                    model=agent.model,
-                    messages=built_messages,
-                    tools=merged_tools or None,
-                    tool_choice=tool_choice,
-                    tool_execution=tool_execution,
-                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
-                    max_retries=max_retries,
-                    retry_backoff_ms=retry_backoff_ms,
-                    on_event=handle_stream_event,
-                )
-                result = await streamed.collect()
-            else:
-                result = await generate_text(
-                    model=agent.model,
-                    messages=built_messages,
-                    tools=merged_tools or None,
-                    tool_choice=tool_choice,
-                    tool_execution=tool_execution,
-                    max_steps=_effective_max_steps(agent.run_limits, max_steps),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
-                    max_retries=max_retries,
-                    retry_backoff_ms=retry_backoff_ms,
-                )
+                    streamed = stream_text(
+                        model=cast(LanguageModel, agent.model),
+                        messages=conversation_messages,
+                        tools=merged_tools or None,
+                        tool_choice=cast(Any, tool_choice),
+                        tool_execution=tool_execution,
+                        max_steps=remaining_steps,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                        max_retries=max_retries,
+                        retry_backoff_ms=retry_backoff_ms,
+                        on_event=handle_stream_event,
+                    )
+                    result = await streamed.collect()
+                else:
+                    result = await generate_text(
+                        model=cast(LanguageModel, agent.model),
+                        messages=conversation_messages,
+                        tools=merged_tools or None,
+                        tool_choice=cast(Any, tool_choice),
+                        tool_execution=tool_execution,
+                        max_steps=remaining_steps,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
+                        max_retries=max_retries,
+                        retry_backoff_ms=retry_backoff_ms,
+                    )
+
+                accumulated_steps.extend(result.steps)
+                accumulated_tool_results.extend(result.tool_results)
+                if remaining_steps is not None:
+                    remaining_steps -= max(1, len(result.steps))
+
+                new_response_messages: list[ModelMessage] = []
+                for step in result.steps:
+                    response_messages = _response_messages(step)
+                    if response_messages:
+                        new_response_messages.extend(response_messages)
+                        conversation_messages.extend(response_messages)
+                        persisted_run_messages.extend(response_messages)
+                for tool_result in result.tool_results:
+                    tool_message = ModelMessage(role="tool", parts=[tool_result_part(tool_result)])
+                    conversation_messages.append(tool_message)
+                    persisted_run_messages.append(tool_message)
+
+                for message in new_response_messages:
+                    for part in message.parts:
+                        provider_tool_event = _parse_provider_managed_tool_trace_part(part)
+                        if provider_tool_event is not None and provider_tool_event.event_key not in handled_provider_tool_events:
+                            handled_provider_tool_events.add(provider_tool_event.event_key)
+                            await emit(AgentToolCallEvent(tool_call=provider_tool_event.tool_call))
+                        approval = _parse_provider_managed_approval_part(part)
+                        if approval is None or approval.approval_request_id in handled_provider_approvals:
+                            continue
+                        handled_provider_approvals.add(approval.approval_request_id)
+                        pending_provider_responses.append(await resolve_provider_managed_approval(approval))
+
+                if pending_provider_responses:
+                    conversation_messages.extend(pending_provider_responses)
+                    persisted_run_messages.extend(pending_provider_responses)
+                    continue
+                break
         except Exception as error:
             self._finish_span(span, error=error)
             raise
         self._finish_span(span, attributes={"finish.reason": result.finish_reason})
 
         if not emitted_live_tool_events:
-            for tool_call in _extract_tool_calls_from_steps(result.steps):
+            for tool_call in _extract_tool_calls_from_steps(accumulated_steps):
                 await emit(AgentToolCallEvent(tool_call=tool_call))
+            for tool_result in _extract_provider_tool_results_from_steps(accumulated_steps):
+                await emit(AgentToolResultEvent(tool_result=tool_result))
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
         segment_provider_finish_reason = _segment_provider_finish_reason(result)
         if segment_text and not emitted_live_text and not buffer_live_text:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if not emitted_live_tool_events:
-            for tool_result in result.tool_results:
+            for tool_result in accumulated_tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
         await self._run_output_guardrails(
             agent=agent,
@@ -2597,16 +3172,12 @@ class AgentRuntime:
                     await emit(AgentTextDeltaEvent(text_delta=text_delta))
             elif segment_text:
                 await emit(AgentTextDeltaEvent(text_delta=segment_text))
-
         transcript = list(session.messages)
         if messages is not None:
             transcript.extend(messages)
         elif prompt is not None:
             transcript.append(create_text_message("user", prompt))
-        for step in result.steps:
-            transcript.extend(_response_messages(step))
-        for tool_result in result.tool_results:
-            transcript.append(ModelMessage(role="tool", parts=[tool_result_part(tool_result)]))
+        transcript.extend(persisted_run_messages)
         session.messages = _strip_runtime_system_messages(transcript, agent.instructions)
         if agent.memory is not None and _should_refresh_summary(agent.memory, session):
             summary_span = self._start_span(
@@ -2618,7 +3189,7 @@ class AgentRuntime:
                 state=AgentMemoryState(
                     messages=list(session.messages),
                     summary=session.summary,
-                    metadata=dict(session.metadata),
+                    metadata={**dict(session.metadata), "state": dict(session.state)},
                 ),
                 agent=agent,
             )
@@ -2630,20 +3201,44 @@ class AgentRuntime:
                 AgentMemoryState(
                     messages=list(session.messages),
                     summary=session.summary,
-                    metadata=dict(session.metadata),
+                    metadata={**dict(session.metadata), "state": dict(session.state)},
                 ),
             )
 
         await _save_checkpoints(
             checkpoint_store=agent.checkpoint_store,
-            result=result,
+            result=GenerateTextOutput(
+                text=segment_text,
+                finish_reason=segment_finish_reason,
+                provider_finish_reason=segment_provider_finish_reason,
+                usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+                steps=accumulated_steps,
+                messages=conversation_messages,
+                tool_results=accumulated_tool_results,
+            ),
             run_id=run_id,
             session_id=session.id,
             agent_name=agent.name,
             emit=emit,
             trace=trace,
         )
-        handoff = _detect_handoff(result.tool_results)
+        artifacts = _extract_skill_artifacts(accumulated_tool_results)
+        if artifacts:
+            session.metadata = {
+                **session.metadata,
+                "skill_artifacts": [
+                    {
+                        "name": artifact.name,
+                        "path": artifact.path,
+                        "media_type": artifact.media_type,
+                        "role": artifact.role,
+                        "description": artifact.description,
+                        "metadata": dict(artifact.metadata),
+                    }
+                    for artifact in artifacts
+                ],
+            }
+        handoff = _detect_handoff(accumulated_tool_results)
         return AgentRunResult(
             run_id=run_id,
             agent_name=agent.name,
@@ -2651,10 +3246,11 @@ class AgentRuntime:
             text=segment_text,
             finish_reason=segment_finish_reason,
             provider_finish_reason=segment_provider_finish_reason,
-            usage=result.usage,
-            steps=result.steps,
-            messages=result.messages,
-            tool_results=result.tool_results,
+            usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+            steps=accumulated_steps,
+            messages=conversation_messages,
+            tool_results=accumulated_tool_results,
+            artifacts=artifacts,
             trace=trace,
             handoff=handoff,
             orchestration_path=list(trace.orchestration_path),
@@ -2676,13 +3272,16 @@ class AgentRuntime:
         tool_limit = agent.run_limits.max_tool_calls
 
         for tool_name, definition in registry.items():
+            if not is_callable_tool_definition(definition):
+                continue
+            callable_definition = definition
 
             async def execute(
                 input: Any,
                 call_context: ToolExecutionContext | None = None,
                 *,
                 _tool_name: str = tool_name,
-                _definition: ToolDefinition = definition,
+                _definition: ToolDefinition = callable_definition,
             ) -> Any:
                 if agent.run_limits.max_wall_time_ms is not None and _now_ms() - started_at_ms > agent.run_limits.max_wall_time_ms:
                     raise RuntimeError("Agent run exceeded max wall time.")
@@ -2742,11 +3341,41 @@ class AgentRuntime:
                         "run.id": run_id,
                     },
                 )
+                skill_name = str(_definition.metadata.get("skill_name") or "")
+                skill_entrypoint = str(_definition.metadata.get("skill_entrypoint") or "")
+                if skill_name and skill_entrypoint:
+                    await emit(AgentSkillExecutionStartEvent(skill_name=skill_name, entrypoint=skill_entrypoint))
                 try:
                     result = await registry.execute(_definition, input, tool_context)
                 except Exception as error:
+                    if skill_name and skill_entrypoint:
+                        await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=False))
                     self._finish_span(span, error=error)
                     raise
+                if skill_name and skill_entrypoint:
+                    await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=True))
+                    if isinstance(result, dict):
+                        for item in list(result.get("artifacts") or []):
+                            if isinstance(item, dict):
+                                artifact_path = str(item.get("path") or "").strip()
+                                if artifact_path:
+                                    artifact_metadata = item.get("metadata")
+                                    await emit(
+                                        AgentSkillArtifactCreatedEvent(
+                                            skill_name=skill_name,
+                                            entrypoint=skill_entrypoint,
+                                            artifact=SkillArtifact(
+                                                name=str(item.get("name") or Path(artifact_path).name),
+                                                path=artifact_path,
+                                                media_type=str(item.get("media_type") or "") or None,
+                                                role=str(item.get("role") or "primary"),  # type: ignore[arg-type]
+                                                description=str(item.get("description") or "") or None,
+                                                metadata=cast(dict[str, Any], artifact_metadata)
+                                                if isinstance(artifact_metadata, dict)
+                                                else {},
+                                            ),
+                                        )
+                                    )
                 self._finish_span(span)
                 return result
 
@@ -2885,6 +3514,95 @@ class LiveAgentStreamResult:
         return await self._runner
 
 
+def create_subagent_tool(
+    *,
+    name: str,
+    agent: Agent,
+    parent_run_id: str | None = None,
+    description: str | None = None,
+) -> ToolDefinition:
+    async def execute(input: Any) -> JsonValue:
+        prompt = input.get("prompt") if isinstance(input, dict) else str(input)
+        result = await run_agent(agent=agent, prompt=str(prompt or ""), parent_run_id=parent_run_id)
+        child_state = result.state
+        if child_state is None:
+            child_state = _agent_run_state_from_result(
+                result=result,
+                agent=agent,
+                parent_run_id=parent_run_id,
+                idempotency_key=None,
+                started_at_ms=result.trace.started_at_ms if result.trace else _now_ms(),
+                finished_at_ms=result.trace.finished_at_ms if result.trace and result.trace.finished_at_ms else _now_ms(),
+            )
+        return {
+            "text": result.text,
+            "child_run": asdict(agent_child_run_from_state(child_state, tool_name=name)),
+        }
+
+    return ToolDefinition(
+        name=name,
+        description=description or f"Run the {agent.name} subagent.",
+        schema={
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}},
+            "required": ["prompt"],
+        },
+        execute=execute,
+        metadata={"type": "subagent", "agent_name": agent.name, "parent_run_id": parent_run_id},
+    )
+
+
+def prepare_subagents_for_agent(agent: Agent) -> Agent:
+    if not agent.subagents:
+        return agent
+    registry = _resolve_tool_registry(agent, None)
+    registry = registry.merge(
+        {name: create_subagent_tool(name=name, agent=subagent) for name, subagent in agent.subagents.items()}
+    )
+    return replace(agent, tools=registry)
+
+
+@dataclass(slots=True)
+class AgentGroupMember:
+    name: str
+    agent: Agent
+    prompt: str | None = None
+
+
+@dataclass(slots=True)
+class AgentGroupMemberResult:
+    name: str
+    output: AgentRunResult | None = None
+    error: Exception | None = None
+
+
+@dataclass(slots=True)
+class AgentGroupRunResult:
+    parent_run_id: str | None
+    outputs: list[AgentGroupMemberResult]
+
+
+async def run_agent_group(
+    members: list[AgentGroupMember],
+    *,
+    prompt: str | None = None,
+    parent_run_id: str | None = None,
+) -> AgentGroupRunResult:
+    async def run_member(member: AgentGroupMember) -> AgentGroupMemberResult:
+        try:
+            output = await run_agent(
+                agent=member.agent,
+                prompt=member.prompt if member.prompt is not None else prompt,
+                parent_run_id=parent_run_id,
+            )
+            return AgentGroupMemberResult(name=member.name, output=output)
+        except Exception as error:
+            return AgentGroupMemberResult(name=member.name, error=error)
+
+    outputs = await asyncio.gather(*(run_member(member) for member in members))
+    return AgentGroupRunResult(parent_run_id=parent_run_id, outputs=list(outputs))
+
+
 def run_agent(
     *,
     agent: Agent,
@@ -2907,6 +3625,8 @@ def run_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
+    parent_run_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> Awaitable[AgentRunResult]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     return resolved_runtime.run(
@@ -2927,6 +3647,8 @@ def run_agent(
         max_retries=max_retries,
         retry_backoff_ms=retry_backoff_ms,
         stop_on_handoff=stop_on_handoff,
+        parent_run_id=parent_run_id,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -3156,7 +3878,7 @@ def stream_live_agent(
         live_config = realtime_config or RealtimeSessionConfig(
             instructions=combined_instructions,
             tools=wrapped_tools or None,
-            tool_choice=tool_choice,
+            tool_choice=cast(Any, tool_choice),
             provider_options=provider_options,
         )
         if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
@@ -3168,8 +3890,8 @@ def stream_live_agent(
         tool_results: list[ToolExecutionResult] = []
         assistant_buffer: list[str] = []
         last_assistant_text = ""
-        live_model = agent.model
-        live_session = await live_model.connect(config=live_config, options=connect_options)  # type: ignore[attr-defined]
+        live_model = cast(RealtimeModel, agent.model)
+        live_session = await live_model.connect(config=live_config, options=connect_options)
         live_session_future.set_result(live_session)
         resolved_session.metadata = {
             **resolved_session.metadata,
@@ -3206,7 +3928,7 @@ def stream_live_agent(
                 if isinstance(event, RealtimeToolCallEvent):
                     await emit_agent(AgentToolCallEvent(tool_call=event.tool_call))
                     definition = wrapped_tools.get(event.tool_call.name) if wrapped_tools else None
-                    if definition is None or definition.execute is None:
+                    if definition is None or not is_callable_tool_definition(definition) or definition.execute is None:
                         tool_result = ToolExecutionResult(
                             tool_call_id=event.tool_call.id,
                             tool_name=event.tool_call.name,
@@ -3280,7 +4002,7 @@ def stream_live_agent(
                 state=AgentMemoryState(
                     messages=list(resolved_session.messages),
                     summary=resolved_session.summary,
-                    metadata=dict(resolved_session.metadata),
+                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
                 ),
                 agent=agent,
             )
@@ -3291,7 +4013,7 @@ def stream_live_agent(
                 AgentMemoryState(
                     messages=list(resolved_session.messages),
                     summary=resolved_session.summary,
-                    metadata=dict(resolved_session.metadata),
+                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
                 ),
             )
 

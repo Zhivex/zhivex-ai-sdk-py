@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from functools import lru_cache
-from typing import Any
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -37,6 +37,12 @@ class _RawJsonSchemaAdapter:
         return deepcopy(self._schema)
 
 
+class _SchemaAdapterProtocol(Protocol):
+    def validate_python(self, value: Any) -> Any: ...
+
+    def json_schema(self) -> dict[str, Any]: ...
+
+
 class SchemaAdapter:
     def __init__(self, schema: Any) -> None:
         self.schema = schema
@@ -52,9 +58,9 @@ class SchemaAdapter:
         return deepcopy(self._json_schema_cache)
 
     @staticmethod
-    def _to_adapter(schema: Any) -> TypeAdapter[Any]:
+    def _to_adapter(schema: Any) -> _SchemaAdapterProtocol:
         if isinstance(schema, TypeAdapter):
-            return schema
+            return cast(_SchemaAdapterProtocol, schema)
         if _looks_like_json_schema(schema):
             return _RawJsonSchemaAdapter(schema)
         if isinstance(schema, type) and issubclass(schema, BaseModel):

@@ -15,7 +15,20 @@ Related documents:
 - The previous beta minor release may receive critical fixes when the change is low risk and clearly scoped.
 - Stable APIs are the main compatibility contract for production integrations.
 - Stable agent integrations include the core runtime, session helpers, portable agent skills, MCP helper path, MCP-backed registries, and Postgres-backed memory/checkpoint stores documented in [STABILITY.md](./STABILITY.md).
+- Agent production guidance is documented in [docs/AGENTS.md](./docs/AGENTS.md), [docs/PRODUCTION.md](./docs/PRODUCTION.md), [docs/OPERATIONS.md](./docs/OPERATIONS.md), and [PRODUCTION_APIS.md](./PRODUCTION_APIS.md).
+- Onboarding, provider setup, gateway routing, observability, security, and troubleshooting guidance live under [docs/QUICKSTART.md](./docs/QUICKSTART.md), [docs/PROVIDERS.md](./docs/PROVIDERS.md), [docs/GATEWAY.md](./docs/GATEWAY.md), [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md), [SECURITY.md](./SECURITY.md), [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md), and [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md).
 - Beta APIs are supported for early adoption, but they may still evolve between minor releases with changelog coverage.
+- Beta provider capability metadata describes current provider agent ergonomics, but it is not a stable behavioral guarantee yet.
+- Beta hosted-tool definitions and `provider-data` control parts describe the preferred native tool-registration path, but provider-specific execution semantics may still evolve between minor releases.
+- Beta provider-managed approval flows currently cover OpenAI and Azure OpenAI only, including typed `provider-data` payload parsing and agent-runtime approval-policy integration.
+- Beta response-reference helpers and `provider-data` UI chunks are supported for OpenAI/Azure continuation workflows and observability, but their exact ergonomics may still evolve between minor releases.
+- Beta agent platform helpers cover durable run stores, native subagent tools, replay/evaluation reports, hierarchical trace artifacts, run-tree cancellation, redaction policies, and budget guards.
+- Beta workflow agents cover declarative sequential, parallel, and loop orchestration with shared `session.state`, app-owned resume, structured output validation, document artifacts, replay, and evaluation as documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md); CLI/UI/deploy automation is intentionally outside this beta surface.
+- Beta Google native media/job clients cover Gemini/Vertex image, video, music/audio, batch, and interaction workflows where the official Google endpoints expose them. Preview Google models remain subject to Google availability, quota, and deprecation windows.
+- Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Kimi remains a compatibility provider rather than a tier-1 portable provider.
+- vLLM is supported as a tier-1 provider for SDK primitives exposed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR support depends on the model/task served by vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the SDK support contract.
+- Tier-1 provider claims are backed by generated support metadata, shared offline contract tests, provider-specific tests, and optional live smoke documentation in [docs/providers/tier-1.md](./docs/providers/tier-1.md).
+- The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
 - Experimental APIs are available for evaluation and feedback, but they do not carry support or compatibility guarantees.
 
 ## What qualifies for patch releases
@@ -38,10 +51,21 @@ The current tier-1 providers for the stable production API story are:
 - Azure OpenAI
 - Gemini
 - Vertex
+- vLLM
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. Embeddings, transcription, and speech remain unavailable on the Anthropic provider path here today.
 
+Gemini and Vertex are tier-1 for the portable production surface. Google-specific media generation, Batch API, Interactions API, Deep Research, and Veo operation workflows are exposed through native provider clients rather than the portable contract.
+
+vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
+
+Qwen is supported as a compatibility provider through `provider.native`. `create_qwen(region="intl" | "us" | "cn")` maps to Alibaba Cloud Model Studio's documented OpenAI-compatible regions, while `base_url` and `responses_base_url` remain explicit overrides for custom gateways. Qwen exposes a raw `provider.responses()` client plus hosted web/file/code/MCP tool payloads for Responses, embeddings, Qwen3-ASR, and DashScope TTS through native paths. It does not expose file-search lifecycle clients or carry the portable badge yet.
+
+Kimi/Moonshot is supported as a compatibility provider through `provider.native`. Its native text generation uses the official Chat Completions API, with Files, Batch, token estimation, and Formulas exposed as beta native clients.
+
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.
+
+DeepSeek is deferred for Python GA and is not part of the tier-1 provider contract.
 
 ## Upgrade expectations
 

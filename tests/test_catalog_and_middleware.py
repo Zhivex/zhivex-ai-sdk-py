@@ -64,6 +64,37 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.provider, "openai")
 
+    async def test_default_model_catalog_tracks_reference_models(self) -> None:
+        expected = [
+            ("openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
+            ("openai", "gpt-5.4-mini", {"speed", "tools"}),
+            ("anthropic", "claude-opus-4-7", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
+            ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("gemini", "gemini-3-flash-preview", {"speed", "tools", "vision"}),
+            ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
+            ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
+            ("qwen", "qwen3.6-plus", {"reasoning", "tools", "vision"}),
+            ("qwen", "text-embedding-v4", {"embedding", "retrieval"}),
+            ("qwen", "qwen3-asr-flash", {"audio", "speed"}),
+            ("qwen", "qwen3-tts-instruct-flash", {"audio"}),
+            ("kimi", "kimi-k2.6", {"reasoning", "tools", "vision"}),
+        ]
+
+        for provider, model_id, recommended in expected:
+            entry = default_model_catalog.find(provider, model_id)
+            self.assertIsNotNone(entry, f"{provider}/{model_id} missing from default catalog")
+            self.assertTrue(recommended.issubset(set(entry.recommended_for)))  # type: ignore[union-attr]
+
+        self.assertEqual(default_model_catalog.find("gemini", "gemini-pro-latest").model_id, "gemini-3.1-pro-preview")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.6-plus-2026-04-02").model_id, "qwen3.6-plus")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.5-plus-2026-04-20").model_id, "qwen3.5-plus")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "text-embedding-v3").model_id, "text-embedding-v4")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3-asr-flash-2026-02-10").model_id, "qwen3-asr-flash")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3-tts-instruct-flash-2026-01-26").model_id, "qwen3-tts-instruct-flash")  # type: ignore[union-attr]
+
     async def test_cached_middleware_avoids_duplicate_generate_calls(self) -> None:
         model = CountingModel()
         wrapped = wrap_language_model(

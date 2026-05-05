@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 from .types import (
     CodeExecutionResultPart,
@@ -11,6 +14,7 @@ from .types import (
     GeneratedCodePart,
     ImagePart,
     ModelMessage,
+    ProviderDataPart,
     TextPart,
     ToolCall,
     ToolCallPart,
@@ -22,6 +26,7 @@ from .types import (
     UIMessageChunk,
     UIMessageErrorChunk,
     UIMessageFinishChunk,
+    UIMessageProviderDataChunk,
     UIMessageTextChunk,
     UIMessageToolCallChunk,
     UIMessageToolResultChunk,
@@ -33,8 +38,8 @@ def _random_id() -> str:
 
 
 def _to_plain(value: Any) -> Any:
-    if is_dataclass(value):
-        return {key: _to_plain(item) for key, item in asdict(value).items()}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {key: _to_plain(item) for key, item in asdict(cast("DataclassInstance", value)).items()}
     if isinstance(value, dict):
         return {key: _to_plain(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -64,7 +69,7 @@ def _tool_result_from_dict(value: dict[str, Any]) -> ToolExecutionResult:
 
 def _part_from_dict(
     value: dict[str, Any],
-) -> TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart:
+) -> TextPart | ImagePart | FilePart | ProviderDataPart | ToolCallPart | ToolResultPart | GeneratedCodePart | CodeExecutionResultPart:
     part_type = value["type"]
     if part_type == "text":
         return TextPart(
@@ -92,6 +97,11 @@ def _part_from_dict(
             citations_enabled=value.get("citations_enabled"),
             cache_control=value.get("cache_control"),
             provider_metadata=value.get("provider_metadata") or {},
+        )
+    if part_type == "provider-data":
+        return ProviderDataPart(
+            provider=value.get("provider", ""),
+            data=value.get("data"),
         )
     if part_type == "tool-call":
         return ToolCallPart(tool_call=_tool_call_from_dict(value["tool_call"]))
@@ -174,6 +184,13 @@ def deserialize_ui_message_chunk(value: str) -> UIMessageChunk:
             role=payload.get("role", "tool"),
             tool_result=_tool_result_from_dict(payload["tool_result"]),
         )
+    if chunk_type == "provider-data":
+        return UIMessageProviderDataChunk(
+            message_id=payload["message_id"],
+            role=payload.get("role", "assistant"),
+            provider=payload.get("provider", ""),
+            data=payload.get("data"),
+        )
     if chunk_type == "finish":
         return UIMessageFinishChunk(
             message_id=payload["message_id"],
@@ -201,6 +218,12 @@ def to_ui_message_stream(source: Any, message_id: str | None = None):
                 yield UIMessageToolCallChunk(message_id=resolved_id, tool_call=event.tool_call)
             elif event.type == "tool-result":
                 yield UIMessageToolResultChunk(message_id=resolved_id, tool_result=event.tool_result)
+            elif event.type == "provider-data":
+                yield UIMessageProviderDataChunk(
+                    message_id=resolved_id,
+                    provider=event.provider,
+                    data=event.data,
+                )
             elif event.type == "finish":
                 yield UIMessageFinishChunk(
                     message_id=resolved_id,

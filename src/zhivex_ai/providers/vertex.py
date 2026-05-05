@@ -3,14 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
 from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import CountTokensResult, EmbedResult, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
+from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, HostedToolDefinition, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
@@ -18,10 +18,13 @@ from .gemini import (
     GEMINI_GROUNDED_CAPABILITIES,
     GEMINI_REALTIME_CAPABILITIES,
     GeminiCountTokensClient,
+    GeminiImagesClient,
     GeminiGroundedLanguageModel,
     GeminiLanguageModel,
+    GeminiMediaClient,
     GeminiSpeechModel,
     GeminiTranscriptionModel,
+    GeminiVideosClient,
     gemini_code_execution_tool,
     gemini_computer_use_tool,
     gemini_google_maps_tool,
@@ -31,6 +34,7 @@ from .gemini import (
     _extract_grounding_sources,
     _extract_grounding_supports,
     _embedding_request_options,
+    _embedding_content_parts,
     _extract_search_entry_point,
     _gemini_realtime_build_audio,
     _gemini_realtime_build_text,
@@ -51,23 +55,23 @@ _VERTEX_VERTEX_AI_SEARCH_PROVIDER_OPTIONS = ("vertex_ai_search", "vertexAiSearch
 _VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS = ("external_search", "externalSearch")
 
 
-def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
+def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> HostedToolDefinition:
     return gemini_google_search_tool(exclude_domains=exclude_domains, **extra)
 
 
-def vertex_google_maps_tool(**config: Any) -> dict[str, Any]:
+def vertex_google_maps_tool(**config: Any) -> HostedToolDefinition:
     return gemini_google_maps_tool(**config)
 
 
-def vertex_url_context_tool(**config: Any) -> dict[str, Any]:
+def vertex_url_context_tool(**config: Any) -> HostedToolDefinition:
     return gemini_url_context_tool(**config)
 
 
-def vertex_code_execution_tool(**config: Any) -> dict[str, Any]:
+def vertex_code_execution_tool(**config: Any) -> HostedToolDefinition:
     return gemini_code_execution_tool(**config)
 
 
-def vertex_computer_use_tool(**config: Any) -> dict[str, Any]:
+def vertex_computer_use_tool(**config: Any) -> HostedToolDefinition:
     return gemini_computer_use_tool(**config)
 
 
@@ -162,7 +166,7 @@ class VertexEmbeddingModel(EmbeddingModel):
     def _headers(self) -> dict[str, str]:
         return {"content-type": "application/json", "authorization": f"Bearer {self.access_token}"}
 
-    async def embed(self, values: list[str], options: Any = None) -> EmbedResult:
+    async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
         config = _embedding_request_options(options)
         task_type = config.get("task_type")
         title = config.get("title")
@@ -177,7 +181,7 @@ class VertexEmbeddingModel(EmbeddingModel):
                 json_body={
                     "instances": [
                         {
-                            "content": value,
+                            "content": {"parts": _embedding_content_parts(value)} if not isinstance(value, str) else value,
                             **({"task_type": task_types[index]} if isinstance(task_types, list) and index < len(task_types) else {}),
                             **({"title": titles[index]} if isinstance(titles, list) and index < len(titles) else {}),
                             **({"task_type": task_type} if not isinstance(task_types, list) and task_type is not None else {}),
@@ -245,7 +249,7 @@ def create_vertex(
                 request_kwargs["body"] = body
             return await requester(url, **request_kwargs)
 
-    wrapped_fetch = VertexFetcher()
+    wrapped_fetch = cast(Fetcher, VertexFetcher())
 
     class VertexLanguageModel(GeminiLanguageModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
@@ -488,11 +492,33 @@ def create_vertex(
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
         ),
+        images_client_factory=lambda: GeminiImagesClient(
+            provider="vertex",
+            api_key=None,
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+            vertex=True,
+        ),
+        videos_client_factory=lambda: GeminiVideosClient(
+            provider="vertex",
+            api_key=None,
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+            vertex=True,
+        ),
+        media_client_factory=lambda: GeminiMediaClient(
+            provider="vertex",
+            api_key=None,
+            base_url=resolved_base.rstrip("/"),
+            fetch=wrapped_fetch,
+            vertex=True,
+        ),
         realtime_model_factory=lambda model_id: VertexRealtimeModel(model_id),
     )
     return create_provider_bundle(
         name="vertex",
         native=native,
+        agent_capabilities=GEMINI_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,

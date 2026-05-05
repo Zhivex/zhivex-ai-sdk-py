@@ -13,10 +13,12 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    AgentCapabilities,
     AgentGuardrailEvent,
     AgentRegistry,
     AgentToolApprovalEvent,
     AgentToolCallEvent,
+    AgentToolResultEvent,
     GuardrailResult,
     GuardrailTripwireTriggered,
     ModelCapabilities,
@@ -31,6 +33,7 @@ from zhivex_ai import (  # noqa: E402
     handoff_to,
     load_agent_session,
     permission_allowlist_approval_policy,
+    provider_data_part,
     run_agent,
     stream_agent,
     tool,
@@ -39,10 +42,17 @@ from zhivex_ai.observability import OTelAgentObserver  # noqa: E402
 from zhivex_ai.types import (  # noqa: E402
     GenerateResult,
     ModelGenerateInput,
+    OpenAIMcpCall,
     StreamFinishEvent,
+    StreamProviderDataEvent,
     StreamTextDeltaEvent,
+    OpenAIMcpApprovalRequest,
+    OpenAIMcpListTools,
+    StreamToolResultEvent,
     ToolCall,
     ToolCallPart,
+    ToolExecutionResult,
+    ToolResultPart,
     TokenUsage,
 )
 
@@ -61,6 +71,28 @@ BASE_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+)
+
+OPENAI_APPROVAL_CAPABILITIES = ModelCapabilities(
+    streaming=True,
+    tools=True,
+    structured_output=True,
+    json_mode=True,
+    tool_choice=True,
+    parallel_tool_calls=False,
+    vision=False,
+    files=False,
+    audio_input=False,
+    audio_output=False,
+    embeddings=False,
+    reasoning=False,
+    web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-a",
+        tool_choice_none=True,
+        approval_requests=True,
+        remote_mcp=True,
+    ),
 )
 
 
@@ -145,7 +177,7 @@ class PermissionToolModel:
 
 class GeminiSearchOptInModel:
     provider = "gemini"
-    model_id = "gemini-3-flash-preview"
+    model_id = "gemini-3.1-flash-preview"
     capabilities = BASE_CAPABILITIES
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
@@ -178,6 +210,167 @@ class CountingEchoAgentModel(EchoAgentModel):
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         self.calls += 1
         return await super().generate(input)
+
+
+class ProviderManagedApprovalModel:
+    provider = "openai"
+    model_id = "gpt-4o-mini"
+    capabilities = OPENAI_APPROVAL_CAPABILITIES
+
+    def _approval_response(self, input: ModelGenerateInput):
+        for message in reversed(input.messages):
+            for part in message.parts:
+                data = getattr(part, "data", None)
+                if getattr(part, "type", None) != "provider-data":
+                    continue
+                if isinstance(data, dict) and data.get("type") == "mcp_approval_response":
+                    return data
+                if getattr(data, "type", None) == "mcp_approval_response":
+                    return data
+        return None
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        approval = self._approval_response(input)
+        if approval is None:
+            return GenerateResult(
+                messages=[
+                    ModelMessage(
+                        role="assistant",
+                        parts=[
+                            provider_data_part(
+                                "openai",
+                                OpenAIMcpApprovalRequest(
+                                    id="apr_1",
+                                    arguments='{"query":"apollo"}',
+                                    name="docs_search",
+                                    server_label="Docs",
+                                ),
+                            )
+                        ],
+                    )
+                ]
+            )
+        approved = approval["approve"] if isinstance(approval, dict) else approval.approve
+        text = "approved" if approved else "denied"
+        return GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[
+                        provider_data_part(
+                            "openai",
+                            OpenAIMcpCall(
+                                id="call_1",
+                                arguments='{"query":"apollo"}',
+                                name="docs_search",
+                                server_label="Docs",
+                                status="completed",
+                            ),
+                        ),
+                        provider_data_part(
+                            "openai",
+                            OpenAIMcpListTools(
+                                id="list_1",
+                                server_label="Docs",
+                                tools=[{"name": "docs_search"}],
+                            ),
+                        ),
+                        create_text_message("assistant", text).parts[0],
+                    ],
+                )
+            ],
+            text=text,
+        )
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        approval = self._approval_response(input)
+
+        async def generator() -> AsyncIterable[object]:
+            if approval is None:
+                yield StreamProviderDataEvent(
+                    provider="openai",
+                    data=OpenAIMcpApprovalRequest(
+                        id="apr_1",
+                        arguments='{"query":"apollo"}',
+                        name="docs_search",
+                        server_label="Docs",
+                    ),
+                )
+                yield StreamFinishEvent(finish_reason="stop")
+                return
+            approved = approval["approve"] if isinstance(approval, dict) else approval.approve
+            yield StreamProviderDataEvent(
+                provider="openai",
+                data=OpenAIMcpCall(
+                    id="call_1",
+                    arguments='{"query":"apollo"}',
+                    name="docs_search",
+                    server_label="Docs",
+                    status="completed",
+                ),
+            )
+            yield StreamProviderDataEvent(
+                provider="openai",
+                data=OpenAIMcpListTools(
+                    id="list_1",
+                    server_label="Docs",
+                    tools=[{"name": "docs_search"}],
+                ),
+            )
+            yield StreamTextDeltaEvent(text_delta="approved" if approved else "denied")
+            yield StreamFinishEvent(finish_reason="stop")
+
+        return generator()
+
+
+class ProviderManagedToolResultModel:
+    provider = "anthropic"
+    model_id = "claude-sonnet-4-6"
+    capabilities = BASE_CAPABILITIES
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        return GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[
+                        ToolCallPart(
+                            tool_call=ToolCall(
+                                id="mcp_1",
+                                name="docs_search",
+                                input={"query": "apollo"},
+                                provider_metadata={"provider_managed": True},
+                            )
+                        ),
+                        ToolResultPart(
+                            tool_result=ToolExecutionResult(
+                                tool_call_id="mcp_1",
+                                tool_name="mcp_tool_result",
+                                output=[{"type": "text", "text": "found"}],
+                                is_error=False,
+                            )
+                        ),
+                        create_text_message("assistant", "done").parts[0],
+                    ],
+                )
+            ],
+            text="done",
+        )
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            yield StreamToolResultEvent(
+                tool_result=ToolExecutionResult(
+                    tool_call_id="mcp_1",
+                    tool_name="mcp_tool_result",
+                    output=[{"type": "text", "text": "found"}],
+                    is_error=False,
+                )
+            )
+            yield StreamTextDeltaEvent(text_delta="done")
+            yield StreamFinishEvent(finish_reason="stop")
+
+        return generator()
 
 
 class UnsafeStreamingAgentModel:
@@ -334,6 +527,147 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(approvals), 1)
         self.assertFalse(approvals[0].approved)
         self.assertEqual(observed_contexts, [])
+
+    async def test_run_agent_handles_provider_managed_approvals(self) -> None:
+        async def approve_all(request):
+            return True
+
+        result = await run_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted MCP tools.",
+                model=ProviderManagedApprovalModel(),
+                approval_policy=approve_all,
+            ),
+            prompt="help me plan",
+            max_steps=3,
+        )
+
+        approvals = [event for event in result.trace.events if isinstance(event, AgentToolApprovalEvent)]
+        provider_tool_calls = [
+            event
+            for event in result.trace.events
+            if isinstance(event, AgentToolCallEvent) and event.tool_call.provider_metadata.get("provider_managed")
+        ]
+        self.assertEqual(result.text, "approved")
+        self.assertEqual(result.trace.approval_count, 1)
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual([event.tool_call.name for event in provider_tool_calls], ["docs_search", "mcp_list_tools"])
+        self.assertTrue(approvals[0].provider_managed)
+        self.assertEqual(approvals[0].provider, "openai")
+        self.assertEqual(approvals[0].tool_source, "hosted")
+        self.assertEqual(approvals[0].approval_request_id, "apr_1")
+        self.assertEqual(approvals[0].metadata["provider_event_type"], "mcp_approval_request")
+        self.assertEqual(provider_tool_calls[0].tool_call.input["query"], "apollo")
+        self.assertEqual(provider_tool_calls[1].tool_call.input["tools"][0]["name"], "docs_search")
+
+    async def test_run_agent_denies_provider_managed_approvals_and_continues(self) -> None:
+        async def deny_all(request):
+            return False
+
+        result = await run_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted MCP tools.",
+                model=ProviderManagedApprovalModel(),
+                approval_policy=deny_all,
+            ),
+            prompt="help me plan",
+            max_steps=3,
+        )
+
+        self.assertEqual(result.text, "denied")
+        approvals = [event for event in result.trace.events if isinstance(event, AgentToolApprovalEvent)]
+        provider_tool_calls = [
+            event
+            for event in result.trace.events
+            if isinstance(event, AgentToolCallEvent) and event.tool_call.provider_metadata.get("provider_managed")
+        ]
+        self.assertEqual(len(approvals), 1)
+        self.assertFalse(approvals[0].approved)
+        self.assertEqual([event.tool_call.name for event in provider_tool_calls], ["docs_search", "mcp_list_tools"])
+
+    async def test_run_agent_requires_policy_for_provider_managed_approvals(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "approval_policy"):
+            await run_agent(
+                agent=Agent(
+                    name="assistant",
+                    instructions="Use hosted MCP tools.",
+                    model=ProviderManagedApprovalModel(),
+                ),
+                prompt="help me plan",
+                max_steps=3,
+            )
+
+    async def test_stream_agent_handles_provider_managed_approvals_end_to_end(self) -> None:
+        async def approve_all(request):
+            return True
+
+        stream = stream_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted MCP tools.",
+                model=ProviderManagedApprovalModel(),
+                approval_policy=approve_all,
+            ),
+            prompt="help me plan",
+            max_steps=3,
+        )
+        events = [event async for event in stream.event_stream()]
+        final = await stream.collect()
+
+        event_types = [event.type for event in events]
+        approvals = [event for event in events if isinstance(event, AgentToolApprovalEvent)]
+        provider_tool_calls = [
+            event
+            for event in events
+            if isinstance(event, AgentToolCallEvent) and event.tool_call.provider_metadata.get("provider_managed")
+        ]
+        self.assertEqual(final.text, "approved")
+        self.assertIn("tool-approval", event_types)
+        self.assertIn("text-delta", event_types)
+        self.assertLess(event_types.index("tool-approval"), event_types.index("text-delta"))
+        self.assertEqual(len(approvals), 1)
+        self.assertTrue(approvals[0].provider_managed)
+        self.assertEqual([event.tool_call.name for event in provider_tool_calls], ["docs_search", "mcp_list_tools"])
+        self.assertLess(event_types.index("tool-approval"), event_types.index("tool-call"))
+
+    async def test_run_agent_emits_provider_managed_tool_results(self) -> None:
+        result = await run_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted provider tools.",
+                model=ProviderManagedToolResultModel(),
+            ),
+            prompt="search docs",
+        )
+
+        tool_calls = [event for event in result.trace.events if isinstance(event, AgentToolCallEvent)]
+        tool_results = [event for event in result.trace.events if isinstance(event, AgentToolResultEvent)]
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(tool_calls[0].tool_call.name, "docs_search")
+        self.assertEqual(tool_results[0].tool_result.tool_call_id, "mcp_1")
+        self.assertEqual(tool_results[0].tool_result.output, [{"type": "text", "text": "found"}])
+
+    async def test_stream_agent_emits_provider_managed_tool_results(self) -> None:
+        stream = stream_agent(
+            agent=Agent(
+                name="assistant",
+                instructions="Use hosted provider tools.",
+                model=ProviderManagedToolResultModel(),
+            ),
+            prompt="search docs",
+        )
+        events = [event async for event in stream.event_stream()]
+        final = await stream.collect()
+
+        tool_results = [event for event in events if isinstance(event, AgentToolResultEvent)]
+        text_deltas = [event.text_delta for event in events if event.type == "text-delta"]
+
+        self.assertEqual(final.text, "done")
+        self.assertEqual(tool_results[0].tool_result.tool_call_id, "mcp_1")
+        self.assertEqual(text_deltas, ["done"])
 
     async def test_run_agent_trips_input_guardrail_before_model_call(self) -> None:
         model = CountingEchoAgentModel()

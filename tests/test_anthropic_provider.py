@@ -217,6 +217,96 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(assistant_blocks[0]["type"], "thinking")
         self.assertEqual(assistant_blocks[1]["type"], "tool_use")
 
+    async def test_anthropic_maps_hosted_tools_from_tools_set(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+                headers={},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="hello",
+            tools={
+                "lookup": tool(name="lookup", schema=dict[str, str], execute=lambda input: {"ok": True}),
+                "search": anthropic_web_search_tool(max_uses=2),
+                "mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"]),
+                "code": anthropic_code_execution_tool(),
+            },
+        )
+
+        self.assertEqual(requests[0]["tools"][0]["name"], "lookup")
+        self.assertEqual(requests[0]["tools"][1]["type"], "web_search_20250305")
+        self.assertEqual(requests[0]["tools"][2]["type"], "mcp_toolset")
+        self.assertEqual(requests[0]["tools"][2]["mcp_server_name"], "example-mcp")
+        self.assertEqual(requests[0]["tools"][3]["type"], "code_execution_20250825")
+        self.assertEqual(requests[0]["mcp_servers"][0]["name"], "example-mcp")
+        self.assertEqual(requests[0]["mcp_servers"][0]["url"], "https://mcp.example.com")
+
+    async def test_anthropic_rejects_duplicate_mcp_toolsets_for_same_server(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={
+                    "mcp_a": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"]),
+                    "mcp_b": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["sum"]),
+                },
+            )
+
+        self.assertIn('multiple "mcp_toolset" entries', str(context.exception))
+
+    async def test_anthropic_rejects_duplicate_mcp_server_declarations_across_tools_and_provider_options(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={"mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")},
+                provider_options={"mcp_servers": [{"name": "example-mcp", "url": "https://mcp.example.com"}]},
+            )
+
+        self.assertIn('declaring MCP server "example-mcp" in both hosted toolsets', str(context.exception))
+
+    async def test_anthropic_rejects_mixed_first_class_and_raw_mcp_toolsets(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-sonnet-4-20250514"),
+                prompt="hello",
+                tools={"mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp")},
+                provider_options={"tools": [{"type": "mcp_toolset", "mcp_server_name": "backup-mcp"}]},
+            )
+
+        self.assertIn('mixing first-class "mcp_toolset" tools', str(context.exception))
+
     async def test_anthropic_rejects_forced_tool_choice_with_extended_thinking(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -472,6 +562,8 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
                     'data: {"index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":\\"hi\\"}"}}\n\n'
                     'event: content_block_stop\n'
                     'data: {"index":1}\n\n'
+                    'event: content_block_start\n'
+                    'data: {"index":2,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcp_1","is_error":false,"content":[{"type":"text","text":"hi"}]}}\n\n'
                     'event: message_stop\n'
                     'data: {"stop_reason":"end_turn"}\n'
                 ),
@@ -489,8 +581,10 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(events[0].tool_call.provider_metadata["provider_managed"])
         self.assertEqual(events[0].tool_call.provider_metadata["server_name"], "example-mcp")
         self.assertEqual(events[0].tool_call.input, {"value": "hi"})
+        self.assertEqual(events[1].tool_result.tool_call_id, "mcp_1")
+        self.assertFalse(events[1].tool_result.is_error)
 
-    async def test_anthropic_adds_current_mcp_beta_header(self) -> None:
+    async def test_anthropic_adds_legacy_mcp_beta_header_by_default(self) -> None:
         headers_seen: list[dict[str, str]] = []
 
         async def fetch(
@@ -510,6 +604,56 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(headers_seen[0]["anthropic-beta"], "mcp-client-2025-04-04")
+
+    async def test_anthropic_adds_current_mcp_beta_header_when_helper_opts_in(self) -> None:
+        headers_seen: list[dict[str, str]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            headers_seen.append(headers)
+            return FakeResponse(
+                status_code=200,
+                payload={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="use MCP",
+            provider_options={
+                "mcp_servers": [anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", version="current")]
+            },
+        )
+
+        self.assertEqual(headers_seen[0]["anthropic-beta"], "mcp-client-2025-11-20")
+
+    async def test_anthropic_accepts_raw_current_mcp_beta_header_override(self) -> None:
+        headers_seen: list[dict[str, str]] = []
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            headers_seen.append(headers)
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}},
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-4-20250514"),
+            prompt="use MCP",
+            provider_options={
+                "anthropic_mcp_beta": "mcp-client-2025-11-20",
+                "mcp_servers": [{"type": "url", "url": "https://mcp.example.com", "name": "example-mcp"}],
+            },
+        )
+
+        self.assertEqual(headers_seen[0]["anthropic-beta"], "mcp-client-2025-11-20")
+        self.assertNotIn("anthropic_mcp_beta", requests[0])
 
     async def test_anthropic_adds_code_execution_beta_header(self) -> None:
         headers_seen: list[dict[str, str]] = []
@@ -736,11 +880,16 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
     def test_anthropic_hosted_tool_builders(self) -> None:
         web_search = anthropic_web_search_tool(max_uses=2, allowed_domains=["example.com"])
+        current_web_search = anthropic_web_search_tool(tool_type="web_search_20260209")
         mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"])
+        current_mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", version="current")
         code_execution = anthropic_code_execution_tool()
 
-        self.assertEqual(web_search["type"], "web_search_20250305")
-        self.assertEqual(web_search["max_uses"], 2)
-        self.assertEqual(mcp_server["server_name"], "example-mcp")
-        self.assertEqual(mcp_server["tool_configuration"]["allowed_tools"], ["echo"])
-        self.assertEqual(code_execution["type"], "code_execution_20250825")
+        self.assertEqual(web_search.type, "web_search_20250305")
+        self.assertEqual(current_web_search.type, "web_search_20260209")
+        self.assertEqual(web_search.config["max_uses"], 2)
+        self.assertEqual(mcp_server.type, "mcp_toolset")
+        self.assertEqual(mcp_server.config["server"]["name"], "example-mcp")
+        self.assertEqual(mcp_server.config["default_config"]["allowed_tools"], ["echo"])
+        self.assertEqual(current_mcp_server.metadata["anthropic_mcp_beta"], "mcp-client-2025-11-20")
+        self.assertEqual(code_execution.type, "code_execution_20250825")

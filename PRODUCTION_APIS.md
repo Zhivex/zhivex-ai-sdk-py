@@ -7,7 +7,10 @@ Related examples:
 - [`examples/integrations/fastapi_chat_api.py`](./examples/integrations/fastapi_chat_api.py)
 - [`examples/integrations/fastapi_streaming_api.py`](./examples/integrations/fastapi_streaming_api.py)
 - [`examples/integrations/fastapi_gateway_api.py`](./examples/integrations/fastapi_gateway_api.py)
-- [OBSERVABILITY.md](./OBSERVABILITY.md)
+- [docs/GATEWAY.md](./docs/GATEWAY.md)
+- [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
+- [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- [SECURITY.md](./SECURITY.md)
 
 ## Install
 
@@ -29,7 +32,7 @@ make dev
 For production-facing API servers:
 
 - import supported APIs from `zhivex_ai`
-- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex
+- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, and vLLM
 - validate request bodies with Pydantic
 - pass `timeout_ms` explicitly from the API layer into SDK calls
 - map SDK exceptions into stable HTTP error responses
@@ -77,6 +80,20 @@ When you want fallback routing in the API layer:
 - return the selected provider and model in the JSON response
 - treat routing as application policy, not client policy
 
-The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. Anthropic is now part of the tier-1 text-generation story as well.
+The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. Anthropic and vLLM are now part of the tier-1 text-generation story as well.
 
 For the strongest compatibility story, prefer tier-1 providers for the API paths you want to treat as part of your long-term contract.
+
+For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than vLLM custom endpoints. Text, streaming, structured output/tools, embeddings, transcription, and realtime ASR are supported through the OpenAI-compatible server when the served model/task supports them; custom endpoints such as tokenize, rerank, classify, and score should stay behind app-owned code if needed.
+
+## Agent APIs
+
+For agent-backed API servers, keep application policy outside the SDK:
+
+- use `idempotency_key` for retryable user actions
+- attach memory/checkpoint stores when sessions need recovery
+- attach run stores when you need replay, snapshots, or cancellation records
+- keep human approval queues and authorization in application storage
+- pass request ids through agent metadata and logs
+
+See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.

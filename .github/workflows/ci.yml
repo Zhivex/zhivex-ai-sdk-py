@@ -26,6 +26,9 @@ jobs:
       - name: Compile sources
         run: python -m compileall src tests examples
 
+      - name: Check generated support matrix
+        run: python scripts/generate_support_matrix.py --check-readme
+
       - name: Run Ruff
         run: python -m ruff check src tests examples
 
@@ -55,7 +58,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -98,3 +101,6 @@ jobs:
 
       - name: Check distributions
         run: python -m twine check dist/*
+
+      - name: Verify release artifacts
+        run: python scripts/verify_release_artifacts.py --dist-dir dist

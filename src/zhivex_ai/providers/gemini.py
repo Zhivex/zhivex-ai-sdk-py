@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import builtins
 import json
 from copy import deepcopy
 from datetime import datetime
@@ -15,6 +16,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
 from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
+from ..messages import hosted_tool, is_callable_tool_definition
 from ..messages import normalize_finish_reason, validate_file_part, validate_message_parts
 from ..realtime import (
     CallbackRealtimeSession,
@@ -27,12 +29,16 @@ from ..realtime import (
 from ..runtime import with_retry
 from ..schema import create_schema_adapter
 from ..types import (
+    AgentCapabilities,
     AudioFrame,
     AudioInput,
+    BatchesClient,
     CodeExecutionResultPart,
+    ContentPart,
     CountTokensClient,
     CountTokensResult,
     EmbedResult,
+    EmbeddingContent,
     EmbeddingModel,
     FilePart,
     FileSearchBatch,
@@ -46,16 +52,25 @@ from ..types import (
     FilesClient,
     GenerateResult,
     GeneratedCodePart,
+    GeneratedMedia,
     GroundedGenerateResult,
     GroundedLanguageModel,
     GroundingSupport,
     GroundedModelGenerateInput,
     GroundingSource,
+    HostedToolDefinition,
+    ImagePart,
+    ImagesClient,
+    ImagesResult,
+    InteractionsClient,
     LanguageModel,
+    MediaClient,
+    MediaResult,
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
     ProviderFile,
+    ProviderImage,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeGoAwayEvent,
@@ -85,6 +100,8 @@ from ..types import (
     ToolExecutionResult,
     TranscriptionModel,
     TranscriptionOutput,
+    VideoOperation,
+    VideosClient,
     PortableSupport,
 )
 from .base import ProviderAdapter, create_provider_bundle
@@ -104,6 +121,14 @@ GEMINI_CAPABILITIES = ModelCapabilities(
     embeddings=True,
     reasoning=True,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
 )
 
 GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
@@ -120,6 +145,14 @@ GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=True,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
 )
 
 GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
@@ -136,6 +169,7 @@ GEMINI_SPEECH_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=False,
     web_search=False,
+    agent_capabilities=AgentCapabilities(),
 )
 
 GEMINI_TRANSCRIPTION_CAPABILITIES = replace(
@@ -158,6 +192,14 @@ GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
     embeddings=False,
     reasoning=True,
     web_search=False,
+    agent_capabilities=AgentCapabilities(
+        support_tier="tier-b",
+        tool_choice_none=True,
+        hosted_web_search=True,
+        hosted_file_search=True,
+        computer_use=True,
+        code_execution=True,
+    ),
     realtime=True,
     realtime_audio_input=True,
     realtime_audio_output=True,
@@ -183,28 +225,47 @@ _BUILT_IN_TOOL_NAME_MAP = {
 }
 
 
-def gemini_hosted_tool(tool_type: str, /, **config: Any) -> dict[str, Any]:
-    return {tool_type: drop_none(deepcopy(config)) if config else {}}
+def gemini_hosted_tool(
+    tool_type: str,
+    /,
+    *,
+    name: str | None = None,
+    tool_class: str | None = None,
+    **config: Any,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name or tool_type,
+        provider="gemini",
+        type=tool_type,
+        tool_class=tool_class,  # type: ignore[arg-type]
+        config=drop_none(deepcopy(config)) if config else {},
+    )
 
 
-def gemini_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("google_search", excludeDomains=list(exclude_domains or []) if exclude_domains else None, **extra)
+def gemini_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool(
+        "google_search",
+        name="google_search",
+        tool_class="web-search",
+        excludeDomains=list(exclude_domains or []) if exclude_domains else None,
+        **extra,
+    )
 
 
-def gemini_google_maps_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("google_maps", **config)
+def gemini_google_maps_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("google_maps", name="google_maps", **config)
 
 
-def gemini_url_context_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("url_context", **config)
+def gemini_url_context_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("url_context", name="url_context", **config)
 
 
-def gemini_code_execution_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("code_execution", **config)
+def gemini_code_execution_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("code_execution", name="code_execution", tool_class="code-execution", **config)
 
 
-def gemini_computer_use_tool(**config: Any) -> dict[str, Any]:
-    return gemini_hosted_tool("computer_use", **config)
+def gemini_computer_use_tool(**config: Any) -> HostedToolDefinition:
+    return gemini_hosted_tool("computer_use", name="computer_use", tool_class="computer-use", **config)
 
 
 def gemini_file_search_tool(
@@ -212,13 +273,21 @@ def gemini_file_search_tool(
     file_search_store_names: list[str],
     filters: dict[str, Any] | None = None,
     **extra: Any,
-) -> dict[str, Any]:
+) -> HostedToolDefinition:
     return gemini_hosted_tool(
         "file_search",
+        name="file_search",
+        tool_class="file-search",
         fileSearchStoreNames=list(file_search_store_names),
         filters=deepcopy(filters) if filters is not None else None,
         **extra,
     )
+
+
+def _gemini_hosted_payload(tool: HostedToolDefinition) -> dict[str, Any]:
+    canonical = _normalize_builtin_tool_name(tool.type) or tool.type
+    config = deepcopy(tool.config) if isinstance(tool.config, dict) else {}
+    return {canonical: config}
 
 
 def _system_instruction(messages: list[ModelMessage]) -> dict[str, Any] | None:
@@ -263,7 +332,7 @@ def _map_part(part: Any) -> dict[str, Any]:
         thought_signature = part.tool_call.provider_metadata.get("thought_signature")
         payload = {"functionCall": function_call}
         if thought_signature is not None:
-            payload["thought_signature"] = thought_signature
+            payload["thoughtSignature"] = thought_signature
         return payload
     if part.type == "tool-result":
         return {
@@ -380,8 +449,15 @@ def _extract_raw_tools(provider_options: dict[str, Any] | None) -> list[dict[str
 
 def _validate_builtin_tool_combination(function_tools: dict[str, Any] | None, builtin_tools: list[dict[str, Any]]) -> None:
     names = [next(iter(tool.keys())) for tool in builtin_tools if isinstance(tool, dict) and tool]
+    for singleton_name in ("fileSearch", "computerUse", "urlContext"):
+        if names.count(singleton_name) > 1:
+            raise UnsupportedFeatureError(
+                f'Provider "gemini" does not support declaring "{singleton_name}" more than once in a single request.'
+            )
     if "fileSearch" in names and (len(names) > 1 or bool(function_tools)):
         raise UnsupportedFeatureError('Provider "gemini" does not support combining "file_search" with other tools.')
+    if "computerUse" in names and (len(names) > 1 or bool(function_tools)):
+        raise UnsupportedFeatureError('Provider "gemini" does not support combining "computer_use" with other tools.')
     if "urlContext" in names and function_tools:
         raise UnsupportedFeatureError('Provider "gemini" does not support combining "url_context" with function calling.')
 
@@ -434,7 +510,14 @@ def _map_tools(
     force_google_search: bool = False,
 ) -> list[dict[str, Any]] | None:
     mapped: list[dict[str, Any]] = []
-    if tools:
+    callable_tools: dict[str, Any] = {}
+    hosted_tools: list[dict[str, Any]] = []
+    for tool in (tools or {}).values():
+        if is_callable_tool_definition(tool):
+            callable_tools[tool.name] = tool
+        else:
+            hosted_tools.append(_gemini_hosted_payload(tool))
+    if callable_tools:
         mapped.append(
             {
                 "functionDeclarations": [
@@ -447,26 +530,30 @@ def _map_tools(
                             else create_schema_adapter(tool.schema).json_schema()
                         ),
                     }
-                    for tool in tools.values()
+                    for tool in callable_tools.values()
                 ]
             }
         )
     builtin_tools = _extract_builtin_tools(provider_options)
+    builtin_tools = [*hosted_tools, *builtin_tools]
     if force_google_search and not any("googleSearch" in tool for tool in builtin_tools):
         builtin_tools.insert(0, _google_search_tool())
-    _validate_builtin_tool_combination(tools, builtin_tools)
+    _validate_builtin_tool_combination(callable_tools or None, builtin_tools)
     mapped.extend(builtin_tools)
     mapped.extend(_extract_raw_tools(provider_options))
     return mapped or None
 
 
 def _map_tool_config(tools: dict[str, Any] | None, tool_choice: str | ToolChoiceName | None) -> dict[str, Any] | None:
-    if not tools or tool_choice is None or tool_choice == "auto":
+    callable_tools = {name: tool for name, tool in (tools or {}).items() if is_callable_tool_definition(tool)}
+    if not callable_tools or tool_choice is None or tool_choice == "auto":
         return None
     if tool_choice == "none":
         return {"functionCallingConfig": {"mode": "NONE"}}
     if tool_choice == "required":
         return {"functionCallingConfig": {"mode": "ANY"}}
+    if not isinstance(tool_choice, ToolChoiceName):
+        raise UnsupportedFeatureError(f'Provider "gemini" does not support tool_choice={tool_choice!r}.')
     return {
         "functionCallingConfig": {
             "mode": "ANY",
@@ -582,6 +669,77 @@ def _normalize_binary(data: bytes | bytearray | memoryview) -> bytes:
     if isinstance(data, memoryview):
         return data.tobytes()
     return bytes(data)
+
+
+def _is_image_media_type(media_type: str | None) -> bool:
+    return str(media_type or "").lower().startswith("image/")
+
+
+def _is_audio_media_type(media_type: str | None) -> bool:
+    return str(media_type or "").lower().startswith("audio/")
+
+
+def _embedding_content_parts(value: EmbeddingContent) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        return [{"text": value}]
+    if isinstance(value, list):
+        return [_map_part(part) for part in value]
+    return [_map_part(value)]
+
+
+def _normalize_inline_media_part(part: dict[str, Any], *, provider: str) -> GeneratedMedia | None:
+    inline = part.get("inlineData") or part.get("inline_data")
+    if not isinstance(inline, dict) or not inline.get("data"):
+        return None
+    media_type = str(inline.get("mimeType") or inline.get("mime_type") or "application/octet-stream")
+    return GeneratedMedia(
+        provider=provider,
+        b64_data=str(inline.get("data")),
+        media_type=media_type,
+        metadata=part,
+    )
+
+
+def _normalize_video_media(payload: dict[str, Any], *, provider: str) -> list[GeneratedMedia]:
+    response = payload.get("response") if isinstance(payload.get("response"), dict) else payload
+    generate_response: dict[str, Any] = {}
+    if isinstance(response, dict):
+        generate_response = response.get("generateVideoResponse") or response.get("generate_video_response") or response
+    samples = (
+        generate_response.get("generatedSamples")
+        or generate_response.get("generated_samples")
+        or generate_response.get("generatedVideos")
+        or generate_response.get("generated_videos")
+        or []
+    )
+    media: list[GeneratedMedia] = []
+    for item in samples:
+        if not isinstance(item, dict):
+            continue
+        video = item.get("video") if isinstance(item.get("video"), dict) else item
+        uri = video.get("uri") or video.get("gcsUri") or video.get("fileUri") if isinstance(video, dict) else None
+        b64_data = (
+            video.get("bytesBase64Encoded")
+            or video.get("videoBytes")
+            or video.get("video_bytes")
+            if isinstance(video, dict)
+            else None
+        )
+        media.append(
+            GeneratedMedia(
+                provider=provider,
+                b64_data=str(b64_data) if b64_data else None,
+                url=str(uri) if uri else None,
+                file_uri=str(uri) if isinstance(uri, str) and uri.startswith(("gs://", "files/")) else None,
+                media_type=str(video.get("mimeType") or video.get("mime_type") or "video/mp4") if isinstance(video, dict) else "video/mp4",
+                metadata=item,
+            )
+        )
+    return media
+
+
+def _part_thought_signature(part: dict[str, Any]) -> Any:
+    return part.get("thoughtSignature") if part.get("thoughtSignature") is not None else part.get("thought_signature")
 
 
 def _parse_timestamp_ms(value: Any) -> int | None:
@@ -711,7 +869,7 @@ class GeminiFilesClient(FilesClient):
     ) -> ProviderFile:
         del purpose
         raw = _normalize_binary(data)
-        start_body = {"file": {"display_name": filename}}
+        start_body: dict[str, Any] = {"file": {"display_name": filename}}
         if metadata:
             start_body["file"]["custom_metadata"] = metadata
         start = await self.fetch(
@@ -834,6 +992,7 @@ class GeminiCountTokensClient(CountTokensClient):
         built_messages = _build_messages_for_request(prompt=prompt, messages=messages, system=system)
         request = drop_none(
             {
+                "model": f"models/{model_id}",
                 "contents": _map_messages(built_messages),
                 "systemInstruction": _system_instruction(built_messages),
                 "tools": _map_tools(tools, provider_options),
@@ -1000,7 +1159,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         filename: str,
         media_type: str | None = None,
         display_name: str | None = None,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         raw = _normalize_binary(data)
@@ -1059,7 +1218,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         *,
         file_search_store_name: str,
         file_name: str,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         response = await self.fetch(
@@ -1158,7 +1317,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         name: str,
         *,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchDocument:
         del name, custom_metadata, chunking_config
@@ -1168,7 +1327,7 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        query: str | list[str],
+        query: str | builtins.list[str],
         filters: dict[str, Any] | None = None,
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
@@ -1181,8 +1340,8 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        file_names: list[str],
-        custom_metadata: list[dict[str, Any]] | None = None,
+        file_names: builtins.list[str],
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchBatch:
         del file_search_store_name, file_names, custom_metadata, chunking_config
@@ -1440,7 +1599,7 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
 
 
 def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
-    parts = []
+    parts: list[ContentPart] = []
     for part in ((candidate or {}).get("content") or {}).get("parts", []):
         if part.get("text"):
             parts.append(TextPart(text=part["text"]))
@@ -1460,11 +1619,32 @@ def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
                     outcome=result.get("outcome"),
                 )
             )
+        elif part.get("inlineData") or part.get("inline_data"):
+            media = _normalize_inline_media_part(part, provider="gemini")
+            if media is None:
+                continue
+            if _is_image_media_type(media.media_type):
+                parts.append(
+                    ImagePart(
+                        image=media.b64_data or "",
+                        media_type=media.media_type,
+                        provider_metadata=dict(part),
+                    )
+                )
+            else:
+                parts.append(
+                    FilePart(
+                        data=media.b64_data,
+                        media_type=media.media_type,
+                        provider_metadata=dict(part),
+                    )
+                )
         elif part.get("functionCall"):
             call = part["functionCall"]
             provider_metadata: dict[str, Any] = {}
-            if part.get("thoughtSignature") is not None:
-                provider_metadata["thought_signature"] = part["thoughtSignature"]
+            thought_signature = _part_thought_signature(part)
+            if thought_signature is not None:
+                provider_metadata["thought_signature"] = thought_signature
             parts.append(
                 ToolCallPart(
                     tool_call=ToolCall(
@@ -1628,8 +1808,9 @@ class GeminiLanguageModel(LanguageModel):
                     if part.get("functionCall"):
                         call = part["functionCall"]
                         provider_metadata: dict[str, Any] = {}
-                        if part.get("thoughtSignature") is not None:
-                            provider_metadata["thought_signature"] = part["thoughtSignature"]
+                        thought_signature = _part_thought_signature(part)
+                        if thought_signature is not None:
+                            provider_metadata["thought_signature"] = thought_signature
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
                                 id=f'{call["name"]}-0',
@@ -1841,7 +2022,7 @@ class GeminiEmbeddingModel(EmbeddingModel):
     fetch: Fetcher
     capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_CAPABILITIES)
 
-    async def embed(self, values: list[str], options: Any = None) -> EmbedResult:
+    async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
         config = _embedding_request_options(options)
         task_type = config.get("task_type")
         title = config.get("title")
@@ -1856,7 +2037,7 @@ class GeminiEmbeddingModel(EmbeddingModel):
                     headers={"content-type": "application/json"},
                     json_body=drop_none(
                         {
-                            "content": {"parts": [{"text": values[0]}]},
+                            "content": {"parts": _embedding_content_parts(values[0])},
                             "taskType": task_type,
                             "title": title,
                             "outputDimensionality": output_dimensionality,
@@ -1878,7 +2059,7 @@ class GeminiEmbeddingModel(EmbeddingModel):
                 drop_none(
                     {
                         "model": f"models/{self.model_id}",
-                        "content": {"parts": [{"text": value}]},
+                        "content": {"parts": _embedding_content_parts(value)},
                         "taskType": task_types[index] if isinstance(task_types, list) and index < len(task_types) else task_type,
                         "title": titles[index] if isinstance(titles, list) and index < len(titles) else title,
                         "outputDimensionality": output_dimensionality,
@@ -1899,6 +2080,512 @@ class GeminiEmbeddingModel(EmbeddingModel):
             raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
         payload = await response.json()
         return EmbedResult(embeddings=[item["values"] for item in payload.get("embeddings") or []], raw_response=payload)
+
+
+@dataclass(slots=True)
+class GeminiImagesClient(ImagesClient):
+    provider: str
+    api_key: str | None
+    base_url: str
+    fetch: Fetcher
+    vertex: bool = False
+
+    def _url(self, model: str, action: str) -> str:
+        if self.vertex:
+            return f"{self.base_url}/publishers/google/models/{model}:{action}"
+        separator = "&" if "?" in action else "?"
+        return f"{self.base_url}/models/{model}:{action}{separator}key={self.api_key}"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        moderation: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult:
+        del quality, background, output_format, moderation, user
+        model_id = model or "gemini-2.5-flash-image"
+        if model_id.startswith("imagen-"):
+            parameters = dict((extra_body or {}).get("parameters") or {})
+            if size:
+                parameters.setdefault("imageSize", size)
+            response = await self.fetch(
+                self._url(model_id, "predict"),
+                headers={"content-type": "application/json"},
+                json_body={
+                    "instances": [{"prompt": prompt, **dict((extra_body or {}).get("instance") or {})}],
+                    "parameters": parameters,
+                },
+                timeout_ms=None,
+            )
+        else:
+            generation_config = dict((extra_body or {}).get("generationConfig") or {})
+            generation_config.setdefault("responseModalities", ["IMAGE"])
+            if size:
+                generation_config.setdefault("imageConfig", {})["imageSize"] = size
+            response = await self.fetch(
+                self._url(model_id, "generateContent"),
+                headers={"content-type": "application/json"},
+                json_body=drop_none(
+                    {
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": generation_config,
+                        **{key: value for key, value in dict(extra_body or {}).items() if key not in {"generationConfig", "parameters", "instance"}},
+                    }
+                ),
+                timeout_ms=None,
+            )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return self._normalize_images(await response.json())
+
+    async def edit(
+        self,
+        *,
+        prompt: str,
+        image: bytes | bytearray | memoryview | list[bytes | bytearray | memoryview],
+        image_filenames: str | list[str] | None = None,
+        image_media_type: str | list[str] | None = None,
+        model: str | None = None,
+        mask: bytes | bytearray | memoryview | None = None,
+        mask_filename: str | None = None,
+        mask_media_type: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        moderation: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult:
+        del image_filenames, mask_filename, quality, background, output_format, moderation, user
+        model_id = model or "gemini-2.5-flash-image"
+        if model_id.startswith("imagen-"):
+            raise UnsupportedFeatureError('Provider "gemini" exposes Imagen generation through images().generate; edit uses Gemini image models.')
+        images = image if isinstance(image, list) else [image]
+        media_types = image_media_type if isinstance(image_media_type, list) else [image_media_type] * len(images)
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        for index, item in enumerate(images):
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": media_types[index] or "image/png",
+                        "data": base64.b64encode(_normalize_binary(item)).decode("ascii"),
+                    }
+                }
+            )
+        if mask is not None:
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": mask_media_type or "image/png",
+                        "data": base64.b64encode(_normalize_binary(mask)).decode("ascii"),
+                    }
+                }
+            )
+        generation_config = dict((extra_body or {}).get("generationConfig") or {})
+        generation_config.setdefault("responseModalities", ["IMAGE"])
+        if size:
+            generation_config.setdefault("imageConfig", {})["imageSize"] = size
+        response = await self.fetch(
+            self._url(model_id, "generateContent"),
+            headers={"content-type": "application/json"},
+            json_body=drop_none(
+                {
+                    "contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": generation_config,
+                    **{key: value for key, value in dict(extra_body or {}).items() if key != "generationConfig"},
+                }
+            ),
+            timeout_ms=None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return self._normalize_images(await response.json())
+
+    async def variation(
+        self,
+        *,
+        image: bytes | bytearray | memoryview,
+        image_filename: str | None = None,
+        image_media_type: str | None = None,
+        model: str | None = None,
+        size: str | None = None,
+        quality: str | None = None,
+        background: str | None = None,
+        output_format: str | None = None,
+        user: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ImagesResult:
+        del image_filename
+        prompt = str((extra_body or {}).get("prompt") or "Create a variation of this image.")
+        return await self.edit(
+            prompt=prompt,
+            image=image,
+            image_media_type=image_media_type,
+            model=model,
+            size=size,
+            quality=quality,
+            background=background,
+            output_format=output_format,
+            user=user,
+            extra_body={key: value for key, value in dict(extra_body or {}).items() if key != "prompt"},
+        )
+
+    def _normalize_images(self, payload: dict[str, Any]) -> ImagesResult:
+        images: list[ProviderImage] = []
+        for prediction in payload.get("predictions") or []:
+            if not isinstance(prediction, dict):
+                continue
+            b64_json = prediction.get("bytesBase64Encoded") or prediction.get("imageBytes") or prediction.get("image", {}).get("imageBytes")
+            images.append(
+                ProviderImage(
+                    provider=self.provider,
+                    b64_json=str(b64_json) if b64_json else None,
+                    media_type=prediction.get("mimeType") or "image/png",
+                    revised_prompt=prediction.get("prompt") or prediction.get("revisedPrompt"),
+                    metadata=dict(prediction),
+                )
+            )
+        for candidate in payload.get("candidates") or []:
+            for part in ((candidate.get("content") or {}).get("parts") or []):
+                media = _normalize_inline_media_part(part, provider=self.provider)
+                if media and _is_image_media_type(media.media_type):
+                    images.append(
+                        ProviderImage(
+                            provider=self.provider,
+                            b64_json=media.b64_data,
+                            media_type=media.media_type,
+                            metadata=dict(part),
+                        )
+                    )
+        return ImagesResult(images=images, raw_response=payload)
+
+
+@dataclass(slots=True)
+class GeminiVideosClient(VideosClient):
+    provider: str
+    api_key: str | None
+    base_url: str
+    fetch: Fetcher
+    vertex: bool = False
+
+    def _url(self, model: str, action: str) -> str:
+        if self.vertex:
+            return f"{self.base_url}/publishers/google/models/{model}:{action}"
+        return f"{self.base_url}/models/{model}:{action}?key={self.api_key}"
+
+    def _operation_url(self, name: str) -> str:
+        if name.startswith("http://") or name.startswith("https://"):
+            return name
+        if self.vertex:
+            return f"{self.base_url}/{name}"
+        return f"{self.base_url}/{name}?key={self.api_key}"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        config: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> VideoOperation:
+        response = await self.fetch(
+            self._url(model, "predictLongRunning"),
+            headers={"content-type": "application/json"},
+            json_body={
+                "instances": [{"prompt": prompt, **dict((extra_body or {}).get("instance") or {})}],
+                "parameters": dict(config or {}),
+                **{key: value for key, value in dict(extra_body or {}).items() if key != "instance"},
+            },
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return self._normalize_operation(await response.json())
+
+    async def get_operation(self, name: str, options: RetryOptions | None = None) -> VideoOperation:
+        response = await self.fetch(
+            self._operation_url(name),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return self._normalize_operation(await response.json())
+
+    async def wait_operation(
+        self,
+        name: str,
+        *,
+        poll_interval_ms: int = 10_000,
+        timeout_ms: int | None = None,
+    ) -> VideoOperation:
+        deadline = None if timeout_ms is None else (asyncio.get_running_loop().time() + timeout_ms / 1000)
+        while True:
+            operation = await self.get_operation(name)
+            if operation.done:
+                return operation
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f'Waiting for video operation "{name}" timed out.')
+            await asyncio.sleep(max(poll_interval_ms, 1) / 1000)
+
+    async def download(self, uri: str, options: RetryOptions | None = None) -> bytes:
+        response = await self.fetch(
+            uri if uri.startswith("http") else self._operation_url(uri),
+            method="GET",
+            headers={"content-type": "application/octet-stream"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        if hasattr(response, "content"):
+            content = response.content
+            if isinstance(content, bytes):
+                return content
+        return await response.read() if hasattr(response, "read") else (await response.text()).encode("utf-8")
+
+    def _normalize_operation(self, payload: dict[str, Any]) -> VideoOperation:
+        return VideoOperation(
+            name=str(payload.get("name") or ""),
+            done=bool(payload.get("done")),
+            response=dict(payload.get("response") or {}) if isinstance(payload.get("response"), dict) else payload.get("response"),
+            error=dict(payload.get("error") or {}) if isinstance(payload.get("error"), dict) else payload.get("error"),
+            raw_response={**payload, "generated_media": _normalize_video_media(payload, provider=self.provider)},
+        )
+
+
+@dataclass(slots=True)
+class GeminiMediaClient(MediaClient):
+    provider: str
+    api_key: str | None
+    base_url: str
+    fetch: Fetcher
+    vertex: bool = False
+
+    def _url(self, model: str) -> str:
+        if self.vertex:
+            return f"{self.base_url}/publishers/google/models/{model}:generateContent"
+        return f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
+
+    async def generate_music(
+        self,
+        *,
+        prompt: str,
+        model: str = "lyria-3-clip-preview",
+        parts: list[Any] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        options: RetryOptions | None = None,
+    ) -> MediaResult:
+        request_parts = [{"text": prompt}, *[_map_part(part) for part in (parts or [])]]
+        response = await self.fetch(
+            self._url(model),
+            headers={"content-type": "application/json"},
+            json_body=drop_none(
+                {
+                    "contents": [{"role": "user", "parts": request_parts}],
+                    **dict(provider_options or {}),
+                }
+            ),
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"{self.provider} request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        payload = await response.json()
+        media: list[GeneratedMedia] = []
+        text_parts: list[str] = []
+        for candidate in payload.get("candidates") or []:
+            for part in ((candidate.get("content") or {}).get("parts") or []):
+                if part.get("text"):
+                    text_parts.append(str(part["text"]))
+                item = _normalize_inline_media_part(part, provider=self.provider)
+                if item and _is_audio_media_type(item.media_type):
+                    media.append(item)
+        return MediaResult(media=media, text="".join(text_parts) or None, raw_response=payload)
+
+
+@dataclass(slots=True)
+class GeminiBatchesClient(BatchesClient):
+    provider: str
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _url(self, path: str) -> str:
+        separator = "&" if "?" in path else "?"
+        return f"{self.base_url}/{path.lstrip('/')}{separator}key={self.api_key}"
+
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        model = str(body.get("model") or body.get("model_id") or "gemini-2.5-flash")
+        payload = {key: value for key, value in body.items() if key not in {"model", "model_id"}}
+        response = await self.fetch(
+            self._url(f"models/{model}:batchGenerateContent"),
+            headers={"content-type": "application/json"},
+            json_body=payload,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return await response.json()
+
+    async def create_embeddings(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        model = str(body.get("model") or body.get("model_id") or "gemini-embedding-001")
+        payload = {key: value for key, value in body.items() if key not in {"model", "model_id"}}
+        response = await self.fetch(
+            self._url(f"models/{model}:batchEmbedContents"),
+            headers={"content-type": "application/json"},
+            json_body=payload,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return await response.json()
+
+    async def retrieve(self, batch_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await self.fetch(
+            self._url(batch_id),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return await response.json()
+
+    async def list(
+        self,
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        query = urlencode(drop_none({"pageToken": after, "pageSize": limit}))
+        response = await self.fetch(
+            self._url(f"batches{('?' + query) if query else ''}"),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return await response.json()
+
+    async def cancel(self, batch_id: str, options: RetryOptions | None = None) -> dict[str, Any]:
+        response = await self.fetch(
+            self._url(f"{batch_id}:cancel"),
+            headers={"content-type": "application/json"},
+            json_body={},
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return await response.json()
+
+    async def wait(
+        self,
+        batch_id: str,
+        *,
+        poll_interval_ms: int = 10_000,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        deadline = None if timeout_ms is None else (asyncio.get_running_loop().time() + timeout_ms / 1000)
+        while True:
+            batch = await self.retrieve(batch_id)
+            state = str((batch.get("metadata") or {}).get("state") or batch.get("state") or "").lower()
+            if batch.get("done") or state in {"job_state_succeeded", "job_state_failed", "job_state_cancelled", "job_state_expired"}:
+                return batch
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f'Waiting for Gemini batch "{batch_id}" timed out.')
+            await asyncio.sleep(max(poll_interval_ms, 1) / 1000)
+
+
+@dataclass(slots=True)
+class GeminiInteractionsClient(InteractionsClient):
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _url(self, path: str, params: dict[str, Any] | None = None) -> str:
+        query = {"key": self.api_key, **dict(params or {})}
+        return f"{self.base_url}/{path.lstrip('/')}?{urlencode(query)}"
+
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        payload = deepcopy(body)
+        agent = str(payload.get("agent") or "")
+        if agent.startswith("deep-research"):
+            payload.setdefault("background", True)
+            payload.setdefault("store", True)
+        response = await self.fetch(
+            self._url("interactions", {"alt": "sse"} if payload.get("stream") else None),
+            headers={"content-type": "application/json"},
+            json_body=payload,
+            timeout_ms=options.timeout_ms if options else None,
+            stream=bool(payload.get("stream")),
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return {"stream": response} if payload.get("stream") else await response.json()
+
+    async def retrieve(
+        self,
+        interaction_id: str,
+        *,
+        stream: bool | None = None,
+        last_event_id: str | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        response = await self.fetch(
+            self._url(
+                f"interactions/{interaction_id}",
+                drop_none({"stream": stream, "last_event_id": last_event_id, "alt": "sse" if stream else None}),
+            ),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+            stream=bool(stream),
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Gemini request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
+        return {"stream": response} if stream else await response.json()
+
+    async def stream(
+        self,
+        interaction_id: str,
+        *,
+        last_event_id: str | None = None,
+        options: RetryOptions | None = None,
+    ) -> dict[str, Any]:
+        return await self.retrieve(interaction_id, stream=True, last_event_id=last_event_id, options=options)
+
+    async def wait(
+        self,
+        interaction_id: str,
+        *,
+        poll_interval_ms: int = 10_000,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        deadline = None if timeout_ms is None else (asyncio.get_running_loop().time() + timeout_ms / 1000)
+        while True:
+            interaction = await self.retrieve(interaction_id)
+            status = str(interaction.get("status") or "").lower()
+            if status in {"completed", "failed", "cancelled", "expired"}:
+                return interaction
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f'Waiting for Gemini interaction "{interaction_id}" timed out.')
+            await asyncio.sleep(max(poll_interval_ms, 1) / 1000)
 
 
 @dataclass(slots=True)
@@ -1998,7 +2685,12 @@ def create_gemini(
     auth_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ):
-    resolved_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+    resolved_key = (
+        api_key
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not resolved_key:
         raise ConfigurationError("Missing Gemini API key.")
     requester = fetch or default_fetch
@@ -2047,10 +2739,40 @@ def create_gemini(
             base_url=base,
             fetch=requester,
         ),
+        images_client_factory=lambda: GeminiImagesClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        videos_client_factory=lambda: GeminiVideosClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        media_client_factory=lambda: GeminiMediaClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        batches_client_factory=lambda: GeminiBatchesClient(
+            provider="gemini",
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        interactions_client_factory=lambda: GeminiInteractionsClient(
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
     )
     return create_provider_bundle(
         name="gemini",
         native=native,
+        agent_capabilities=GEMINI_CAPABILITIES.agent_capabilities or AgentCapabilities(),
         portable_support=PortableSupport(
             text_generation=True,
             streaming=True,
