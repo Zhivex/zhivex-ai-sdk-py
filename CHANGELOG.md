@@ -39,6 +39,29 @@ Related documents:
 
 - None.
 
+## 0.6.1
+
+### Added
+
+- None.
+
+### Changed
+
+- Prepared a patch-release evidence pass for the `0.6.x` beta line, including fresh local validation, artifact verification, support-matrix review, and documented live-smoke skips.
+- Updated release instructions so the current package version and tag examples point at `0.6.1`.
+
+### Fixed
+
+- Corrected stale release-guide references that still described the old `0.5.0` publishing path.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.6.0
 
 ### Added
