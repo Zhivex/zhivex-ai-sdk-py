@@ -56,6 +56,7 @@ Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1
 ## Capability Notes
 
 - OpenAI, Azure OpenAI, Gemini, Vertex, and vLLM expose portable text, streaming, structured output, and tool paths.
+- Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, and Vector Store / File Search management through `provider.native` / bundle helper methods.
 - Anthropic is tier-1 for portable text-generation paths; embeddings, transcription, and speech are outside the current Anthropic SDK surface.
 - Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, and Veo-style workflows through native clients rather than the stable portable contract.
 - vLLM support depends on the tasks served by the local OpenAI-compatible server. Custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK contract.

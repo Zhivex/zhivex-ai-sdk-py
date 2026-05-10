@@ -39,16 +39,18 @@ Related documents:
 
 - None.
 
-## 0.6.1
+## 0.7.0
 
 ### Added
 
-- None.
+- Azure OpenAI now exposes beta native lifecycle clients for `provider.responses()`, `provider.conversations()`, and `provider.file_search_stores()` through the existing OpenAI-compatible `/openai/v1` route and Azure `api-key` authentication.
 
 ### Changed
 
-- Prepared a patch-release evidence pass for the `0.6.x` beta line, including fresh local validation, artifact verification, support-matrix review, and documented live-smoke skips.
-- Updated release instructions so the current package version and tag examples point at `0.6.1`.
+- Updated the generated provider support matrix so Azure OpenAI reports native File Search, Responses, and Conversations support while keeping OpenAI-only clients such as Containers and Skills out of the Azure bundle.
+- Prepared release evidence for the beta line, including fresh local validation, artifact verification, support-matrix review, and documented live-smoke skips.
+- Updated release instructions so the current package version and tag examples point at `0.7.0`.
+- Bumped the package version to `0.7.0`.
 
 ### Fixed
 

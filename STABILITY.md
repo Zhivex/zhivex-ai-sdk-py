@@ -92,6 +92,8 @@ In this repository, tier-1 means the provider is part of the stable surface stor
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 
+Azure OpenAI is tier-1 for the portable production surface. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
+
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 
 Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind. Kimi/Moonshot is a compatibility provider: its native Chat Completions, Files, Batch, token estimation, and Formulas paths are useful, but they are not part of the tier-1 portable contract.

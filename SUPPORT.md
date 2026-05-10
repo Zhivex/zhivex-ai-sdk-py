@@ -55,6 +55,8 @@ The current tier-1 providers for the stable production API story are:
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. Embeddings, transcription, and speech remain unavailable on the Anthropic provider path here today.
 
+Azure OpenAI is tier-1 for the portable production surface and exposes beta native lifecycle clients for Responses, Conversations, and Vector Store / File Search management through the versionless `/openai/v1` route. OpenAI-only native clients such as Containers, Skills, Uploads, Moderations, Images, and Batches are not exposed on the Azure provider bundle in this release.
+
 Gemini and Vertex are tier-1 for the portable production surface. Google-specific media generation, Batch API, Interactions API, Deep Research, and Veo operation workflows are exposed through native provider clients rather than the portable contract.
 
 vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
