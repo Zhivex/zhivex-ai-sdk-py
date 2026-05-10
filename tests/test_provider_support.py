@@ -64,8 +64,8 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["vertex"], ("portable", True))
         self.assertEqual(tiers["bedrock"], ("native-only", False))
         self.assertEqual(tiers["openrouter"], ("native-only", False))
-        self.assertEqual(tiers["qwen"], ("compatibility", False))
-        self.assertEqual(tiers["kimi"], ("compatibility", False))
+        self.assertEqual(tiers["qwen"], ("portable", True))
+        self.assertEqual(tiers["kimi"], ("portable", True))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
         self.assertEqual(tiers["vllm"], ("portable", True))
         self.assertFalse(rows[[row.provider for row in rows].index("kimi")].portable_support.embeddings)
@@ -109,6 +109,8 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(agent["qwen"].support_tier, "tier-b")
         self.assertTrue(agent["qwen"].remote_mcp)
         self.assertTrue(agent["qwen"].code_execution)
+        self.assertTrue(native["qwen"].files)
+        self.assertTrue(native["qwen"].batches)
         self.assertTrue(native["qwen"].responses)
         self.assertFalse(native["qwen"].file_search)
         self.assertEqual(agent["kimi"].support_tier, "tier-b")
@@ -147,11 +149,13 @@ class ProviderSupportTests(TestCase):
                 create_anthropic(api_key="test"),
                 create_gemini(api_key="test"),
                 create_vertex(access_token="test", project_id="project"),
+                create_qwen(api_key="test"),
+                create_kimi(api_key="test"),
                 create_vllm(api_key="test"),
             ]
         )
 
-        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex", "vllm"))
+        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex", "qwen", "kimi", "vllm"))
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))

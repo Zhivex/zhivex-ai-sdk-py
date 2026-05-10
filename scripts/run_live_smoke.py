@@ -15,6 +15,7 @@ from zhivex_ai import (
     create_anthropic,
     create_azure_openai,
     create_gemini,
+    create_kimi,
     create_ollama,
     create_openai,
     create_qwen,
@@ -251,7 +252,7 @@ async def _run_qwen() -> tuple[str, bool, str]:
         responses_base_url=responses_base_url,
     )
     result = await generate_text(
-        model=provider.native.language_model(model),
+        model=provider(model),
         prompt="Reply with exactly QWEN_SMOKE_OK.",
         max_tokens=20,
         max_retries=1,
@@ -311,6 +312,26 @@ async def _run_qwen() -> tuple[str, bool, str]:
     return ("qwen", True, ", ".join(details))
 
 
+async def _run_kimi() -> tuple[str, bool, str]:
+    model = os.getenv("ZHIVEX_SMOKE_KIMI_MODEL")
+    api_key = os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY")
+    base_url = os.getenv("ZHIVEX_SMOKE_KIMI_BASE_URL") or os.getenv("MOONSHOT_BASE_URL")
+    if not api_key or not model:
+        return ("kimi", False, "skip: set MOONSHOT_API_KEY (or KIMI_API_KEY) and ZHIVEX_SMOKE_KIMI_MODEL")
+    provider = create_kimi(api_key=api_key, base_url=base_url)
+    result = await generate_text(
+        model=provider(model),
+        prompt="Reply with exactly KIMI_SMOKE_OK.",
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if result.text.strip() != "KIMI_SMOKE_OK.":
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    return ("kimi", True, f"ok: {model}")
+
+
 async def _run_vllm() -> tuple[str, bool, str]:
     model = os.getenv("ZHIVEX_SMOKE_VLLM_MODEL")
     base_url = os.getenv("ZHIVEX_SMOKE_VLLM_BASE_URL", "http://localhost:8000/v1")
@@ -349,6 +370,8 @@ async def main() -> int:
         checks.append(_run_ollama)
     if _want("qwen", selected):
         checks.append(_run_qwen)
+    if _want("kimi", selected):
+        checks.append(_run_kimi)
     if _want("vllm", selected):
         checks.append(_run_vllm)
 

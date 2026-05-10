@@ -102,6 +102,8 @@ These providers back the stable surface for production API work in this SDK toda
 - `azure-openai`
 - `gemini`
 - `vertex`
+- `qwen`
+- `kimi`
 - `vllm`
 
 ### Portable Support
@@ -112,11 +114,11 @@ These providers back the stable surface for production API work in this SDK toda
 | azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
 | gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| kimi | compatibility | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
+| kimi | portable | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No |
 | ollama | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
 | openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | openrouter | native-only | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
-| qwen | compatibility | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| qwen | portable | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
 | vertex | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | vllm | portable | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No |
 
@@ -132,7 +134,7 @@ These providers back the stable surface for production API work in this SDK toda
 | ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
 | openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No |
+| qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No |
 | vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
 | vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
 
@@ -165,15 +167,15 @@ Tool support now follows the same rule everywhere:
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
 - Anthropic is part of the tier-1 text-generation story in this SDK. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
 - Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
-- OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
+- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM now participate in the tier-1 portable text-generation contract.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
-- Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
-- Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
-- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: text, tools, built-in web/code/file/MCP tools, embeddings, and Qwen3-ASR run through compatible endpoints; Qwen speech synthesis uses DashScope's multimodal generation endpoint. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
-- Kimi/Moonshot uses the official Chat Completions route for native text generation. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
-- Kimi native support includes Moonshot Files, Batch, token estimation, K2.6/K2.5 `thinking`, image/video chat inputs, and the beta `provider.formulas()` client for official tools such as `moonshot/web-search:latest`.
+- Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
+- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
+- Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client.
+- Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
+- Kimi native support includes Moonshot Files, Batch, token estimation, K2.6/K2.5 `thinking`, image/video chat inputs, and the beta `provider.formulas()` client for official tools such as `moonshot/web-search:latest`; embeddings, speech, and transcription are not claimed for Kimi.
 - Ollama defaults to `base_url="http://localhost:11434/v1"` and `api_key="ollama"` for local compatibility setups. Use `provider.native.*` for Ollama examples and override `OLLAMA_API_KEY` only when you front it with a proxy or remote gateway that requires auth.
 
 ## Installation
@@ -1049,7 +1051,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"`; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Pass `base_url=...` or `responses_base_url=...` only for custom gateways or advanced endpoint overrides. Qwen remains a compatibility provider in this SDK: use `provider.native.*` for Responses tools/MCP, embeddings, Qwen3-ASR, and DashScope TTS until it receives the portable badge.
+`create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"`; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Pass `base_url=...` or `responses_base_url=...` only for custom gateways or advanced endpoint overrides. Use `provider("qwen-model")` for the portable text/streaming/tools/structured-output path, and `provider.native.*` for hosted tools/MCP, raw Responses settings, Files, Batch, Qwen3-ASR, and DashScope TTS.
 
 See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen text, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
 
@@ -1504,14 +1506,15 @@ export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
 export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
+export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
 export ZHIVEX_SMOKE_VLLM_MODEL=your-vllm-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
-export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,vllm`. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

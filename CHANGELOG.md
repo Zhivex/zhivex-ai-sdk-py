@@ -39,6 +39,32 @@ Related documents:
 
 - None.
 
+## 0.8.0
+
+### Added
+
+- Qwen and Kimi/Moonshot are now tier-1 portable providers for text generation, streaming, structured output, and callable tools through `provider("model-id")`.
+- Qwen now exposes OpenAI-compatible native Files and Batch clients through `provider.files()` and `provider.batches()` while keeping File Search as a hosted Responses tool with `vector_store_ids`.
+- Tier-1 examples, live smoke configuration, provider support metadata, and shared contract tests now include Qwen and Kimi.
+
+### Changed
+
+- Bumped the package version to `0.8.0`.
+- Regenerated the provider support matrix for the expanded tier-1 set.
+- Kept Qwen hosted tools, Qwen ASR/TTS, Kimi Files/Batch/token counting, and Kimi Formulas as native/provider-specific beta surfaces rather than portable guarantees.
+
+### Fixed
+
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.7.0
 
 ### Added

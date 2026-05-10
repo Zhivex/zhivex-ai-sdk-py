@@ -25,7 +25,7 @@ Related documents:
 - Beta agent platform helpers cover durable run stores, native subagent tools, replay/evaluation reports, hierarchical trace artifacts, run-tree cancellation, redaction policies, and budget guards.
 - Beta workflow agents cover declarative sequential, parallel, and loop orchestration with shared `session.state`, app-owned resume, structured output validation, document artifacts, replay, and evaluation as documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md); CLI/UI/deploy automation is intentionally outside this beta surface.
 - Beta Google native media/job clients cover Gemini/Vertex image, video, music/audio, batch, and interaction workflows where the official Google endpoints expose them. Preview Google models remain subject to Google availability, quota, and deprecation windows.
-- Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Kimi remains a compatibility provider rather than a tier-1 portable provider.
+- Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Portable Kimi is tier-1 for text, streaming, structured output, and callable tools.
 - vLLM is supported as a tier-1 provider for SDK primitives exposed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR support depends on the model/task served by vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the SDK support contract.
 - Tier-1 provider claims are backed by generated support metadata, shared offline contract tests, provider-specific tests, and optional live smoke documentation in [docs/providers/tier-1.md](./docs/providers/tier-1.md).
 - The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
@@ -51,6 +51,8 @@ The current tier-1 providers for the stable production API story are:
 - Azure OpenAI
 - Gemini
 - Vertex
+- Qwen
+- Kimi/Moonshot
 - vLLM
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. Embeddings, transcription, and speech remain unavailable on the Anthropic provider path here today.
@@ -59,15 +61,15 @@ Azure OpenAI is tier-1 for the portable production surface and exposes beta nati
 
 Gemini and Vertex are tier-1 for the portable production surface. Google-specific media generation, Batch API, Interactions API, Deep Research, and Veo operation workflows are exposed through native provider clients rather than the portable contract.
 
+Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. `create_qwen(region="intl" | "us" | "cn")` maps to Alibaba Cloud Model Studio's documented OpenAI-compatible regions, while `base_url` and `responses_base_url` remain explicit overrides for custom gateways. Qwen hosted web/file/code/MCP tool payloads, raw Responses access, Files, Batch, Qwen3-ASR, and DashScope TTS remain native/provider-specific beta surfaces. File Search is exposed as a hosted Responses tool with `vector_store_ids`; this SDK does not expose Qwen file-search lifecycle clients.
+
+Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through the official Chat Completions API. It does not claim portable embeddings, speech, or transcription support. Files, Batch, token estimation, and Formulas remain beta native clients.
+
 vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
-
-Qwen is supported as a compatibility provider through `provider.native`. `create_qwen(region="intl" | "us" | "cn")` maps to Alibaba Cloud Model Studio's documented OpenAI-compatible regions, while `base_url` and `responses_base_url` remain explicit overrides for custom gateways. Qwen exposes a raw `provider.responses()` client plus hosted web/file/code/MCP tool payloads for Responses, embeddings, Qwen3-ASR, and DashScope TTS through native paths. It does not expose file-search lifecycle clients or carry the portable badge yet.
-
-Kimi/Moonshot is supported as a compatibility provider through `provider.native`. Its native text generation uses the official Chat Completions API, with Files, Batch, token estimation, and Formulas exposed as beta native clients.
 
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.
 
-DeepSeek is deferred for Python GA and is not part of the tier-1 provider contract.
+DeepSeek is deferred and is not part of the tier-1 provider contract.
 
 ## Upgrade expectations
 

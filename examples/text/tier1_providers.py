@@ -16,7 +16,9 @@ from zhivex_ai import (  # noqa: E402
     create_anthropic,
     create_azure_openai,
     create_gemini,
+    create_kimi,
     create_openai,
+    create_qwen,
     create_vertex,
     create_vllm,
     generate_text,
@@ -43,6 +45,10 @@ def _configured_runs() -> list[tuple[str, Callable[[], Any], str]]:
         os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")
     ) and os.getenv("ZHIVEX_EXAMPLE_VERTEX_MODEL"):
         runs.append(("vertex", create_vertex, os.environ["ZHIVEX_EXAMPLE_VERTEX_MODEL"]))
+    if (os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY")) and os.getenv("ZHIVEX_EXAMPLE_QWEN_MODEL"):
+        runs.append(("qwen", create_qwen, os.environ["ZHIVEX_EXAMPLE_QWEN_MODEL"]))
+    if (os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY")) and os.getenv("ZHIVEX_EXAMPLE_KIMI_MODEL"):
+        runs.append(("kimi", create_kimi, os.environ["ZHIVEX_EXAMPLE_KIMI_MODEL"]))
     if os.getenv("ZHIVEX_EXAMPLE_VLLM_MODEL"):
         runs.append(("vllm", create_vllm, os.environ["ZHIVEX_EXAMPLE_VLLM_MODEL"]))
     return runs
