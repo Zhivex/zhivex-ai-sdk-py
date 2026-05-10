@@ -85,8 +85,8 @@ python3 -m twine upload dist/*
 Or use the GitHub Actions workflow by pushing a version tag:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.7.0
+git push origin v0.7.0
 ```
 
 ## 5. Trusted Publishing
@@ -99,8 +99,8 @@ If you want passwordless publishing from GitHub Actions:
 
 ## Notes
 
-- Current package version in `pyproject.toml`: `0.5.0`.
-- If PyPI currently has `0.4.0`, the next public release should be `0.5.0`.
+- Current package version in `pyproject.toml`: `0.7.0`.
+- The next release candidate is `0.7.0`; confirm PyPI/TestPyPI state immediately before publishing.
 - The package name on PyPI must be available. Confirm it before publishing.
 - Repository metadata and badges should point to `zhivex-ai-sdk-py`.
 - Do not publish a release that changes the documented stable surface without updating `CHANGELOG.md` and the release notes with migration guidance.

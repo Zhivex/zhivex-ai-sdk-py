@@ -4,7 +4,7 @@ import os
 import json
 from typing import Any
 
-from .._http import Fetcher
+from .._http import Fetcher, default_fetch
 from ..errors import ConfigurationError
 from ..messages import (
     get_last_provider_data_entry,
@@ -28,7 +28,13 @@ from ..types import (
     ToolCall,
 )
 from .base import create_provider_bundle
-from .openai_compat import _parse_provider_data_value, create_openai_compatible_provider
+from .openai_compat import (
+    OpenAICompatibleConversationsClient,
+    OpenAICompatibleFileSearchStoresClient,
+    OpenAICompatibleResponsesClient,
+    _parse_provider_data_value,
+    create_openai_compatible_provider,
+)
 
 
 def azure_openai_web_search_tool(
@@ -304,12 +310,13 @@ def create_azure_openai(
         raise ConfigurationError("Missing Azure OpenAI endpoint.")
     # Azure OpenAI v1 uses versionless /openai/v1 endpoints and rejects api-version query params.
     base_url = f"{resolved_endpoint.rstrip('/')}/openai/v1"
+    requester = fetch or default_fetch
     native = create_openai_compatible_provider(
         provider_name="azure-openai",
         env_var="AZURE_OPENAI_API_KEY",
         api_key=resolved_key,
         base_url=base_url,
-        fetch=fetch,
+        fetch=requester,
         auth_header="api-key",
         auth_prefix="",
         supports_audio=True,
@@ -319,6 +326,32 @@ def create_azure_openai(
         browser_token_url=browser_token_url,
         realtime_connection_factory=realtime_connection_factory,
         default_grounding_tool={"type": "web_search_preview"},
+        file_search_stores_client_factory=lambda: OpenAICompatibleFileSearchStoresClient(
+            provider="azure-openai",
+            api_key=resolved_key,
+            base_url=base_url,
+            fetch=requester,
+            auth_header="api-key",
+            auth_prefix="",
+        ),
+        responses_client_factory=lambda: OpenAICompatibleResponsesClient(
+            provider="azure-openai",
+            model_id="",
+            api_key=resolved_key,
+            base_url=base_url,
+            fetch=requester,
+            auth_header="api-key",
+            auth_prefix="",
+        ),
+        conversations_client_factory=lambda: OpenAICompatibleConversationsClient(
+            provider="azure-openai",
+            model_id="",
+            api_key=resolved_key,
+            base_url=base_url,
+            fetch=requester,
+            auth_header="api-key",
+            auth_prefix="",
+        ),
     )
     return create_provider_bundle(
         name="azure-openai",

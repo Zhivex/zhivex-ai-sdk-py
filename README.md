@@ -125,7 +125,7 @@ These providers back the stable surface for production API work in this SDK toda
 | Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| azure-openai | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| azure-openai | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes |
 | bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
 | gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
 | kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
@@ -167,7 +167,7 @@ Tool support now follows the same rule everywhere:
 - Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
 - OpenAI, Anthropic, and Azure OpenAI currently cover the broadest production text-generation API paths in this SDK.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
-- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, but this SDK does not currently mirror OpenAI's native lifecycle clients for vector-store/file-search administration, Responses, or Conversations on the Azure provider bundle.
+- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Bedrock and OpenRouter remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen, Kimi, and Ollama are compatibility providers in this refactor. They remain usable through native adapters, but they do not receive the portable badge.
@@ -1165,7 +1165,7 @@ Adapters may also expose optional factories such as:
 - `provider.responses()`
 - `provider.conversations()`
 
-OpenAI providers may additionally expose low-level lifecycle clients:
+OpenAI and Azure OpenAI providers may additionally expose low-level lifecycle clients:
 
 - `provider.responses()` for raw Responses API operations such as `create`, `create_background`, `retrieve`, `wait`, `cancel`, `compact`, and `list_input_items`
 - `provider.conversations()` for raw Conversations API operations such as `create`, `retrieve`, `update`, `create_item`, and `list_items`
@@ -1212,6 +1212,7 @@ Notes:
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
 - `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
+- `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
 - `create_vertex().native.language_model(...)` and `create_vertex().native.grounded_language_model(...)` also accept `provider_options={"vertex_ai_search": {...}}` and `provider_options={"external_search": {...}}`, which are normalized into the Vertex tool payloads automatically.
 - `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.

@@ -66,6 +66,107 @@ class AzureOpenAIProviderTests(TestCase):
 
 
 class AzureOpenAIHostedToolTests(IsolatedAsyncioTestCase):
+    async def test_azure_openai_exposes_responses_lifecycle_client(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(status_code=200, payload={"id": "resp_123", "status": "completed"})
+
+        provider = create_azure_openai(
+            api_key="test",
+            endpoint="https://example.openai.azure.com",
+            fetch=fetch,
+        )
+
+        payload = await provider.responses().create({"model": "gpt-4o-mini", "input": "hello"})
+
+        self.assertEqual(payload["id"], "resp_123")
+        self.assertEqual(requests[0]["url"], "https://example.openai.azure.com/openai/v1/responses")
+        self.assertEqual(requests[0]["headers"]["api-key"], "test")  # type: ignore[index]
+        self.assertNotIn("authorization", requests[0]["headers"])  # type: ignore[operator]
+        self.assertEqual(requests[0]["json"], {"model": "gpt-4o-mini", "input": "hello"})
+
+    async def test_azure_openai_exposes_conversations_lifecycle_client(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(status_code=200, payload={"id": "conv_123", "object": "conversation"})
+
+        provider = create_azure_openai(
+            api_key="test",
+            endpoint="https://example.openai.azure.com",
+            fetch=fetch,
+        )
+
+        payload = await provider.conversations().create({"metadata": {"team": "sdk"}})
+
+        self.assertEqual(payload["id"], "conv_123")
+        self.assertEqual(requests[0]["url"], "https://example.openai.azure.com/openai/v1/conversations")
+        self.assertEqual(requests[0]["headers"]["api-key"], "test")  # type: ignore[index]
+        self.assertEqual(requests[0]["json"], {"metadata": {"team": "sdk"}})
+
+    async def test_azure_openai_exposes_file_search_stores_lifecycle_client(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            if method == "DELETE":
+                return FakeResponse(status_code=200, payload={"id": "vs_123", "deleted": True})
+            if method == "GET":
+                return FakeResponse(
+                    status_code=200,
+                    payload={"object": "list", "data": [{"id": "vs_123", "name": "Docs"}], "has_more": False},
+                )
+            return FakeResponse(status_code=200, payload={"id": "vs_123", "name": "Docs"})
+
+        provider = create_azure_openai(
+            api_key="test",
+            endpoint="https://example.openai.azure.com",
+            fetch=fetch,
+        )
+
+        created = await provider.file_search_stores().create(display_name="Docs")
+        listed = await provider.file_search_stores().list()
+        deleted = await provider.file_search_stores().delete("vs_123")
+
+        self.assertEqual(created.name, "vs_123")
+        self.assertEqual(listed.stores[0].display_name, "Docs")
+        self.assertTrue(deleted)
+        self.assertEqual(requests[0]["url"], "https://example.openai.azure.com/openai/v1/vector_stores")
+        self.assertEqual(requests[0]["headers"]["api-key"], "test")  # type: ignore[index]
+        self.assertEqual(requests[0]["json"], {"name": "Docs"})
+        self.assertEqual(requests[1]["method"], "GET")
+        self.assertEqual(requests[2]["url"], "https://example.openai.azure.com/openai/v1/vector_stores/vs_123")
+
     async def test_azure_openai_maps_hosted_tools_from_tools_set(self) -> None:
         requests: list[dict[str, object]] = []
 
