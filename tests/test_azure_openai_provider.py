@@ -4,6 +4,7 @@ import sys
 import json
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,7 @@ from zhivex_ai import (
     tool,
     user,
 )
+from zhivex_ai.errors import ConfigurationError
 from zhivex_ai.providers.azure_openai import (  # noqa: E402
     azure_openai_provider_data_tool_call,
     get_azure_openai_mcp_calls,
@@ -53,6 +55,17 @@ class FakeResponse:
         return json.dumps(self.payload)
 
 
+class FakeRealtimeConnection:
+    async def send_json(self, payload: dict[str, object]) -> None:
+        return None
+
+    async def recv_json(self) -> object:
+        return {"type": "session.closed"}
+
+    async def close(self) -> None:
+        return None
+
+
 class AzureOpenAIProviderTests(TestCase):
     def test_azure_openai_uses_versionless_v1_base_url(self) -> None:
         provider = create_azure_openai(
@@ -64,8 +77,134 @@ class AzureOpenAIProviderTests(TestCase):
         model = provider.native.language_model("gpt-4o-mini")
         self.assertEqual(model.base_url, "https://example.openai.azure.com/openai/v1")
 
+    def test_azure_openai_rejects_api_key_and_entra_auth_together(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            create_azure_openai(
+                api_key="test",
+                endpoint="https://example.openai.azure.com",
+                entra_token="token",
+            )
+
+    def test_azure_openai_requires_api_key_or_entra_auth(self) -> None:
+        with patch.dict("os.environ", {"AZURE_OPENAI_API_KEY": "", "AZURE_OPENAI_ENDPOINT": ""}, clear=False):
+            with self.assertRaisesRegex(ConfigurationError, "API key or Entra ID"):
+                create_azure_openai(endpoint="https://example.openai.azure.com")
+
 
 class AzureOpenAIHostedToolTests(IsolatedAsyncioTestCase):
+    async def test_azure_openai_entra_token_uses_bearer_auth(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+
+        provider = create_azure_openai(
+            endpoint="https://example.openai.azure.com",
+            entra_token="entra-token",
+            fetch=fetch,
+        )
+
+        await generate_text(model=provider.native.language_model("gpt-4o-mini"), prompt="hello")
+
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer entra-token")  # type: ignore[index]
+        self.assertNotIn("api-key", requests[0]["headers"])  # type: ignore[operator]
+
+    async def test_azure_openai_entra_token_provider_can_be_sync_or_async(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "headers": headers})
+            return FakeResponse(status_code=200, payload={"id": "resp_123", "status": "completed"})
+
+        sync_provider = create_azure_openai(
+            endpoint="https://example.openai.azure.com",
+            entra_token_provider=lambda: "sync-token",
+            fetch=fetch,
+        )
+        await sync_provider.responses().create({"model": "gpt-4o-mini", "input": "hello"})
+
+        async def async_token_provider() -> str:
+            return "async-token"
+
+        async_provider = create_azure_openai(
+            endpoint="https://example.openai.azure.com",
+            entra_token_provider=async_token_provider,
+            fetch=fetch,
+        )
+        await async_provider.responses().create({"model": "gpt-4o-mini", "input": "hello"})
+
+        self.assertEqual(requests[0]["headers"]["authorization"], "Bearer sync-token")  # type: ignore[index]
+        self.assertEqual(requests[1]["headers"]["authorization"], "Bearer async-token")  # type: ignore[index]
+
+    async def test_azure_openai_entra_auth_reaches_lifecycle_clients_and_realtime(self) -> None:
+        requests: list[dict[str, object]] = []
+        connection_meta: list[dict[str, object]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, object] | None = None,
+            body: object = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "headers": headers, "json": json_body})
+            if "conversations" in url:
+                return FakeResponse(status_code=200, payload={"id": "conv_123", "object": "conversation"})
+            if "vector_stores" in url:
+                return FakeResponse(status_code=200, payload={"id": "vs_123", "name": "Docs"})
+            return FakeResponse(status_code=200, payload={"id": "resp_123", "status": "completed", "client_secret": {"value": "browser-token"}})
+
+        async def connection_factory(url, headers, options):
+            connection_meta.append({"url": url, "headers": headers, "options": options})
+            return FakeRealtimeConnection()
+
+        provider = create_azure_openai(
+            endpoint="https://example.openai.azure.com",
+            entra_token="entra-token",
+            fetch=fetch,
+            realtime_connection_factory=connection_factory,
+        )
+
+        await provider.responses().create({"model": "gpt-4o-mini", "input": "hello"})
+        await provider.conversations().create({"metadata": {"team": "sdk"}})
+        await provider.file_search_stores().create(display_name="Docs")
+        await provider.native.realtime_model("gpt-realtime").create_browser_token()
+        session = await provider.native.realtime_model("gpt-realtime").connect()
+        await session.aclose()
+
+        self.assertTrue(all(request["headers"]["authorization"] == "Bearer entra-token" for request in requests))  # type: ignore[index]
+        self.assertTrue(all("api-key" not in request["headers"] for request in requests))  # type: ignore[operator]
+        self.assertEqual(connection_meta[0]["headers"]["authorization"], "Bearer entra-token")  # type: ignore[index]
+        self.assertNotIn("api-key", connection_meta[0]["headers"])  # type: ignore[operator]
+
     async def test_azure_openai_exposes_responses_lifecycle_client(self) -> None:
         requests: list[dict[str, object]] = []
 

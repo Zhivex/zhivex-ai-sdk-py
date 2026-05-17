@@ -19,7 +19,7 @@ Primary product docs live in:
 - `SUPPORT.md`
 - `CHANGELOG.md`
 - `PRODUCTION_APIS.md`
-- `OBSERVABILITY.md`
+- `docs/OBSERVABILITY.md`
 
 Read those before changing public behavior.
 
@@ -53,7 +53,7 @@ This repo has a deliberately narrow stable surface.
 
 Stable APIs currently center on:
 
-- tier-1 provider factories: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex
+- tier-1 provider factories: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, vLLM
 - foundation primitives: text, streaming, structured output, embeddings, grounded text
 - agent runtime: `Agent`, `run_agent`, `stream_agent`, `resume_agent`
 - gateway contracts
@@ -176,7 +176,7 @@ User-visible changes should usually update more than code.
 - Update `STABILITY.md` when stability classification changes.
 - Update `SUPPORT.md` when the support scope changes.
 - Update `VERSIONING.md` when deprecation or compatibility policy changes.
-- Update `PRODUCTION_APIS.md` or `OBSERVABILITY.md` when operational guidance changes.
+- Update `PRODUCTION_APIS.md` or `docs/OBSERVABILITY.md` when operational guidance changes.
 
 ## Practical Guardrails
 

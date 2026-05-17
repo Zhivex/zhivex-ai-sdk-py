@@ -95,7 +95,7 @@ In this repository, tier-1 means the provider is part of the stable surface stor
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 
-Azure OpenAI is tier-1 for the portable production surface. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
+Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai(...)` supports either API key authentication or Microsoft Entra ID token/provider authentication. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
 
 Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. Its hosted tools, raw Responses settings, Files, Batch, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
 

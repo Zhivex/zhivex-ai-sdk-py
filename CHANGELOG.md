@@ -21,15 +21,16 @@ Related documents:
 
 ### Added
 
-- None.
+- Azure OpenAI now supports Microsoft Entra ID authentication via `entra_token` or `entra_token_provider` on `create_azure_openai(...)`, covering generation, lifecycle clients, and realtime bootstrap without adding an `azure-identity` dependency.
 
 ### Changed
 
-- None.
+- Azure OpenAI credential configuration now fails fast when API key and Entra ID authentication are both configured.
 
 ### Fixed
 
-- None.
+- Validated Postgres agent run-store table prefixes with the same SQL identifier rule used by the Postgres memory and checkpoint stores.
+- Updated FastAPI integration examples so provider HTTP failures return sanitized client messages instead of upstream response-body snippets.
 
 ### Deprecated
 

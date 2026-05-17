@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from inspect import isawaitable
 from typing import Any
 
-from .._http import Fetcher, default_fetch
+from .._http import Fetcher, ResponseLike, default_fetch
 from ..errors import ConfigurationError
 from ..messages import (
     get_last_provider_data_entry,
@@ -13,7 +16,7 @@ from ..messages import (
     hosted_tool,
     provider_data_part,
 )
-from ..realtime import RealtimeConnectionFactory
+from ..realtime import RealtimeConnection, RealtimeConnectionFactory, open_websocket_connection
 from ..types import (
     AgentCapabilities,
     AzureOpenAIMcpApprovalRequest,
@@ -25,6 +28,7 @@ from ..types import (
     HostedToolDefinition,
     PortableSupport,
     ProviderDataPart,
+    RealtimeConnectOptions,
     ToolCall,
 )
 from .base import create_provider_bundle
@@ -35,6 +39,83 @@ from .openai_compat import (
     _parse_provider_data_value,
     create_openai_compatible_provider,
 )
+
+AzureOpenAITokenProvider = Callable[[], str | Awaitable[str]]
+_ENTRA_AUTH_SENTINEL = "__zhivex_azure_entra_token__"
+
+
+@dataclass(slots=True)
+class _AzureOpenAIAuth:
+    api_key: str | None = None
+    entra_token: str | None = None
+    entra_token_provider: AzureOpenAITokenProvider | None = None
+
+    async def _resolved_entra_token(self) -> str:
+        if self.entra_token is not None:
+            token = self.entra_token
+        elif self.entra_token_provider is not None:
+            maybe_token = self.entra_token_provider()
+            token = await maybe_token if isawaitable(maybe_token) else maybe_token
+        else:
+            raise ConfigurationError("Missing Azure OpenAI Entra ID token.")
+        if not token:
+            raise ConfigurationError("Azure OpenAI Entra ID token provider returned an empty token.")
+        return token
+
+    async def headers(self, headers: dict[str, str]) -> dict[str, str]:
+        resolved = dict(headers)
+        for key in list(resolved):
+            if key.lower() in {"api-key", "authorization"}:
+                resolved.pop(key, None)
+        if self.api_key is not None:
+            resolved["api-key"] = self.api_key
+        else:
+            resolved["authorization"] = f"Bearer {await self._resolved_entra_token()}"
+        return resolved
+
+
+@dataclass(slots=True)
+class _AzureOpenAIAuthFetcher:
+    fetch: Fetcher
+    auth: _AzureOpenAIAuth
+
+    async def __call__(
+        self,
+        url: str,
+        *,
+        method: str = "POST",
+        headers: dict[str, str],
+        json_body: dict[str, Any] | None = None,
+        body: Any = None,
+        timeout_ms: int | None,
+        stream: bool = False,
+    ) -> ResponseLike:
+        return await self.fetch(
+            url,
+            method=method,
+            headers=await self.auth.headers(headers),
+            json_body=json_body,
+            body=body,
+            timeout_ms=timeout_ms,
+            stream=stream,
+        )
+
+
+def _azure_openai_realtime_connection_factory(
+    *,
+    auth: _AzureOpenAIAuth,
+    connection_factory: RealtimeConnectionFactory | None,
+) -> RealtimeConnectionFactory:
+    async def connect(
+        url: str,
+        headers: dict[str, str],
+        options: RealtimeConnectOptions | None,
+    ) -> RealtimeConnection:
+        resolved_headers = await auth.headers(headers)
+        factory = connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
+        return await factory(url, resolved_headers, options)
+
+    return connect
 
 
 def azure_openai_web_search_tool(
@@ -297,6 +378,8 @@ def create_azure_openai(
     api_key: str | None = None,
     endpoint: str | None = None,
     api_version: str = "2024-10-21",
+    entra_token: str | None = None,
+    entra_token_provider: AzureOpenAITokenProvider | None = None,
     fetch: Fetcher | None = None,
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
@@ -304,53 +387,67 @@ def create_azure_openai(
 ):
     resolved_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
     resolved_endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
-    if not resolved_key:
-        raise ConfigurationError("Missing Azure OpenAI API key.")
+    has_entra_auth = entra_token is not None or entra_token_provider is not None
+    if resolved_key and has_entra_auth:
+        raise ConfigurationError("Configure either Azure OpenAI API key or Entra ID authentication, not both.")
+    if not resolved_key and not has_entra_auth:
+        raise ConfigurationError("Missing Azure OpenAI credentials. Provide an API key or Entra ID token provider.")
     if not resolved_endpoint:
         raise ConfigurationError("Missing Azure OpenAI endpoint.")
     # Azure OpenAI v1 uses versionless /openai/v1 endpoints and rejects api-version query params.
     base_url = f"{resolved_endpoint.rstrip('/')}/openai/v1"
-    requester = fetch or default_fetch
+    auth = _AzureOpenAIAuth(
+        api_key=resolved_key,
+        entra_token=entra_token,
+        entra_token_provider=entra_token_provider,
+    )
+    requester = _AzureOpenAIAuthFetcher(fetch=fetch or default_fetch, auth=auth)
+    auth_value = resolved_key or _ENTRA_AUTH_SENTINEL
+    auth_header = "api-key" if resolved_key else "authorization"
+    auth_prefix = "" if resolved_key else "Bearer "
     native = create_openai_compatible_provider(
         provider_name="azure-openai",
         env_var="AZURE_OPENAI_API_KEY",
-        api_key=resolved_key,
+        api_key=auth_value,
         base_url=base_url,
         fetch=requester,
-        auth_header="api-key",
-        auth_prefix="",
+        auth_header=auth_header,
+        auth_prefix=auth_prefix,
         supports_audio=True,
         supports_grounding=True,
         supports_realtime=True,
         realtime_url=realtime_url,
         browser_token_url=browser_token_url,
-        realtime_connection_factory=realtime_connection_factory,
+        realtime_connection_factory=_azure_openai_realtime_connection_factory(
+            auth=auth,
+            connection_factory=realtime_connection_factory,
+        ),
         default_grounding_tool={"type": "web_search_preview"},
         file_search_stores_client_factory=lambda: OpenAICompatibleFileSearchStoresClient(
             provider="azure-openai",
-            api_key=resolved_key,
+            api_key=auth_value,
             base_url=base_url,
             fetch=requester,
-            auth_header="api-key",
-            auth_prefix="",
+            auth_header=auth_header,
+            auth_prefix=auth_prefix,
         ),
         responses_client_factory=lambda: OpenAICompatibleResponsesClient(
             provider="azure-openai",
             model_id="",
-            api_key=resolved_key,
+            api_key=auth_value,
             base_url=base_url,
             fetch=requester,
-            auth_header="api-key",
-            auth_prefix="",
+            auth_header=auth_header,
+            auth_prefix=auth_prefix,
         ),
         conversations_client_factory=lambda: OpenAICompatibleConversationsClient(
             provider="azure-openai",
             model_id="",
-            api_key=resolved_key,
+            api_key=auth_value,
             base_url=base_url,
             fetch=requester,
-            auth_header="api-key",
-            auth_prefix="",
+            auth_header=auth_header,
+            auth_prefix=auth_prefix,
         ),
     )
     return create_provider_bundle(

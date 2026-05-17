@@ -100,4 +100,4 @@ Use `resume_agent(...)` for session/checkpoint recovery. Use `replay_agent_run(.
 
 ## Security
 
-For secrets, data retention, MCP, hosted tools, file access, shell-like capabilities, and secure tool defaults, see [../SECURITY.md](../SECURITY.md) and [THREAT_MODEL.md](./THREAT_MODEL.md).
+For secrets, data retention, MCP, hosted tools, file access, shell-like capabilities, and secure tool defaults, see [../SECURITY.md](../SECURITY.md).

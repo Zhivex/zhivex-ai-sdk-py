@@ -42,6 +42,8 @@ Use `.env.example` as the variable checklist.
 - Azure OpenAI: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and deployment model ID
 - Gemini: `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, or `GOOGLE_API_KEY`
 - Vertex: `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN`, plus `GOOGLE_CLOUD_PROJECT`
+- Qwen: `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, plus model ID
+- Kimi/Moonshot: `MOONSHOT_API_KEY` or `KIMI_API_KEY`, plus model ID
 - vLLM: local server URL and served model ID
 
 See [PROVIDERS.md](./PROVIDERS.md) for setup links.
@@ -53,10 +55,6 @@ If realtime or HTTPS examples fail with `ssl.SSLCertVerificationError`, refresh 
 ## Realtime Dependencies
 
 Realtime examples require `websockets`, which is installed by the base package. If you use an unusual environment, reinstall the package or run `make dev`.
-
-## SQLite ResourceWarning In Tests
-
-Some current contract tests can emit `ResourceWarning` for SQLite connections under Python 3.13. The warnings are tracked as test-noise debt; they do not currently fail `make check`.
 
 ## Support Matrix Drift
 

@@ -7,8 +7,6 @@
 
 Zhivex AI SDK for Python is an async-first, agent-first SDK for building orchestrated AI systems across multiple providers.
 
-Production maturity plan: see [MATURITY_PLAN.md](./MATURITY_PLAN.md).
-
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
 - one agent runtime with executable handoffs, native subagent tools, shared sessions, durable run state, evaluation helpers, safety policies, tool registries, and traces
@@ -45,11 +43,9 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
 - Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
 - Operations runbook: [docs/OPERATIONS.md](./docs/OPERATIONS.md)
-- Security and threat model: [SECURITY.md](./SECURITY.md), [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md)
+- Security: [SECURITY.md](./SECURITY.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
-- Python vs TypeScript migration: [docs/MIGRATING_FROM_TYPESCRIPT.md](./docs/MIGRATING_FROM_TYPESCRIPT.md)
 - Parity and GA boundary: [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
-- RC readiness: [docs/RC_READINESS.md](./docs/RC_READINESS.md)
 - Contribution workflow: [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Local environment template: [.env.example](./.env.example)
 
@@ -86,7 +82,7 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
 
-For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
+For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
@@ -1028,7 +1024,26 @@ Native usage:
 
 Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
 
-OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM still reuse normalized adapter paths internally, but only vLLM participates in the tier-1 portable story. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+
+Azure OpenAI supports API key authentication and Microsoft Entra ID authentication through the versionless `/openai/v1` route. API key usage reads `AZURE_OPENAI_API_KEY` plus `AZURE_OPENAI_ENDPOINT`; Entra ID usage passes a token or token provider explicitly and is mutually exclusive with API keys.
+
+```python
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from zhivex_ai import create_azure_openai
+
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(),
+    "https://ai.azure.com/.default",
+)
+
+provider = create_azure_openai(
+    endpoint="https://YOUR-RESOURCE-NAME.openai.azure.com",
+    entra_token_provider=token_provider,
+)
+```
+
+The SDK does not depend on `azure-identity`; install it in your application if you want to use `DefaultAzureCredential`.
 
 Qwen/Alibaba Cloud Model Studio native usage:
 
@@ -1214,7 +1229,7 @@ Notes:
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
 - `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
-- `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint.
+- `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint and works with either API key or Entra ID authentication.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
 - `create_vertex().native.language_model(...)` and `create_vertex().native.grounded_language_model(...)` also accept `provider_options={"vertex_ai_search": {...}}` and `provider_options={"external_search": {...}}`, which are normalized into the Vertex tool payloads automatically.
 - `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.
