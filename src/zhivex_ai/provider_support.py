@@ -79,6 +79,7 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         "Realtime",
         "Responses",
         "Conversations",
+        "Caches",
     ]
     agent_headers = [
         "Provider",
@@ -136,6 +137,7 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
                 _yes_no(row.native_support.realtime),
                 _yes_no(row.native_support.responses),
                 _yes_no(row.native_support.conversations),
+                _yes_no(row.native_support.caches),
             ]
             for row in materialized
         ],

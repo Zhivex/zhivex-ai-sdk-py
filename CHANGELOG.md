@@ -21,6 +21,7 @@ Related documents:
 
 ### Added
 
+- Gemini now exposes beta explicit context caching through `create_gemini().caches()`, including create/get/list/update/delete helpers and top-level `CachedContent` types.
 - Azure OpenAI now supports Microsoft Entra ID authentication via `entra_token` or `entra_token_provider` on `create_azure_openai(...)`, covering generation, lifecycle clients, and realtime bootstrap without adding an `azure-identity` dependency.
 
 ### Changed
@@ -29,6 +30,7 @@ Related documents:
 
 ### Fixed
 
+- Gemini function-calling now preserves official `functionCall.id` values and sends matching `functionResponse.id` values for Gemini 3 tool loops.
 - Validated Postgres agent run-store table prefixes with the same SQL identifier rule used by the Postgres memory and checkpoint stores.
 - Updated FastAPI integration examples so provider HTTP failures return sanitized client messages instead of upstream response-body snippets.
 

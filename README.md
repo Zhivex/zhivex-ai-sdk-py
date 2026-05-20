@@ -60,7 +60,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Audio transcription and speech generation where the provider supports it
 - Experimental realtime/live voice sessions plus `stream_live_agent()` for voice-first agents
 - Text and multimodal embeddings support where the provider supports it
-- Google native media clients for Gemini/Vertex image, video, music, batch, and interaction workflows
+- Google native clients for Gemini/Vertex image, video, music, batch, interaction, and Gemini context-cache workflows
 - Provider factories for hosted and local models
 - Beta provider agent capability metadata for support tiers and hosted-agent features
 - Beta first-class hosted tool definitions for provider-native tools in `tools={...}`
@@ -120,19 +120,19 @@ These providers back the stable surface for production API work in this SDK toda
 
 ### Native Extras
 
-| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| azure-openai | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes |
-| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
-| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
-| kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
-| ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes |
-| openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No |
-| vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No |
-| vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No |
+| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| azure-openai | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No |
+| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No |
+| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes |
+| kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No |
+| ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No |
+| openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No |
+| vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No |
+| vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No |
 
 ### Agent Capabilities
 
@@ -167,6 +167,7 @@ Tool support now follows the same rule everywhere:
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
+- Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
 - Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client.
@@ -545,6 +546,36 @@ async def main() -> None:
     )
 
     print(counts.total_tokens)
+
+
+asyncio.run(main())
+```
+
+Using Gemini explicit context caching:
+
+```python
+import asyncio
+
+from zhivex_ai import create_gemini, generate_text
+
+
+async def main() -> None:
+    gemini = create_gemini()
+    cache = await gemini.caches().create(
+        {
+            "model": "models/gemini-2.5-flash",
+            "displayName": "Product docs",
+            "contents": [{"role": "user", "parts": [{"text": "Long reusable context..."}]}],
+            "ttl": "3600s",
+        }
+    )
+    result = await generate_text(
+        model=gemini.native.language_model("gemini-2.5-flash"),
+        prompt="Summarize the cached docs in three bullets.",
+        provider_options={"cached_content": cache.name},
+    )
+
+    print(result.text)
 
 
 asyncio.run(main())
@@ -1220,6 +1251,7 @@ Notes:
 - `create_anthropic().tokens()` exposes Anthropic message token counting.
 - `anthropic_web_search_tool(...)`, `anthropic_mcp_server(...)`, and `anthropic_code_execution_tool(...)` build the current hosted-tool payloads for Claude-native runs.
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
+- `create_gemini().caches()` exposes Gemini explicit context caching through `cachedContents`; pass the returned cache name with `provider_options={"cached_content": cache.name}` or `provider_options={"cachedContent": cache.name}`.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
 - `embed_content(...)` and `embed_content_many(...)` accept text plus `TextPart`, `ImagePart`, and `FilePart` values for Gemini Embedding 2 style multimodal embeddings; `embed(...)` and `embed_many(...)` remain text-compatible.
 - `create_gemini().images()` covers Gemini/Nano Banana image models through `generateContent` and Imagen 4 models through `predict`.
@@ -1227,7 +1259,7 @@ Notes:
 - `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers.
 - `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
-- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers. Deep Research payloads default to background storage.
+- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
 - `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint and works with either API key or Entra ID authentication.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.

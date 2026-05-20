@@ -115,7 +115,7 @@
       "stability": "experimental"
     },
     {
-      "area": "Google native media clients",
+      "area": "Google native media/cache clients",
       "implemented": "yes",
       "documented": "provider docs",
       "offline_tested": "provider tests",

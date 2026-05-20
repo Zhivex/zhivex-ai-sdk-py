@@ -62,7 +62,7 @@ Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1
 - OpenAI, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM expose portable text, streaming, structured output, and tool paths.
 - Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, and Vector Store / File Search management through `provider.native` / bundle helper methods.
 - Anthropic is tier-1 for portable text-generation paths; embeddings, transcription, and speech are outside the current Anthropic SDK surface.
-- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, and Veo-style workflows through native clients rather than the stable portable contract.
+- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, and Veo-style workflows through native clients rather than the stable portable contract. Gemini also exposes explicit context caching through `create_gemini().caches()`.
 - Qwen exposes hosted web/file/code/MCP tools, raw Responses, Files, Batch, ASR, and TTS as native/provider-specific beta surfaces. File Search remains a hosted Responses tool with `vector_store_ids`, not a lifecycle client.
 - Kimi exposes Files, Batch, token counting, and Formulas as native/provider-specific beta surfaces. Portable Kimi does not claim embeddings, speech, or transcription.
 - vLLM support depends on the tasks served by the local OpenAI-compatible server. Custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK contract.
