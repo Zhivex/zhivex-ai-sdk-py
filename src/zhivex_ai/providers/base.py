@@ -7,6 +7,7 @@ from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
     AgentCapabilities,
     BatchesClient,
+    CachedContentsClient,
     CountTokensClient,
     ContainersClient,
     EmbeddingContent,
@@ -65,6 +66,7 @@ class ProviderAdapter:
     responses_client_factory: Callable[[], ResponsesClient] | None = None
     conversations_client_factory: Callable[[], ConversationsClient] | None = None
     formulas_client_factory: Callable[[], FormulasClient] | None = None
+    caches_client_factory: Callable[[], CachedContentsClient] | None = None
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
     _embedding_model_cache: dict[str, EmbeddingModel] = field(default_factory=dict, init=False, repr=False)
     _transcription_model_cache: dict[str, TranscriptionModel] = field(default_factory=dict, init=False, repr=False)
@@ -86,6 +88,7 @@ class ProviderAdapter:
     _responses_client: ResponsesClient | None = field(default=None, init=False, repr=False)
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
     _formulas_client: FormulasClient | None = field(default=None, init=False, repr=False)
+    _caches_client: CachedContentsClient | None = field(default=None, init=False, repr=False)
 
     def __call__(self, model_id: str) -> LanguageModel:
         return self.language_model(model_id)
@@ -222,6 +225,13 @@ class ProviderAdapter:
         if self._formulas_client is None:
             self._formulas_client = self.formulas_client_factory()
         return self._formulas_client
+
+    def caches(self) -> CachedContentsClient:
+        if self.caches_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose cached contents.')
+        if self._caches_client is None:
+            self._caches_client = self.caches_client_factory()
+        return self._caches_client
 
     @staticmethod
     def _cached_model(cache: dict[str, _ModelT], factory: Callable[[str], _ModelT], model_id: str) -> _ModelT:
@@ -456,6 +466,9 @@ class ProviderBundle:
     def formulas(self) -> FormulasClient:
         return self.native.formulas()
 
+    def caches(self) -> CachedContentsClient:
+        return self.native.caches()
+
 
 def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
     language_model = adapter.language_model_factory("")
@@ -482,6 +495,7 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         skills=adapter.skills_client_factory is not None,
         responses=adapter.responses_client_factory is not None,
         conversations=adapter.conversations_client_factory is not None,
+        caches=adapter.caches_client_factory is not None,
     )
 
 

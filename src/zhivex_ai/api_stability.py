@@ -180,6 +180,9 @@ BETA_EXPORTS = frozenset(
         "AzureOpenAIResponseReference",
         "BatchesClient",
         "BudgetGuard",
+        "CachedContent",
+        "CachedContentListResult",
+        "CachedContentsClient",
         "CircuitBreakerState",
         "ContainersClient",
         "ContentPart",
@@ -531,10 +534,10 @@ _CATEGORY_BY_MODULE = {
 
 _NOTES_BY_EXPORT = {
     "create_bedrock": "native-only provider",
-    "create_kimi": "compatibility provider",
+    "create_kimi": "tier-1 provider; native extras remain beta",
     "create_ollama": "compatibility provider",
     "create_openrouter": "native-only provider",
-    "create_qwen": "compatibility provider",
+    "create_qwen": "tier-1 provider; native extras remain beta",
     "create_vllm": "tier-1 provider; some capabilities are model/task dependent",
     "openai_local_shell_tool": "local shell execution is experimental and must be isolated by applications",
     "openai_shell_tool": "shell execution is experimental and must be isolated by applications",

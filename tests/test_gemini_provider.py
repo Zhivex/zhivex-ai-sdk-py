@@ -281,6 +281,79 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(requests[1]["json"]["background"])
         self.assertTrue(requests[1]["json"]["store"])
 
+    async def test_gemini_cached_contents_client_crud(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            del headers, timeout_ms, stream, body
+            requests.append({"url": url, "method": method, "json": json_body})
+            if method == "GET" and url.endswith("/cachedContents?key=test&pageSize=20"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={"cachedContents": [{"name": "cachedContents/a", "model": "models/gemini-2.5-flash"}]},
+                )
+            if method == "DELETE":
+                return FakeResponse(status_code=200, payload={})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "name": "cachedContents/a",
+                    "model": "models/gemini-2.5-flash",
+                    "displayName": "Docs",
+                    "expireTime": "2026-05-19T00:00:00Z",
+                    "usageMetadata": {"totalTokenCount": 42},
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        created = await provider.caches().create({"model": "models/gemini-2.5-flash", "displayName": "Docs"})
+        fetched = await provider.caches().get("cachedContents/a")
+        listed = await provider.caches().list(page_size=20)
+        updated = await provider.caches().update("cachedContents/a", {"expireTime": "2026-05-20T00:00:00Z"})
+        deleted = await provider.caches().delete("cachedContents/a")
+
+        self.assertEqual(created.name, "cachedContents/a")
+        self.assertEqual(created.usage_metadata["totalTokenCount"], 42)
+        self.assertEqual(fetched.display_name, "Docs")
+        self.assertEqual(listed.cached_contents[0].name, "cachedContents/a")
+        self.assertEqual(updated.expire_time, "2026-05-19T00:00:00Z")
+        self.assertTrue(deleted)
+        self.assertIn("/cachedContents?key=test", requests[0]["url"])
+        self.assertIn("/cachedContents/a?key=test", requests[1]["url"])
+        self.assertEqual(requests[3]["method"], "PATCH")
+
+    async def test_gemini_maps_cached_content_provider_option(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            del url, headers, timeout_ms, stream
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"candidates": [{"content": {"parts": [{"text": "cached"}]}, "finishReason": "STOP"}]},
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("gemini-2.5-flash"),
+            prompt="summarize",
+            provider_options={"cached_content": "cachedContents/a"},
+        )
+
+        self.assertEqual(requests[0]["cachedContent"], "cachedContents/a")
+        self.assertNotIn("cached_content", requests[0])
+
     async def test_vertex_media_clients_use_bearer_and_publisher_routes(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -1386,7 +1459,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
                                 "content": {
                                     "parts": [
                                         {
-                                            "functionCall": {"name": "weather", "args": {"city": "Madrid"}},
+                                            "functionCall": {"id": "call_123", "name": "weather", "args": {"city": "Madrid"}},
                                             "thoughtSignature": "sig-123",
                                         }
                                     ]
@@ -1421,6 +1494,10 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         second_request_parts = requests[1]["contents"][1]["parts"]
         function_call_part = next(part for part in second_request_parts if "functionCall" in part)
         self.assertEqual(function_call_part["thoughtSignature"], "sig-123")
+        self.assertEqual(function_call_part["functionCall"]["id"], "call_123")
+        tool_response_parts = requests[1]["contents"][2]["parts"]
+        function_response_part = next(part for part in tool_response_parts if "functionResponse" in part)
+        self.assertEqual(function_response_part["functionResponse"]["id"], "call_123")
 
     async def test_gemini_stream_preserves_snake_case_thought_signature(self) -> None:
         async def fetch(
@@ -1429,7 +1506,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
-                    'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"weather","args":{"city":"Madrid"}},"thought_signature":"sig-456"}]},"finishReason":"STOP"}]}\n\n'
+                    'data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_stream","name":"weather","args":{"city":"Madrid"}},"thought_signature":"sig-456"}]},"finishReason":"STOP"}]}\n\n'
                 ),
             )
 
@@ -1439,3 +1516,4 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         tool_call = next(event.tool_call for event in events if event.type == "tool-call")
         self.assertEqual(tool_call.provider_metadata["thought_signature"], "sig-456")
+        self.assertEqual(tool_call.id, "call_stream")

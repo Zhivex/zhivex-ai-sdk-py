@@ -47,4 +47,4 @@ Experimental APIs are intended for evaluation. They should be consumed behind an
 
 ## Current maturity target
 
-This policy now governs the current `Beta` phase of the SDK. The maturity work needed for RC review is documented in [docs/RC_READINESS.md](./docs/RC_READINESS.md). The goal is to keep the documented stable surface predictable while final release evidence is captured from built artifacts before a future stable release.
+This policy governs the current `Beta` phase of the SDK. The goal is to keep the documented stable surface predictable while release evidence is captured from built artifacts before a future stable release.

@@ -20,7 +20,9 @@ from zhivex_ai import (  # noqa: E402
     create_anthropic,
     create_azure_openai,
     create_gemini,
+    create_kimi,
     create_openai,
+    create_qwen,
     create_vertex,
     create_vllm,
     generate_object,
@@ -29,6 +31,7 @@ from zhivex_ai import (  # noqa: E402
     tool,
 )
 from zhivex_ai.provider_support import TIER_1_PROVIDERS, build_provider_support_rows  # noqa: E402
+from zhivex_ai.errors import ValidationError  # noqa: E402
 from zhivex_ai.types import StreamFinishEvent, StreamTextDeltaEvent  # noqa: E402
 
 
@@ -147,6 +150,30 @@ def _gemini_response(stream: bool) -> FakeResponse:
     )
 
 
+def _chat_completions_response(stream: bool) -> FakeResponse:
+    if stream:
+        return FakeResponse(
+            status_code=200,
+            body_text=(
+                'data: {"choices":[{"delta":{"content":"contract "},"finish_reason":null}]}\n\n'
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+    return FakeResponse(
+        status_code=200,
+        payload={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": '{"city":"Buenos Aires","summary":"contract ok"}'},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4},
+        },
+    )
+
+
 def _contract_cases() -> list[ProviderContractCase]:
     return [
         ProviderContractCase(
@@ -189,6 +216,20 @@ def _contract_cases() -> list[ProviderContractCase]:
             expected_request_marker=":generateContent",
         ),
         ProviderContractCase(
+            provider_name="qwen",
+            model_id="qwen3.5-plus",
+            create_provider=lambda fetch: create_qwen(api_key="test", fetch=fetch),
+            response_family="openai",
+            expected_request_marker="/responses",
+        ),
+        ProviderContractCase(
+            provider_name="kimi",
+            model_id="kimi-k2",
+            create_provider=lambda fetch: create_kimi(api_key="test", fetch=fetch),
+            response_family="chat",
+            expected_request_marker="/chat/completions",
+        ),
+        ProviderContractCase(
             provider_name="vllm",
             model_id="meta-llama/Llama-3.1-8B-Instruct",
             create_provider=lambda fetch: create_vllm(api_key="test", fetch=fetch),
@@ -214,6 +255,8 @@ def _fake_fetch(case: ProviderContractCase, requests: list[dict[str, Any]]) -> C
             return _anthropic_response(stream)
         if case.response_family == "gemini":
             return _gemini_response(stream)
+        if case.response_family == "chat":
+            return _chat_completions_response(stream)
         return _openai_compatible_response(stream)
 
     return fetch
@@ -290,6 +333,21 @@ async def test_tier_1_tool_choice_contract_is_mapped(case: ProviderContractCase)
     elif case.response_family == "anthropic":
         assert request["tool_choice"] == {"type": "tool", "name": "weather"}
         assert request["tools"][0]["name"] == "weather"
+    elif case.response_family == "chat":
+        assert request["tool_choice"] == {"type": "function", "function": {"name": "weather"}}
+        assert request["tools"][0]["function"]["name"] == "weather"
+    elif case.provider_name == "qwen":
+        assert request["tool_choice"] == {"type": "allowed_tools", "mode": "required", "tools": [{"type": "function", "name": "weather"}]}
+        assert request["tools"][0]["name"] == "weather"
     else:
         assert request["tool_choice"]["name"] == "weather"
         assert request["tools"][0]["name"] == "weather"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", _contract_cases(), ids=lambda case: case.provider_name)
+async def test_tier_1_portable_models_reject_provider_options(case: ProviderContractCase) -> None:
+    provider = case.create_provider(_fake_fetch(case, []))
+
+    with pytest.raises(ValidationError):
+        await generate_text(model=provider(case.model_id), prompt="hello", provider_options={"native": True})

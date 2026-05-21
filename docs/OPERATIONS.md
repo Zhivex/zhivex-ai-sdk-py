@@ -104,4 +104,3 @@ Do not return raw provider response bodies to end users. Log redacted provider e
 - [PRODUCTION.md](./PRODUCTION.md)
 - [OBSERVABILITY.md](./OBSERVABILITY.md)
 - [../SECURITY.md](../SECURITY.md)
-- [THREAT_MODEL.md](./THREAT_MODEL.md)

@@ -16,11 +16,13 @@ The current tier-1 set for production API work is:
 - Azure OpenAI
 - Gemini
 - Vertex
+- Qwen
+- Kimi/Moonshot
 - vLLM
 
 Tier-1 setup details, env vars, and smoke commands live in [providers/tier-1.md](./providers/tier-1.md).
 
-DeepSeek is deferred for Python GA. Qwen, Kimi, Ollama, Bedrock, and OpenRouter remain available according to their support-matrix tier, but they are not part of the current tier-1 portable production promise.
+DeepSeek is deferred for Python GA. Ollama, Bedrock, and OpenRouter remain available according to their support-matrix tier, but they are not part of the current tier-1 portable production promise.
 
 ## Local Setup
 

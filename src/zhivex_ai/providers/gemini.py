@@ -33,6 +33,8 @@ from ..types import (
     AudioFrame,
     AudioInput,
     BatchesClient,
+    CachedContent,
+    CachedContentListResult,
     CodeExecutionResultPart,
     ContentPart,
     CountTokensClient,
@@ -329,21 +331,32 @@ def _map_part(part: Any) -> dict[str, Any]:
         return _map_file_part(part)
     if part.type == "tool-call":
         function_call = {"name": part.tool_call.name, "args": part.tool_call.input}
+        if part.tool_call.id:
+            function_call["id"] = part.tool_call.id
         thought_signature = part.tool_call.provider_metadata.get("thought_signature")
         payload = {"functionCall": function_call}
         if thought_signature is not None:
             payload["thoughtSignature"] = thought_signature
         return payload
     if part.type == "tool-result":
-        return {
-            "functionResponse": {
+        function_response: dict[str, Any] = {
+            "name": part.tool_result.tool_name,
+            "response": {
                 "name": part.tool_result.tool_name,
-                "response": {
-                    "name": part.tool_result.tool_name,
-                    "content": part.tool_result.error.__dict__ if part.tool_result.is_error else part.tool_result.output,
-                },
-            }
+                "content": part.tool_result.error.__dict__ if part.tool_result.is_error else part.tool_result.output,
+            },
         }
+        if part.tool_result.tool_call_id:
+            function_response["id"] = part.tool_result.tool_call_id
+        response_parts = (
+            part.tool_result.provider_metadata.get("gemini_function_response_parts")
+            or part.tool_result.provider_metadata.get("function_response_parts")
+        )
+        if response_parts is not None:
+            if not isinstance(response_parts, list):
+                raise ValidationError('Gemini function response parts must be a list.')
+            function_response["parts"] = deepcopy(response_parts)
+        return {"functionResponse": function_response}
     if part.type == "generated-code":
         return {"executableCode": {"language": part.language or "python", "code": part.code}}
     if part.type == "code-result":
@@ -569,6 +582,10 @@ def _provider_options_without_mapped_tools(provider_options: dict[str, Any] | No
     stripped_keys.add(_RAW_TOOLS_PROVIDER_OPTION)
     stripped_keys.update(key for key in provider_options if _normalize_builtin_tool_name(key) is not None)
     remaining = {key: value for key, value in provider_options.items() if key not in stripped_keys}
+    if "cached_content" in remaining and "cachedContent" not in remaining:
+        remaining["cachedContent"] = remaining.pop("cached_content")
+    else:
+        remaining.pop("cached_content", None)
     return remaining or None
 
 
@@ -1648,7 +1665,7 @@ def _parse_assistant_message(candidate: dict[str, Any] | None) -> ModelMessage:
             parts.append(
                 ToolCallPart(
                     tool_call=ToolCall(
-                        id=f'{call["name"]}-0',
+                        id=str(call.get("id") or f'{call["name"]}-0'),
                         name=call["name"],
                         input=call.get("args") or {},
                         provider_metadata=provider_metadata,
@@ -1813,7 +1830,7 @@ class GeminiLanguageModel(LanguageModel):
                             provider_metadata["thought_signature"] = thought_signature
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
-                                id=f'{call["name"]}-0',
+                                id=str(call.get("id") or f'{call["name"]}-0'),
                                 name=call["name"],
                                 input=call.get("args") or {},
                                 provider_metadata=provider_metadata,
@@ -2588,6 +2605,126 @@ class GeminiInteractionsClient(InteractionsClient):
             await asyncio.sleep(max(poll_interval_ms, 1) / 1000)
 
 
+def _normalize_cached_content(payload: dict[str, Any]) -> CachedContent:
+    return CachedContent(
+        name=str(payload.get("name") or ""),
+        model=payload.get("model"),
+        display_name=payload.get("displayName"),
+        create_time=payload.get("createTime"),
+        update_time=payload.get("updateTime"),
+        expire_time=payload.get("expireTime"),
+        usage_metadata=dict(payload.get("usageMetadata") or {}),
+        metadata=dict(payload),
+        raw_response=payload,
+    )
+
+
+@dataclass(slots=True)
+class GeminiCachedContentsClient:
+    api_key: str
+    base_url: str
+    fetch: Fetcher
+
+    def _url(self, path: str, params: dict[str, Any] | None = None) -> str:
+        query = urlencode({"key": self.api_key, **drop_none(dict(params or {}))})
+        return f"{self.base_url}/{path.lstrip('/')}?{query}"
+
+    async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> CachedContent:
+        response = await self.fetch(
+            self._url("cachedContents"),
+            headers={"content-type": "application/json"},
+            json_body=deepcopy(body),
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_cached_content(await response.json())
+
+    async def get(self, name: str, options: RetryOptions | None = None) -> CachedContent:
+        response = await self.fetch(
+            self._url(name),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_cached_content(await response.json())
+
+    async def list(
+        self,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        options: RetryOptions | None = None,
+    ) -> CachedContentListResult:
+        response = await self.fetch(
+            self._url("cachedContents", {"pageSize": page_size, "pageToken": page_token}),
+            method="GET",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        return CachedContentListResult(
+            cached_contents=[_normalize_cached_content(item) for item in payload.get("cachedContents") or []],
+            next_page_token=payload.get("nextPageToken"),
+            raw_response=payload,
+        )
+
+    async def update(
+        self,
+        name: str,
+        body: dict[str, Any],
+        options: RetryOptions | None = None,
+    ) -> CachedContent:
+        response = await self.fetch(
+            self._url(name),
+            method="PATCH",
+            headers={"content-type": "application/json"},
+            json_body=deepcopy(body),
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return _normalize_cached_content(await response.json())
+
+    async def delete(self, name: str, options: RetryOptions | None = None) -> bool:
+        response = await self.fetch(
+            self._url(name),
+            method="DELETE",
+            headers={"content-type": "application/json"},
+            json_body=None,
+            timeout_ms=options.timeout_ms if options else None,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Gemini request failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        return True
+
+
 @dataclass(slots=True)
 class GeminiRealtimeModel(RealtimeModel):
     provider: str
@@ -2764,6 +2901,11 @@ def create_gemini(
             fetch=requester,
         ),
         interactions_client_factory=lambda: GeminiInteractionsClient(
+            api_key=resolved_key,
+            base_url=base,
+            fetch=requester,
+        ),
+        caches_client_factory=lambda: GeminiCachedContentsClient(
             api_key=resolved_key,
             base_url=base,
             fetch=requester,

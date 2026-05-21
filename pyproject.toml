@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.7.0"
+version = "0.8.0"
 description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
 readme = "README.md"
 license = { text = "MIT" }
@@ -84,9 +84,7 @@ include = [
   "/docs",
   "/CHANGELOG.md",
   "/CONTRIBUTING.md",
-  "/MATURITY_PLAN.md",
   "/PRODUCTION_APIS.md",
-  "/RELEASING.md",
   "/README.md",
   "/SECURITY.md",
   "/STABILITY.md",

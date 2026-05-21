@@ -21,11 +21,40 @@ Related documents:
 
 ### Added
 
-- None.
+- Gemini now exposes beta explicit context caching through `create_gemini().caches()`, including create/get/list/update/delete helpers and top-level `CachedContent` types.
+- Azure OpenAI now supports Microsoft Entra ID authentication via `entra_token` or `entra_token_provider` on `create_azure_openai(...)`, covering generation, lifecycle clients, and realtime bootstrap without adding an `azure-identity` dependency.
 
 ### Changed
 
+- Azure OpenAI credential configuration now fails fast when API key and Entra ID authentication are both configured.
+
+### Fixed
+
+- Gemini function-calling now preserves official `functionCall.id` values and sends matching `functionResponse.id` values for Gemini 3 tool loops.
+- Validated Postgres agent run-store table prefixes with the same SQL identifier rule used by the Postgres memory and checkpoint stores.
+- Updated FastAPI integration examples so provider HTTP failures return sanitized client messages instead of upstream response-body snippets.
+
+### Deprecated
+
 - None.
+
+### Removed
+
+- None.
+
+## 0.8.0
+
+### Added
+
+- Qwen and Kimi/Moonshot are now tier-1 portable providers for text generation, streaming, structured output, and callable tools through `provider("model-id")`.
+- Qwen now exposes OpenAI-compatible native Files and Batch clients through `provider.files()` and `provider.batches()` while keeping File Search as a hosted Responses tool with `vector_store_ids`.
+- Tier-1 examples, live smoke configuration, provider support metadata, and shared contract tests now include Qwen and Kimi.
+
+### Changed
+
+- Bumped the package version to `0.8.0`.
+- Regenerated the provider support matrix for the expanded tier-1 set.
+- Kept Qwen hosted tools, Qwen ASR/TTS, Kimi Files/Batch/token counting, and Kimi Formulas as native/provider-specific beta surfaces rather than portable guarantees.
 
 ### Fixed
 

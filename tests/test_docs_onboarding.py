@@ -21,7 +21,6 @@ class DocsOnboardingTests(TestCase):
             "docs/OBSERVABILITY.md",
             "docs/TROUBLESHOOTING.md",
             "docs/PARITY_MATRIX.md",
-            "docs/MIGRATING_FROM_TYPESCRIPT.md",
             "PRODUCTION_APIS.md",
             "CONTRIBUTING.md",
             ".env.example",

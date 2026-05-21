@@ -22,14 +22,15 @@ export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
 export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
+export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
+export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_VLLM_MODEL=your-local-vllm-model
-export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,vllm`.
+It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`.
 Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
@@ -210,8 +211,8 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo. Qwen also exposes native Qwen3-ASR transcription through `provider.native.transcription_model("qwen3-asr-flash")`; vLLM exposes transcription and realtime ASR when served with compatible ASR models.
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - `vllm_text.py` shows the recommended local path for vLLM's OpenAI-compatible server: `create_vllm(...)` plus the portable `provider("model-id")` path.
-- `kimi_native.py` shows the native Kimi/Moonshot Chat Completions path plus Files, Batch, token estimation, and image/video input examples. It expects `MOONSHOT_API_KEY` or `KIMI_API_KEY`.
-- `qwen_native.py` shows the native Qwen/Alibaba Cloud Model Studio path for text, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS. It expects `DASHSCOPE_API_KEY` or `QWEN_API_KEY`.
+- `kimi_native.py` shows the native Kimi/Moonshot Chat Completions path plus Files, Batch, token estimation, and image/video input examples. Kimi also participates in the portable tier-1 text/tool contract through `provider("model-id")`; it expects `MOONSHOT_API_KEY` or `KIMI_API_KEY`.
+- `qwen_native.py` shows the native Qwen/Alibaba Cloud Model Studio path for hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS. Qwen also participates in the portable tier-1 text/tool contract through `provider("model-id")`; it expects `DASHSCOPE_API_KEY` or `QWEN_API_KEY`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `small_business_loan_agent.py` is an offline reference app for regulated, multi-step workflows: the SDK handles orchestration, repair/resume, approvals, traces, and replay, while the example keeps credit rules, pricing, persistence, and approval UI as application-owned components behind replaceable interfaces.
 - `hr_candidate_selection_agent.py` is an offline reference app for human-centered HR workflows: the SDK handles resume intake orchestration, interview steps, recruiter review, fairness checks, traces, and replay, while ATS integrations, hiring policy, and compliance systems stay application-owned.

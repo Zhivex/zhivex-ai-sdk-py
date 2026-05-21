@@ -761,16 +761,18 @@ class FakeAsyncPGConnection:
 
 class PostgresStoreTests(IsolatedAsyncioTestCase):
     def test_postgres_stores_accept_valid_table_prefix(self) -> None:
-        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_checkpoint_store
+        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_agent_run_store, create_postgres_checkpoint_store
 
         memory = create_postgres_agent_memory_store("postgres://example", table_prefix="agent_data")
         checkpoints = create_postgres_checkpoint_store("postgres://example", table_prefix="agent_data")
+        runs = create_postgres_agent_run_store("postgres://example", table_prefix="agent_data")
 
         self.assertEqual(memory._table(), "agent_data_agent_memory")
         self.assertEqual(checkpoints._table(), "agent_data_agent_checkpoints")
+        self.assertEqual(runs._table, "agent_data_runs")
 
     def test_postgres_stores_reject_invalid_table_prefix(self) -> None:
-        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_checkpoint_store
+        from zhivex_ai import create_postgres_agent_memory_store, create_postgres_agent_run_store, create_postgres_checkpoint_store
 
         invalid_prefixes = ["my-app", "bad prefix", "9agents", "agents;drop"]
         for prefix in invalid_prefixes:
@@ -779,6 +781,8 @@ class PostgresStoreTests(IsolatedAsyncioTestCase):
                     create_postgres_agent_memory_store("postgres://example", table_prefix=prefix)
                 with self.assertRaises(ValidationError):
                     create_postgres_checkpoint_store("postgres://example", table_prefix=prefix)
+                with self.assertRaises(ValidationError):
+                    create_postgres_agent_run_store("postgres://example", table_prefix=prefix)
 
     async def test_postgres_stores_work_with_asyncpg_driver(self) -> None:
         FakeAsyncPGConnection.store = {"memory": {}, "checkpoints": []}

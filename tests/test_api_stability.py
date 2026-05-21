@@ -79,8 +79,6 @@ class ApiStabilityTests(TestCase):
     def test_stability_doc_points_to_manifest_as_drift_gate(self) -> None:
         stability = (ROOT / "STABILITY.md").read_text("utf-8")
         versioning = (ROOT / "VERSIONING.md").read_text("utf-8")
-        releasing = (ROOT / "RELEASING.md").read_text("utf-8")
 
         self.assertIn("api_stability.py", stability)
         self.assertIn("api_stability.py", versioning)
-        self.assertIn("api_stability.py", releasing)

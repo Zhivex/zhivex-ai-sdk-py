@@ -64,6 +64,7 @@ class NativeSupport:
     skills: bool = False
     responses: bool = False
     conversations: bool = False
+    caches: bool = False
 
 
 @dataclass(slots=True)
@@ -148,6 +149,7 @@ class ToolExecutionResult:
     output: JsonValue | None = None
     error: ToolExecutionError | None = None
     is_error: bool = False
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -588,6 +590,49 @@ class InteractionsClient(Protocol):
         poll_interval_ms: int = 10_000,
         timeout_ms: int | None = None,
     ) -> dict[str, Any]: ...
+
+
+@dataclass(slots=True)
+class CachedContent:
+    name: str
+    model: str | None = None
+    display_name: str | None = None
+    create_time: str | None = None
+    update_time: str | None = None
+    expire_time: str | None = None
+    usage_metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    raw_response: Any = None
+
+
+@dataclass(slots=True)
+class CachedContentListResult:
+    cached_contents: list[CachedContent] = field(default_factory=list)
+    next_page_token: str | None = None
+    raw_response: Any = None
+
+
+class CachedContentsClient(Protocol):
+    async def create(self, body: dict[str, Any], options: "RetryOptions | None" = None) -> CachedContent: ...
+
+    async def get(self, name: str, options: "RetryOptions | None" = None) -> CachedContent: ...
+
+    async def list(
+        self,
+        *,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        options: "RetryOptions | None" = None,
+    ) -> CachedContentListResult: ...
+
+    async def update(
+        self,
+        name: str,
+        body: dict[str, Any],
+        options: "RetryOptions | None" = None,
+    ) -> CachedContent: ...
+
+    async def delete(self, name: str, options: "RetryOptions | None" = None) -> bool: ...
 
 
 class ContainersClient(Protocol):

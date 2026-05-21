@@ -51,7 +51,8 @@ These APIs are supported and documented, but they may still change between minor
 - Packaged skill APIs and installers: `load_skill_package`, `validate_skill`, `install_skill`, `list_installed_skills`, `run_skill`, `publish_skill`
 - Packaged skill types and artifacts: `SkillArtifact`, `SkillEntrypoint`, `SkillPermissions`, `SkillPackageManifest`, `InstalledSkill`, `SkillRegistryIndex`, `SkillRunResult`
 - Packaged skill runtime events: `AgentSkillResolvedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillArtifactCreatedEvent`
-- Google native media and job clients: `ImagesClient`, `VideosClient`, `MediaClient`, `BatchesClient`, `InteractionsClient`, `ProviderImage`, `GeneratedMedia`, `MediaResult`, `VideoOperation`, and `VideoResult`
+- Google native media and job clients: `ImagesClient`, `VideosClient`, `MediaClient`, `BatchesClient`, `InteractionsClient`, `CachedContentsClient`, `CachedContent`, `CachedContentListResult`, `ProviderImage`, `GeneratedMedia`, `MediaResult`, `VideoOperation`, and `VideoResult`
+- Qwen native hosted-tool, Files, Batch, ASR, and TTS helpers exposed through `provider.native`, `provider.responses()`, `provider.files()`, and `provider.batches()`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
 - Agent platform helpers: durable `AgentRunState` stores, native subagent tools, evaluation fixtures/reports, replay, trace artifacts, run-tree cancellation, safety policies, redaction policies, and budget guards
@@ -86,14 +87,20 @@ The current tier-1 provider story for the stable surface is:
 - Azure OpenAI
 - Gemini
 - Vertex
+- Qwen
+- Kimi/Moonshot
 - vLLM
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
 
 Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
 
-Azure OpenAI is tier-1 for the portable production surface. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
+Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai(...)` supports either API key authentication or Microsoft Entra ID token/provider authentication. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
+
+Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. Its hosted tools, raw Responses settings, Files, Batch, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
+
+Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. Files, Batch, token estimation, Formulas, and K2 thinking controls remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
 
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 
-Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind. Kimi/Moonshot is a compatibility provider: its native Chat Completions, Files, Batch, token estimation, and Formulas paths are useful, but they are not part of the tier-1 portable contract.
+Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind.

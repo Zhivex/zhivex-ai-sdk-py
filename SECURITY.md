@@ -68,4 +68,3 @@ The SDK helps identify and gate these paths with approval policies, redaction po
 - [docs/PRODUCTION.md](./docs/PRODUCTION.md)
 - [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
 - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
-- [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md)

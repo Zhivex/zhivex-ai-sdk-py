@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from .providers.base import ProviderBundle
 from .types import AgentCapabilities, NativeSupport, PortableProviderTier, PortableSupport
 
-TIER_1_PROVIDERS = ("openai", "anthropic", "azure-openai", "gemini", "vertex", "vllm")
+TIER_1_PROVIDERS = ("openai", "anthropic", "azure-openai", "gemini", "vertex", "qwen", "kimi", "vllm")
 README_SUPPORT_MATRIX_BEGIN = "<!-- BEGIN GENERATED SUPPORT MATRIX -->"
 README_SUPPORT_MATRIX_END = "<!-- END GENERATED SUPPORT MATRIX -->"
 
@@ -79,6 +79,7 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         "Realtime",
         "Responses",
         "Conversations",
+        "Caches",
     ]
     agent_headers = [
         "Provider",
@@ -136,6 +137,7 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
                 _yes_no(row.native_support.realtime),
                 _yes_no(row.native_support.responses),
                 _yes_no(row.native_support.conversations),
+                _yes_no(row.native_support.caches),
             ]
             for row in materialized
         ],

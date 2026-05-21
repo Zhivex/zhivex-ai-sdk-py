@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
@@ -13,6 +14,16 @@ from .errors import ValidationError
 from .types import FinishReason, JsonValue, ModelMessage, TokenUsage, ToolCall, ToolExecutionResult
 
 AgentRunStatus = Literal["running", "completed", "failed", "cancelled", "suspended"]
+
+_POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_postgres_table_prefix(table_prefix: str) -> str:
+    if not _POSTGRES_IDENTIFIER_RE.match(table_prefix):
+        raise ValidationError(
+            'The "table_prefix" field must match the SQL identifier pattern [A-Za-z_][A-Za-z0-9_]*.'
+        )
+    return table_prefix
 
 
 def _to_plain(value: Any) -> Any:
@@ -382,7 +393,7 @@ class SQLiteAgentRunStore:
 class PostgresAgentRunStore:
     def __init__(self, dsn: str, *, table_prefix: str = "zhivex_agent") -> None:
         self._dsn = dsn
-        self._table = f"{table_prefix}_runs"
+        self._table = f"{_validate_postgres_table_prefix(table_prefix)}_runs"
 
     async def _connect(self) -> Any:
         try:

@@ -28,7 +28,7 @@ Legend:
 | Declarative workflows | Yes | Yes | Yes | N/A | beta |
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
 | Realtime/live agents | Yes | partial | Yes | optional | experimental |
-| Google native media clients | Yes | provider docs | provider tests | optional | beta/native |
+| Google native media/cache clients | Yes | provider docs | provider tests | optional | beta/native |
 | Release install verification | Yes | Yes | Yes | N/A | beta release gate |
 | Security and operations guides | Yes | Yes | Yes | N/A | beta guidance |
 

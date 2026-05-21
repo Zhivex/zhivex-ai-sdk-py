@@ -32,9 +32,7 @@ class ReleaseArtifactToolingTests(TestCase):
         for path in [
             "/CHANGELOG.md",
             "/CONTRIBUTING.md",
-            "/MATURITY_PLAN.md",
             "/PRODUCTION_APIS.md",
-            "/RELEASING.md",
             "/README.md",
             "/SECURITY.md",
             "/STABILITY.md",

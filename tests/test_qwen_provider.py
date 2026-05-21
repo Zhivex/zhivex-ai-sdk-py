@@ -120,9 +120,43 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses")
         self.assertEqual(requests[0]["json"], {"model": "qwen3.5-plus", "input": "hello"})
         self.assertTrue(provider.native_support.responses)
+        self.assertTrue(provider.native_support.files)
+        self.assertTrue(provider.native_support.batches)
         self.assertFalse(provider.native_support.file_search)
         with self.assertRaises(AttributeError):
             provider.file_search_stores()
+
+    async def test_qwen_exposes_openai_compatible_files_and_batches_without_vector_store_lifecycle(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method, "json": json_body, "body": body})
+            if url.endswith("/files") and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "file_qwen", "filename": "batch.jsonl", "bytes": 42, "status": "processed"})
+            if url.endswith("/batches") and method == "POST":
+                return FakeResponse(status_code=200, payload={"id": "batch_qwen", "status": "validating"})
+            raise AssertionError(url)
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        uploaded = await provider.files().upload(data=b"{}", filename="batch.jsonl", media_type="application/jsonl")
+        batch = await provider.batches().create(
+            {"input_file_id": uploaded.id, "endpoint": "/v1/chat/completions", "completion_window": "24h"}
+        )
+
+        self.assertEqual(uploaded.id, "file_qwen")
+        self.assertEqual(batch["id"], "batch_qwen")
+        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/files")
+        self.assertEqual(requests[0]["body"]["data"]["purpose"], "batch")
+        self.assertEqual(requests[1]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/batches")
 
     async def test_qwen_uses_responses_endpoint_and_supports_tools(self) -> None:
         requests: list[dict[str, Any]] = []

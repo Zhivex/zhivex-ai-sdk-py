@@ -51,7 +51,7 @@ def _http_exception_from_sdk_error(error: Exception) -> HTTPException:
         return HTTPException(
             status_code=503 if error.retryable else 502,
             detail={
-                "message": str(error),
+                "message": "Upstream provider request failed.",
                 "provider_status": error.status,
                 "retryable": error.retryable,
             },

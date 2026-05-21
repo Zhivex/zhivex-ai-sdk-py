@@ -678,10 +678,10 @@ def create_kimi(
             tools=True,
             embeddings=False,
             grounding=False,
-            retrieval=True,
+            retrieval=False,
             transcription=False,
             speech=False,
-            portable_badge=False,
-            tier="compatibility",
+            portable_badge=True,
+            tier="portable",
         ),
     )
