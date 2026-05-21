@@ -28,16 +28,32 @@ result = await gateway.generate(
 
 The result includes `text`, `provider_used`, `model_used`, attempt metadata, and latency fields.
 
+For production routes where every configured provider should be present, enable fail-fast adapter validation:
+
+```python
+gateway = create_gateway(
+    GatewayConfig(
+        adapters={"openai": openai, "anthropic": anthropic},
+        fail_on_missing_adapter=True,
+    )
+)
+```
+
+With this setting, a missing adapter raises `GatewayError` instead of silently moving to a fallback target.
+
 ## Operations
 
 Use `GatewayConfig(on_attempt=...)` to log every attempt. Include your request ID in the closure so gateway logs can be correlated with API logs.
+
+`on_attempt` receives payloads for executed attempts and skipped targets. That includes missing adapters, capability skips, vision skips, cost-budget skips, retries, and successful attempts.
 
 For production APIs:
 
 - define one timeout budget per endpoint
 - return normalized errors to clients
 - log selected provider and model
+- log skipped gateway targets, not just the final provider
 - keep fallback order explicit and reviewed
 - prefer tier-1 providers for long-term public contracts
 
-See [../PRODUCTION_APIS.md](../PRODUCTION_APIS.md) and `examples/integrations/fastapi_gateway_api.py` for API wiring.
+See [../PRODUCTION_APIS.md](../PRODUCTION_APIS.md), `examples/integrations/fastapi_gateway_api.py`, and `examples/production/fastapi_agent_api.py` for API wiring.

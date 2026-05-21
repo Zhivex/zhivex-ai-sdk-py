@@ -123,6 +123,14 @@
       "stability": "beta/native"
     },
     {
+      "area": "Production API and worker examples",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "optional",
+      "stability": "beta guidance"
+    },
+    {
       "area": "Release install verification",
       "implemented": "yes",
       "documented": "yes",

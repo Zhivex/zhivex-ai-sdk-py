@@ -83,6 +83,7 @@ class GatewayConfig:
     attempt_timeout_ms: int = 20_000
     attempt_timeouts_ms: dict[GatewayProviderId, int] = field(default_factory=dict)
     retry_backoff_ms: int = 200
+    fail_on_missing_adapter: bool = False
     on_attempt: Any = None
 
 
@@ -268,27 +269,52 @@ def create_gateway(config: GatewayConfig):
             started_at = time.time()
             ordered_targets = _order_targets(routing_mode, task_intent, primary, fallbacks or [], config)
             route_decision = create_route_decision(routing_mode, task_intent, ordered_targets)
+
+            async def record_skipped_attempt(target: GatewayModelTarget, target_index: int, error_message: str) -> None:
+                attempts.append(
+                    GatewayAttempt(
+                        provider=target.provider,
+                        model_id=target.model_id,
+                        ok=False,
+                        latency_ms=0,
+                        error_message=error_message,
+                        retryable=False,
+                    )
+                )
+                if config.on_attempt:
+                    await _maybe_await(config.on_attempt(_attempt_payload(attempts[-1], 0, target_index)))
+
             for target_index, target in enumerate(ordered_targets):
                 adapter = config.adapters.get(target.provider)
                 if adapter is None:
-                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message=f'No adapter registered for provider "{target.provider}".'))
+                    await record_skipped_attempt(
+                        target,
+                        target_index,
+                        f'No adapter registered for provider "{target.provider}".',
+                    )
+                    if config.fail_on_missing_adapter:
+                        raise _final_gateway_error(attempts)
                     continue
                 if _messages_require_vision(messages) and not _target_supports_vision(adapter, target):
-                    attempts.append(
-                        GatewayAttempt(
-                            provider=target.provider,
-                            model_id=target.model_id,
-                            ok=False,
-                            latency_ms=0,
-                            error_message="Skipped because the request contains images and the target does not support vision input.",
-                        )
+                    await record_skipped_attempt(
+                        target,
+                        target_index,
+                        "Skipped because the request contains images and the target does not support vision input.",
                     )
                     continue
                 if not _supports_required_capabilities(adapter, target, required_capabilities):
-                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message="Skipped because model capabilities do not satisfy the request."))
+                    await record_skipped_attempt(
+                        target,
+                        target_index,
+                        "Skipped because model capabilities do not satisfy the request.",
+                    )
                     continue
                 if not _within_cost_budget(config, max_cost_per_1k_tokens, target):
-                    attempts.append(GatewayAttempt(provider=target.provider, model_id=target.model_id, ok=False, latency_ms=0, error_message="Skipped because provider cost exceeds the configured budget."))
+                    await record_skipped_attempt(
+                        target,
+                        target_index,
+                        "Skipped because provider cost exceeds the configured budget.",
+                    )
                     continue
                 for retry in range(max(0, config.max_retries) + 1):
                     attempt_started = time.time()

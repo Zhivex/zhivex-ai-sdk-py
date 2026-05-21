@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-docs test-release test-cov lint typecheck smoke compile support-matrix-check check build release-install-check release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-docs test-release test-cov lint typecheck smoke compile support-matrix-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv venv .venv
@@ -25,7 +25,7 @@ test-providers:
 	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_kimi_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_hosted_tools.py tests/test_realtime.py -q
 
 test-examples:
-	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py -q
+	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
 
 test-agents:
 	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_extensions.py tests/test_platform_parity.py tests/test_workflow.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
@@ -61,6 +61,9 @@ build:
 
 release-install-check:
 	$(PYTHON) scripts/verify_release_artifacts.py --dist-dir dist
+
+release-evidence:
+	$(PYTHON) scripts/collect_release_evidence.py
 
 release-check: build release-install-check
 	$(PYTHON) -m twine check dist/*

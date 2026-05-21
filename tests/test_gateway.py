@@ -180,6 +180,51 @@ class GatewayTests(IsolatedAsyncioTestCase):
         self.assertEqual(attempt_events[1]["ok"], False)
         self.assertEqual(attempt_events[2]["provider"], "anthropic")
 
+    async def test_gateway_on_attempt_emits_skipped_targets(self) -> None:
+        attempt_events: list[dict[str, object]] = []
+
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: WorkingModel()),
+                },
+                max_retries=0,
+                on_attempt=lambda payload: attempt_events.append(payload),
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+        )
+
+        self.assertEqual(result.provider_used, "anthropic")
+        self.assertEqual(attempt_events[0]["provider"], "openai")
+        self.assertEqual(attempt_events[0]["ok"], False)
+        self.assertEqual(attempt_events[0]["targetRank"], 0)
+        self.assertIn("No adapter registered", str(attempt_events[0]["errorMessage"]))
+
+    async def test_gateway_can_fail_fast_when_adapter_is_missing(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: WorkingModel()),
+                },
+                fail_on_missing_adapter=True,
+            )
+        )
+
+        with self.assertRaises(GatewayError) as context:
+            await gateway.generate(
+                messages=[GatewayMessage(role="user", content="hello")],
+                primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+                fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+            )
+
+        self.assertFalse(context.exception.retryable)
+        self.assertIn('No adapter registered for provider "openai"', str(context.exception))
+
     async def test_gateway_skips_non_vision_targets_instead_of_dropping_images(self) -> None:
         gateway = create_gateway(
             GatewayConfig(

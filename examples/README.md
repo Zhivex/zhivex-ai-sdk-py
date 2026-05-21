@@ -9,6 +9,7 @@ This folder contains runnable Python examples for the main public surfaces of th
 - `realtime/`: provider realtime sessions plus a live agent example.
 - `audio/`: transcription and speech generation.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, FastAPI reference APIs, and observability patterns.
+- `production/`: production-style API and worker boundaries for durable agents, idempotency, gateway attempts, and release-ready operational defaults.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 - Tier-1 providers: `text/tier1_providers.py` runs the portable text path for whichever tier-1 provider credentials and `ZHIVEX_EXAMPLE_*_MODEL` values are configured.
 
@@ -95,6 +96,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/provider_managed_approvals.py
 .venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py
+.venv/bin/python examples/production/worker_resume.py
 .venv/bin/python examples/realtime/openai_realtime.py
 ```
 
@@ -180,6 +182,19 @@ uvicorn examples.integrations.fastapi_streaming_api:app --reload
 uvicorn examples.integrations.fastapi_gateway_api:app --reload
 ```
 
+### Production
+
+```bash
+.venv/bin/python examples/production/worker_resume.py
+```
+
+FastAPI production boundary:
+
+```bash
+DATABASE_URL=postgres://user:pass@localhost:5432/app \
+uvicorn examples.production.fastapi_agent_api:app --reload
+```
+
 ### Dev
 
 ```bash
@@ -201,6 +216,8 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 | `integrations/fastapi_chat_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_chat_api:app --reload` | manual HTTP smoke |
 | `integrations/fastapi_streaming_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_streaming_api:app --reload` | manual streaming smoke |
 | `integrations/fastapi_gateway_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_gateway_api:app --reload` | manual HTTP smoke |
+| `production/worker_resume.py` | offline | dev env | `.venv/bin/python examples/production/worker_resume.py` | `make test-examples` |
+| `production/fastapi_agent_api.py` | live optional | `zhivex-ai-sdk[api,otel,postgres]`, `DATABASE_URL`, and provider env | `uvicorn examples.production.fastapi_agent_api:app --reload` | parse check plus manual HTTP smoke |
 | `agents/mcp_tools.py` | optional extra | `zhivex-ai-sdk[mcp]` and MCP server | `.venv/bin/python examples/agents/mcp_tools.py` | manual MCP smoke |
 | `integrations/observability.py` | live optional | provider env, optional `zhivex-ai-sdk[otel]` | `.venv/bin/python examples/integrations/observability.py` | manual log review |
 | `integrations/operations_hardening.py` | offline | dev env | `.venv/bin/python examples/integrations/operations_hardening.py` | `make test-examples` |
@@ -223,6 +240,8 @@ uvicorn examples.integrations.fastapi_gateway_api:app --reload
 - `kimi_official_tools.py` loads Moonshot official Formulas tools through `provider.formulas().toolset(...)` and runs them inside the normal local tool loop.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, Bedrock, and vLLM now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
+- `production/fastapi_agent_api.py` is the recommended starting point for backend agent APIs that need request IDs, idempotency keys, durable run storage, sanitized errors, and fail-fast gateway adapter configuration.
+- `production/worker_resume.py` is the recommended offline worker pattern for queue idempotency, checkpoint resume, and replay evidence.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.
 - Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.
 - The Bedrock realtime example requires an injected AWS-signed websocket connection factory.

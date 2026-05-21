@@ -67,6 +67,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Beta typed provider-data payloads and approval flows for OpenAI/Azure remote MCP
 - Beta response-reference helpers and provider-data UI chunks for OpenAI/Azure continuation workflows
 - Gateway routing with fallback support
+- Production-style API and worker examples for durable agents, idempotency, gateway attempts, and release evidence
 - HTTP/UI helpers for SSE, plain text streams, and UI message transport
 - Middleware for telemetry, caching, and circuit breaking
 - Model catalog helpers for cost and recommendation metadata
@@ -168,6 +169,7 @@ Tool support now follows the same rule everywhere:
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`.
 - Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
+- Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
 - Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client.
@@ -1544,6 +1546,7 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
 - Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)
 - Integrations: [ui_messages.py](./examples/integrations/ui_messages.py), [http_responses.py](./examples/integrations/http_responses.py), [gateway_fallback.py](./examples/integrations/gateway_fallback.py)
+- Production: [fastapi_agent_api.py](./examples/production/fastapi_agent_api.py), [worker_resume.py](./examples/production/worker_resume.py)
 
 For real provider validation, the repo also includes a live smoke runner:
 

@@ -29,6 +29,7 @@ Legend:
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
 | Realtime/live agents | Yes | partial | Yes | optional | experimental |
 | Google native media/cache clients | Yes | provider docs | provider tests | optional | beta/native |
+| Production API and worker examples | Yes | Yes | Yes | optional | beta guidance |
 | Release install verification | Yes | Yes | Yes | N/A | beta release gate |
 | Security and operations guides | Yes | Yes | Yes | N/A | beta guidance |
 

@@ -47,6 +47,8 @@ Retry only transient provider or network failures. `ProviderHTTPError.retryable`
 
 Gateway calls expose `max_retries`, `retry_backoff_ms`, retry number, target rank, and retryability through `GatewayConfig(on_attempt=...)`. Pair gateway retries with an application idempotency key when the user action can be submitted more than once.
 
+For production gateway routes, set `GatewayConfig(fail_on_missing_adapter=True)` when every configured provider target is expected to have an adapter at startup. This prevents an accidentally missing primary adapter from being hidden by a successful fallback. Skipped targets now emit `on_attempt` payloads, so missing adapters, capability skips, vision skips, and cost-budget skips can be correlated with request logs.
+
 Use `create_circuit_breaker_middleware(...)` around provider calls that should fail fast during an outage. Log state changes with request id, provider, model, failure count, and breaker status.
 
 ## Provider Error Normalization
@@ -97,6 +99,10 @@ Use `create_otel_agent_observer(...)` for OpenTelemetry spans, and `create_agent
 ## Recovery
 
 Use `resume_agent(...)` for session/checkpoint recovery. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
+
+## Release Evidence
+
+For release candidates, run `make release-evidence` to write the local release gate output to `docs/releases/<version>-evidence.md`. Treat live provider smoke as a separate environment-dependent record and list every skipped provider with its missing credential or model environment variable.
 
 ## Security
 
