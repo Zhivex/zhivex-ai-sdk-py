@@ -68,11 +68,12 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         expected = [
             ("openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
             ("openai", "gpt-5.4-mini", {"speed", "tools"}),
-            ("anthropic", "claude-opus-4-7", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3-flash-preview", {"speed", "tools", "vision"}),
             ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("bedrock", "anthropic.claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.6-plus", {"reasoning", "tools", "vision"}),
@@ -88,6 +89,7 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             self.assertTrue(recommended.issubset(set(entry.recommended_for)))  # type: ignore[union-attr]
 
         self.assertEqual(default_model_catalog.find("gemini", "gemini-pro-latest").model_id, "gemini-3.1-pro-preview")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("anthropic", "claude-opus-4-7").model_id, "claude-opus-4-8")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.6-plus-2026-04-02").model_id, "qwen3.6-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.5-plus-2026-04-20").model_id, "qwen3.5-plus")  # type: ignore[union-attr]

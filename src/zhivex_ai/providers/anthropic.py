@@ -101,6 +101,9 @@ _ANTHROPIC_MCP_BETA = "mcp-client-2025-04-04"
 _ANTHROPIC_CURRENT_MCP_BETA = "mcp-client-2025-11-20"
 _ANTHROPIC_CODE_EXECUTION_BETA = "code-execution-2025-08-25"
 _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20250305"
+_ANTHROPIC_OPUS_ADAPTIVE_THINKING_PREFIXES = ("claude-opus-4-7", "claude-opus-4-8")
+_ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = ("claude-opus-4-8",)
+_ANTHROPIC_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 AnthropicMcpVersion = Literal["legacy", "current"]
 _ANTHROPIC_MCP_BETA_BY_VERSION: dict[AnthropicMcpVersion, str] = {
     "legacy": _ANTHROPIC_MCP_BETA,
@@ -503,16 +506,81 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
     return blocks
 
 
-def _system_prompt_from_messages(messages: list[ModelMessage]) -> str:
-    return "\n".join(
-        part.text for message in messages if message.role == "system" for part in message.parts if part.type == "text"
-    )
+def _is_anthropic_opus_adaptive_thinking_model(model_id: str) -> bool:
+    normalized = model_id.strip().lower()
+    return any(normalized.startswith(prefix) for prefix in _ANTHROPIC_OPUS_ADAPTIVE_THINKING_PREFIXES)
 
 
-def _map_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
-    mapped = []
+def _supports_mid_conversation_system_messages(model_id: str) -> bool:
+    normalized = model_id.strip().lower()
+    return any(normalized.startswith(prefix) for prefix in _ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES)
+
+
+def _system_text(message: ModelMessage) -> str:
+    return "\n".join(part.text for part in message.parts if part.type == "text")
+
+
+def _leading_system_count(messages: list[ModelMessage]) -> int:
+    count = 0
     for message in messages:
+        if message.role != "system":
+            break
+        count += 1
+    return count
+
+
+def _system_prompt_from_messages(messages: list[ModelMessage], model_id: str | None = None) -> str:
+    if model_id is not None and _supports_mid_conversation_system_messages(model_id):
+        leading = messages[: _leading_system_count(messages)]
+        return "\n".join(_system_text(message) for message in leading if _system_text(message))
+    return "\n".join(_system_text(message) for message in messages if message.role == "system" and _system_text(message))
+
+
+def _message_ends_with_provider_managed_tool_use(message: ModelMessage) -> bool:
+    for part in reversed(message.parts):
+        if part.type != "tool-call":
+            continue
+        metadata = part.tool_call.provider_metadata
+        return bool(metadata.get("provider_managed")) or metadata.get("anthropic_tool_block_type") in {
+            "server_tool_use",
+            "mcp_tool_use",
+        }
+    return False
+
+
+def _validate_mid_conversation_system_messages(messages: list[ModelMessage], model_id: str) -> None:
+    if not _supports_mid_conversation_system_messages(model_id):
+        return
+    leading_count = _leading_system_count(messages)
+    for index, message in enumerate(messages):
+        if message.role != "system" or index < leading_count:
+            continue
+        previous = messages[index - 1] if index > 0 else None
+        previous_is_valid = previous is not None and (
+            previous.role == "user"
+            or (previous.role == "assistant" and _message_ends_with_provider_managed_tool_use(previous))
+        )
+        if not previous_is_valid:
+            raise ValidationError(
+                'Provider "anthropic" requires mid-conversation system messages to immediately follow '
+                'a user message or an assistant message ending in a provider-managed tool use.'
+            )
+        next_message = messages[index + 1] if index + 1 < len(messages) else None
+        if next_message is not None and next_message.role != "assistant":
+            raise ValidationError(
+                'Provider "anthropic" requires mid-conversation system messages to be the last message '
+                'or be followed by an assistant message.'
+            )
+
+
+def _map_messages(messages: list[ModelMessage], model_id: str | None = None) -> list[dict[str, Any]]:
+    supports_mid_conversation_system = bool(model_id and _supports_mid_conversation_system_messages(model_id))
+    leading_system_count = _leading_system_count(messages) if supports_mid_conversation_system else 0
+    mapped = []
+    for index, message in enumerate(messages):
         if message.role == "system":
+            if supports_mid_conversation_system and index >= leading_system_count:
+                mapped.append({"role": "system", "content": _map_block_parts(message)})
             continue
         role = "assistant" if message.role == "assistant" else "user"
         if message.role == "tool":
@@ -699,13 +767,24 @@ def _map_tool_choice(
     return {"type": "tool", "name": tool_choice.tool_name}
 
 
-def _map_reasoning(input: ModelGenerateInput | GroundedModelGenerateInput) -> dict[str, Any] | None:
+def _map_reasoning(input: ModelGenerateInput | GroundedModelGenerateInput, model_id: str) -> dict[str, Any] | None:
     if input.reasoning is None:
         return None
     if input.reasoning.effort is not None:
-        raise UnsupportedFeatureError('Provider "anthropic" does not support "reasoning.effort" through this SDK yet.')
+        if input.reasoning.effort not in _ANTHROPIC_EFFORT_LEVELS:
+            raise UnsupportedFeatureError(
+                'Provider "anthropic" supports reasoning.effort values "low", "medium", "high", "xhigh", and "max".'
+            )
+        if _is_anthropic_opus_adaptive_thinking_model(model_id):
+            return {"type": "adaptive"}
+        return None
     if input.reasoning.budget_tokens is None:
         return None
+    if _is_anthropic_opus_adaptive_thinking_model(model_id):
+        raise UnsupportedFeatureError(
+            'Provider "anthropic" does not support reasoning.budget_tokens on Claude Opus 4.7 or 4.8; '
+            "use reasoning.effort with adaptive thinking instead."
+        )
     return {"type": "enabled", "budget_tokens": input.reasoning.budget_tokens}
 
 
@@ -719,6 +798,78 @@ def _map_structured_output(input: ModelGenerateInput) -> dict[str, Any] | None:
             "schema": _anthropic_schema(input.structured_output.schema),
         }
     }
+
+
+def _map_effort(input: ModelGenerateInput | GroundedModelGenerateInput) -> str | None:
+    if input.reasoning is None or input.reasoning.effort is None:
+        return None
+    if input.reasoning.effort not in _ANTHROPIC_EFFORT_LEVELS:
+        raise UnsupportedFeatureError(
+            'Provider "anthropic" supports reasoning.effort values "low", "medium", "high", "xhigh", and "max".'
+        )
+    return input.reasoning.effort
+
+
+def _merge_output_config(
+    mapped_output_config: dict[str, Any] | None,
+    provider_options: dict[str, Any],
+    *,
+    effort: str | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    options = dict(provider_options)
+    raw_output_config = options.pop("output_config", None)
+    if raw_output_config is not None and not isinstance(raw_output_config, dict):
+        raise ValidationError('Provider "anthropic" expects "provider_options[\'output_config\']" to be a dict.')
+    output_config = deepcopy(raw_output_config) if isinstance(raw_output_config, dict) else {}
+    for key, value in (mapped_output_config or {}).items():
+        if key in output_config and output_config[key] != value:
+            raise ValidationError(f'Provider "anthropic" received conflicting output_config.{key!s} values.')
+        output_config[key] = value
+    if effort is not None:
+        existing_effort = output_config.get("effort")
+        if existing_effort is not None and existing_effort != effort:
+            raise ValidationError('Pass either reasoning.effort or provider_options={"output_config": {"effort": ...}}, not both.')
+        output_config["effort"] = effort
+    return output_config or None, options
+
+
+def _merge_thinking_config(
+    mapped_thinking: dict[str, Any] | None,
+    provider_options: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    options = dict(provider_options)
+    raw_thinking = options.pop("thinking", None)
+    if raw_thinking is not None and not isinstance(raw_thinking, dict):
+        raise ValidationError('Provider "anthropic" expects "provider_options[\'thinking\']" to be a dict.')
+    if mapped_thinking is None:
+        return deepcopy(raw_thinking) if isinstance(raw_thinking, dict) else None, options
+    if raw_thinking is not None and raw_thinking != mapped_thinking:
+        raise ValidationError('Pass either reasoning=... or provider_options={"thinking": ...}, not both.')
+    return mapped_thinking, options
+
+
+def _validate_opus_adaptive_request(
+    model_id: str,
+    input: ModelGenerateInput | GroundedModelGenerateInput,
+    provider_options: dict[str, Any],
+) -> None:
+    if not _is_anthropic_opus_adaptive_thinking_model(model_id):
+        return
+    if input.temperature is not None:
+        raise UnsupportedFeatureError(
+            f'Provider "anthropic" does not support non-default temperature for model "{model_id}".'
+        )
+    configured = sorted(key for key in ("top_p", "top_k") if provider_options.get(key) is not None)
+    if configured:
+        joined = ", ".join(configured)
+        raise UnsupportedFeatureError(
+            f'Provider "anthropic" does not support non-default sampling parameters for model "{model_id}": {joined}.'
+        )
+    thinking = provider_options.get("thinking")
+    if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+        raise UnsupportedFeatureError(
+            f'Provider "anthropic" only supports adaptive thinking for model "{model_id}".'
+        )
 
 
 def _parse_tool_input(raw_input: str) -> tuple[Any, dict[str, Any]]:
@@ -1076,6 +1227,7 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
         elif system:
             built_messages = [ModelMessage(role="system", parts=[TextPart(text=system)]), *built_messages]
         validate_message_parts(cast(Any, self), built_messages)
+        _validate_mid_conversation_system_messages(built_messages, model_id)
         extracted_options, request_betas, mcp_beta = _extract_provider_options(provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(tools))
         body_tools, extracted_options = _merge_tool_payloads(
@@ -1086,8 +1238,8 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
         body = drop_none(
             {
                 "model": model_id,
-                "system": _system_prompt_from_messages(built_messages),
-                "messages": _map_messages(built_messages),
+                "system": _system_prompt_from_messages(built_messages, model_id),
+                "messages": _map_messages(built_messages, model_id),
                 "tools": body_tools,
                 **extracted_options,
             }
@@ -1138,26 +1290,34 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(cast(Any, self), input.messages)
-        extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
+        _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        _validate_opus_adaptive_request(self.model_id, input, provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
             provider_options,
             mcp_servers=_extract_mcp_servers_from_tools(input.tools),
         )
+        output_config, provider_options = _merge_output_config(
+            _map_structured_output(input),
+            provider_options,
+            effort=_map_effort(input),
+        )
+        thinking, provider_options = _merge_thinking_config(_map_reasoning(input, self.model_id), provider_options)
+        extended_thinking = bool(thinking and thinking.get("type") in {"enabled", "adaptive"})
         body = drop_none(
             {
                 "model": self.model_id,
-                "system": _system_prompt_from_messages(input.messages),
-                "messages": _map_messages(input.messages),
+                "system": _system_prompt_from_messages(input.messages, self.model_id),
+                "messages": _map_messages(input.messages, self.model_id),
                 "tools": body_tools,
                 "tool_choice": _map_tool_choice(input.tool_choice, extended_thinking=extended_thinking),
                 "temperature": input.temperature,
                 "max_tokens": input.max_tokens or 1024,
-                "output_config": _map_structured_output(input),
+                "output_config": output_config,
                 **provider_options,
-                "thinking": _map_reasoning(input),
+                "thinking": thinking,
             }
         )
         response = await with_retry(
@@ -1197,14 +1357,22 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
         validate_message_parts(cast(Any, self), input.messages)
-        extended_thinking = bool(input.reasoning is not None and input.reasoning.budget_tokens is not None)
+        _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        _validate_opus_adaptive_request(self.model_id, input, provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
             provider_options,
             mcp_servers=_extract_mcp_servers_from_tools(input.tools),
         )
+        output_config, provider_options = _merge_output_config(
+            _map_structured_output(input),
+            provider_options,
+            effort=_map_effort(input),
+        )
+        thinking, provider_options = _merge_thinking_config(_map_reasoning(input, self.model_id), provider_options)
+        extended_thinking = bool(thinking and thinking.get("type") in {"enabled", "adaptive"})
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -1220,16 +1388,16 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                 json_body=drop_none(
                     {
                         "model": self.model_id,
-                        "system": _system_prompt_from_messages(input.messages),
-                        "messages": _map_messages(input.messages),
+                        "system": _system_prompt_from_messages(input.messages, self.model_id),
+                        "messages": _map_messages(input.messages, self.model_id),
                         "tools": body_tools,
                         "tool_choice": _map_tool_choice(input.tool_choice, extended_thinking=extended_thinking),
                         "temperature": input.temperature,
                         "max_tokens": input.max_tokens or 1024,
                         "stream": True,
-                        "output_config": _map_structured_output(input),
+                        "output_config": output_config,
                         **provider_options,
-                        "thinking": _map_reasoning(input),
+                        "thinking": thinking,
                     }
                 ),
                 timeout_ms=input.timeout_ms,
@@ -1319,9 +1487,13 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
         validate_message_parts(cast(Any, self), input.messages)
+        _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        _validate_opus_adaptive_request(self.model_id, input, provider_options)
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
         body_tools, remaining_options = _merge_tool_payloads([web_search_tool], remaining_options)
+        output_config, remaining_options = _merge_output_config(None, remaining_options, effort=_map_effort(input))
+        thinking, remaining_options = _merge_thinking_config(_map_reasoning(input, self.model_id), remaining_options)
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -1337,13 +1509,14 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
                 json_body=drop_none(
                     {
                         "model": self.model_id,
-                        "system": _system_prompt_from_messages(input.messages),
-                        "messages": _map_messages(input.messages),
+                        "system": _system_prompt_from_messages(input.messages, self.model_id),
+                        "messages": _map_messages(input.messages, self.model_id),
                         "tools": body_tools,
                         "temperature": input.temperature,
                         "max_tokens": input.max_tokens or 1024,
+                        "output_config": output_config,
                         **remaining_options,
-                        "thinking": _map_reasoning(input),
+                        "thinking": thinking,
                     }
                 ),
                 timeout_ms=input.timeout_ms,

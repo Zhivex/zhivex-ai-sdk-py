@@ -609,6 +609,8 @@ def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] |
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=none" for Gemini 3 models.')
         if input.reasoning.effort == "xhigh":
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".')
+        if input.reasoning.effort == "max":
+            raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=max".')
         if input.reasoning.effort == "minimal" and _is_gemini_3_pro_model(model_id):
             raise UnsupportedFeatureError(
                 'Provider "gemini" does not support "reasoning.effort=minimal" for Gemini 3 Pro models.'

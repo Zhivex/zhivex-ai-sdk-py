@@ -1245,7 +1245,7 @@ class StructuredOutputConfig:
 
 @dataclass(slots=True)
 class ReasoningConfig:
-    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     budget_tokens: int | None = None
 
 

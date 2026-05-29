@@ -45,6 +45,7 @@ Related documents:
 
 - Production examples now include a FastAPI agent API boundary and an offline worker resume/idempotency boundary.
 - `scripts/collect_release_evidence.py` and `make release-evidence` now generate release gate evidence under `docs/releases/<version>-evidence.md`.
+- Anthropic support now tracks Claude Opus 4.8 (`claude-opus-4-8`), including native `reasoning.effort` mapping, adaptive thinking for Opus 4.7/4.8, and Opus 4.8 mid-conversation system messages.
 
 ### Changed
 
