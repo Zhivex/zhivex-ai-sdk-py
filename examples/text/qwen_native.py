@@ -40,7 +40,7 @@ async def main() -> None:
         base_url=os.getenv("QWEN_BASE_URL"),
         responses_base_url=os.getenv("QWEN_RESPONSES_BASE_URL"),
     )
-    chat_model = _env("QWEN_MODEL", "qwen3.6-plus")
+    chat_model = _env("QWEN_MODEL", "qwen3.7-plus")
 
     chat = await generate_text(
         model=qwen.native.language_model(chat_model),

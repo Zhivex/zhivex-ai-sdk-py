@@ -84,6 +84,8 @@ default_model_catalog = create_model_catalog(
         ModelCatalogEntry("vertex", "lyria-3-clip-preview", recommended_for=["audio"]),
         ModelCatalogEntry("vertex", "gemini-2.5-flash", cost_per_1k_tokens=0.35, recommended_for=["speed", "tools", "vision"]),
         ModelCatalogEntry("vertex", "gemini-2.5-pro", recommended_for=["reasoning", "tools", "vision"]),
+        ModelCatalogEntry("qwen", "qwen3.7-max", aliases=["qwen3.7-max-2026-05-20", "qwen3.7-max-preview", "qwen3.7-max-2026-05-17"], cost_per_1k_tokens=1.2, recommended_for=["reasoning", "tools"]),
+        ModelCatalogEntry("qwen", "qwen3.7-plus", aliases=["qwen3.7-plus-2026-05-26"], cost_per_1k_tokens=0.4, recommended_for=["chat", "tools", "reasoning", "vision"]),
         ModelCatalogEntry("qwen", "qwen3.6-plus", aliases=["qwen3.6-plus-2026-04-02"], cost_per_1k_tokens=0.4, recommended_for=["chat", "tools", "reasoning", "vision"]),
         ModelCatalogEntry("qwen", "qwen3.6-flash", aliases=["qwen3.6-flash-2026-04-16"], cost_per_1k_tokens=0.05, recommended_for=["speed", "tools", "vision"]),
         ModelCatalogEntry("qwen", "qwen3.6-max-preview", cost_per_1k_tokens=1.2, recommended_for=["reasoning", "tools"]),

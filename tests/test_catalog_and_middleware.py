@@ -95,6 +95,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("bedrock", "anthropic.claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
+            ("qwen", "qwen3.7-max", {"reasoning", "tools"}),
+            ("qwen", "qwen3.7-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.6-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "text-embedding-v4", {"embedding", "retrieval"}),
             ("qwen", "qwen3-asr-flash", {"audio", "speed"}),
@@ -117,6 +119,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(default_model_catalog.find("vertex", "gemini-3-pro-image-preview").model_id, "gemini-3-pro-image")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("anthropic", "claude-opus-4-7").model_id, "claude-opus-4-8")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-max-2026-05-20").model_id, "qwen3.7-max")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-plus-2026-05-26").model_id, "qwen3.7-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.6-plus-2026-04-02").model_id, "qwen3.6-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.5-plus-2026-04-20").model_id, "qwen3.5-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "text-embedding-v3").model_id, "text-embedding-v4")  # type: ignore[union-attr]

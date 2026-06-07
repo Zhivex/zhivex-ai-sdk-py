@@ -172,7 +172,7 @@ Tool support now follows the same rule everywhere:
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
-- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`.
+- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`, and the catalog tracks Qwen3.7 Max/Plus alongside the Qwen3.6/3.5 families.
 - Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client.
 - Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
 - Kimi native support includes Moonshot Files, Batch, token estimation, K2.6/K2.5 `thinking`, image/video chat inputs, and the beta `provider.formulas()` client for official tools such as `moonshot/web-search:latest`; embeddings, speech, and transcription are not claimed for Kimi.
@@ -1090,7 +1090,7 @@ from zhivex_ai import create_qwen, generate_text, qwen_web_search_tool
 async def main() -> None:
     provider = create_qwen(region="us")  # intl, us, or cn
     result = await generate_text(
-        model=provider.native.language_model("qwen3.6-plus"),
+        model=provider.native.language_model("qwen3.7-plus"),
         prompt="Summarize the latest Qwen hosted tool surface.",
         tools={"search": qwen_web_search_tool()},
     )
@@ -1237,7 +1237,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4 plus GPT Image 2 and GPT Realtime 2, Azure OpenAI GPT-5.5/realtime/image/embedding IDs, Claude Opus 4.8/Sonnet 4.6/Haiku 4.5, Gemini 3.5 Flash and Gemini 3.1 media/live IDs, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4 plus GPT Image 2 and GPT Realtime 2, Azure OpenAI GPT-5.5/realtime/image/embedding IDs, Claude Opus 4.8/Sonnet 4.6/Haiku 4.5, Gemini 3.5 Flash and Gemini 3.1 media/live IDs, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.7/3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 

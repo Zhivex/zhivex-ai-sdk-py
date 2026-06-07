@@ -48,6 +48,7 @@ Related documents:
 - Anthropic support now tracks Claude Opus 4.8 (`claude-opus-4-8`), including native `reasoning.effort` mapping, adaptive thinking for Opus 4.7/4.8, and Opus 4.8 mid-conversation system messages.
 - Model catalog support for current OpenAI/Azure OpenAI GPT Realtime 2, GPT Image 2, Azure GPT-5.5, and text-embedding-3 reference IDs.
 - Model catalog support for current Gemini/Vertex Gemini 3.5 Flash, Gemini 3.1 live/image/TTS, Imagen 4, Veo 3.1, and Lyria 3 reference IDs.
+- Model catalog support for current Qwen3.7 Max/Plus reference IDs while retaining Qwen3.6 and Qwen3.5 aliases.
 
 ### Changed
 
@@ -55,6 +56,7 @@ Related documents:
 - Gateway routing now emits `on_attempt` payloads for skipped targets, including missing adapters, capability skips, vision skips, and cost-budget skips.
 - Gateway routing can now fail fast on missing provider adapters with `GatewayConfig(fail_on_missing_adapter=True)`.
 - Updated OpenAI, Gemini, and Vertex examples/tests to use current realtime, image, and media model IDs while keeping OpenAI/Azure Sora or video-generation clients out of scope.
+- Updated Qwen docs/examples/tests to use Qwen3.7 Plus as the current balanced reference model.
 
 ### Fixed
 
