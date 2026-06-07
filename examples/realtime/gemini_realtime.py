@@ -47,7 +47,7 @@ async def main() -> None:
 
     provider = create_gemini(api_key=api_key)
     try:
-        session = await provider.realtime_model("gemini-2.5-flash-native-audio-preview-12-2025").connect(
+        session = await provider.realtime_model("gemini-3.1-flash-live-preview").connect(
             RealtimeSessionConfig(
                 instructions="Keep responses short.",
                 output_audio_media_type="audio/pcm",

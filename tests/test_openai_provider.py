@@ -674,18 +674,18 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_openai(api_key="test", fetch=fetch)
-        generated = await provider.images().generate(prompt="city skyline", model="gpt-image-1")
+        generated = await provider.images().generate(prompt="city skyline", model="gpt-image-2")
         edited = await provider.images().edit(
             prompt="remove the clouds",
             image=b"png",
             image_filenames="skyline.png",
-            model="gpt-image-1",
+            model="gpt-image-2",
             mask=b"mask",
         )
         varied = await provider.images().variation(
             image=b"png",
             image_filename="skyline.png",
-            model="gpt-image-1",
+            model="gpt-image-2",
         )
 
         self.assertEqual(generated.images[0].revised_prompt, "a cleaner skyline")
@@ -693,6 +693,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(varied.images[0].b64_json, base64.b64encode(b"png-bytes").decode("ascii"))
         self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/images/generations")
         self.assertEqual(requests[0]["json"]["prompt"], "city skyline")
+        self.assertEqual(requests[0]["json"]["model"], "gpt-image-2")
         self.assertEqual(requests[1]["url"], "https://api.openai.com/v1/images/edits")
         files_payload = requests[1]["body"]["files"]
         self.assertEqual(files_payload[0][0], "image[]")
@@ -1394,7 +1395,7 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
             ),
             max_num_results=5,
         )
-        image_tool = openai_image_generation_tool(model="gpt-image-1.5", output_format="webp", quality="high")
+        image_tool = openai_image_generation_tool(model="gpt-image-2", output_format="webp", quality="high")
         shell_tool = openai_shell_tool(
             environment=openai_shell_environment(
                 use_local=True,

@@ -649,7 +649,7 @@ async def main() -> None:
         mime_type="application/jsonl",
         purpose="batch",
     )
-    image = await openai.images().generate(prompt="A paper sketch of a transit map", model="gpt-image-1")
+    image = await openai.images().generate(prompt="A paper sketch of a transit map", model="gpt-image-2")
 
     print(file.id)
     print(image.images[0].b64_json is not None)
@@ -732,7 +732,7 @@ async def main() -> None:
     gemini = create_gemini()
 
     image = await gemini.images().generate(
-        model="gemini-3.1-flash-image-preview",
+        model="gemini-3.1-flash-image",
         prompt="A clean product diagram of a solar microgrid.",
     )
     operation = await gemini.videos().generate(
@@ -740,7 +740,7 @@ async def main() -> None:
         prompt="A slow cinematic flyover of that microgrid at sunrise.",
     )
     music = await gemini.media().generate_music(
-        model="lyria-3-clip-preview",
+        model="lyria-3-pro-preview",
         prompt="A 30-second optimistic ambient technology track.",
     )
 
@@ -1202,7 +1202,7 @@ For local Ollama installs, `api_key="ollama"` is the default compatibility token
 
 Adapters may also expose optional factories such as:
 
-- `provider.native.realtime_model("gpt-realtime")`
+- `provider.native.realtime_model("gpt-realtime-2")`
 - `provider.files()`
 - `provider.images()`
 - `provider.videos()`
@@ -1237,7 +1237,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4, Claude Opus 4.7/Sonnet 4.6/Haiku 4.5, Gemini 3.1/3 Flash, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4 plus GPT Image 2 and GPT Realtime 2, Azure OpenAI GPT-5.5/realtime/image/embedding IDs, Claude Opus 4.8/Sonnet 4.6/Haiku 4.5, Gemini 3.5 Flash and Gemini 3.1 media/live IDs, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 
@@ -1257,18 +1257,19 @@ Notes:
 - `create_gemini().caches()` exposes Gemini explicit context caching through `cachedContents`; pass the returned cache name with `provider_options={"cached_content": cache.name}` or `provider_options={"cachedContent": cache.name}`.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
 - `embed_content(...)` and `embed_content_many(...)` accept text plus `TextPart`, `ImagePart`, and `FilePart` values for Gemini Embedding 2 style multimodal embeddings; `embed(...)` and `embed_many(...)` remain text-compatible.
-- `create_gemini().images()` covers Gemini/Nano Banana image models through `generateContent` and Imagen 4 models through `predict`.
+- `create_gemini().images()` covers Gemini/Nano Banana image models such as `gemini-3.1-flash-image` and `gemini-3-pro-image` through `generateContent`, plus Imagen 4 models through `predict`.
 - `create_vertex().images()` mirrors Google image routes through Vertex publisher model endpoints.
-- `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers.
-- `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it.
+- `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers, including the current `veo-3.1-*` model IDs where available.
+- `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it, including `lyria-3-pro-preview` and `lyria-3-clip-preview`.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
 - `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
 - `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint and works with either API key or Entra ID authentication.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
 - `create_vertex().native.language_model(...)` and `create_vertex().native.grounded_language_model(...)` also accept `provider_options={"vertex_ai_search": {...}}` and `provider_options={"external_search": {...}}`, which are normalized into the Vertex tool payloads automatically.
-- `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs.
+- `create_openai().images()` and `create_openai().uploads()` expose standalone OpenAI Images and Uploads APIs, including GPT Image 2 via `model="gpt-image-2"`.
 - `create_openai().containers()` and `create_openai().skills()` expose the raw OpenAI Containers and Skills APIs.
+- OpenAI/Azure Sora or video-generation lifecycle clients are intentionally not exposed in this SDK release.
 - `create_vertex().realtime_model(...).create_browser_token()` is intentionally unsupported. Vertex realtime sessions use server-side authentication instead of OpenAI/Gemini-style ephemeral browser tokens in this SDK.
 - OpenAI and Azure OpenAI browser bootstrap now follows the official `realtime/client_secrets` flow, while Gemini browser tokens still come from `v1alpha/authTokens`.
 - Realtime sessions emit `realtime-response-complete` when a model turn finishes and reserve `realtime-end` for actual session shutdown or transport closure.

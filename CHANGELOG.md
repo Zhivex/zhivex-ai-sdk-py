@@ -46,12 +46,15 @@ Related documents:
 - Production examples now include a FastAPI agent API boundary and an offline worker resume/idempotency boundary.
 - `scripts/collect_release_evidence.py` and `make release-evidence` now generate release gate evidence under `docs/releases/<version>-evidence.md`.
 - Anthropic support now tracks Claude Opus 4.8 (`claude-opus-4-8`), including native `reasoning.effort` mapping, adaptive thinking for Opus 4.7/4.8, and Opus 4.8 mid-conversation system messages.
+- Model catalog support for current OpenAI/Azure OpenAI GPT Realtime 2, GPT Image 2, Azure GPT-5.5, and text-embedding-3 reference IDs.
+- Model catalog support for current Gemini/Vertex Gemini 3.5 Flash, Gemini 3.1 live/image/TTS, Imagen 4, Veo 3.1, and Lyria 3 reference IDs.
 
 ### Changed
 
 - Bumped the package version to `0.9.0` while keeping the package in Beta.
 - Gateway routing now emits `on_attempt` payloads for skipped targets, including missing adapters, capability skips, vision skips, and cost-budget skips.
 - Gateway routing can now fail fast on missing provider adapters with `GatewayConfig(fail_on_missing_adapter=True)`.
+- Updated OpenAI, Gemini, and Vertex examples/tests to use current realtime, image, and media model IDs while keeping OpenAI/Azure Sora or video-generation clients out of scope.
 
 ### Fixed
 

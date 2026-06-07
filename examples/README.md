@@ -32,7 +32,7 @@ make smoke
 ```
 
 It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`.
-Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable.
+Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable, such as `gemini-3.1-flash-image`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
 Qwen uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`; optional checks are enabled by `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
@@ -224,7 +224,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 
 ## Notes
 
-- OpenAI and Azure OpenAI currently expose the richest Python feature surface for grounded text and realtime session bootstrap.
+- OpenAI and Azure OpenAI currently expose the richest Python feature surface for grounded text and realtime session bootstrap, including current GPT Realtime 2 model IDs where available.
 - Speech generation is currently available through OpenAI, Azure OpenAI, Gemini, Vertex, OpenRouter, and Qwen adapters in this repo. Qwen also exposes native Qwen3-ASR transcription through `provider.native.transcription_model("qwen3-asr-flash")`; vLLM exposes transcription and realtime ASR when served with compatible ASR models.
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - `vllm_text.py` shows the recommended local path for vLLM's OpenAI-compatible server: `create_vllm(...)` plus the portable `provider("model-id")` path.

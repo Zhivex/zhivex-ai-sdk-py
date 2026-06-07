@@ -106,11 +106,11 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_gemini(api_key="test", fetch=fetch)
-        result = await provider.images().generate(prompt="draw a transit map", model="gemini-3.1-flash-image-preview")
+        result = await provider.images().generate(prompt="draw a transit map", model="gemini-3.1-flash-image")
 
         self.assertEqual(result.images[0].b64_json, "iVBORw0KGgo=")
         self.assertEqual(result.images[0].media_type, "image/png")
-        self.assertIn("/models/gemini-3.1-flash-image-preview:generateContent?key=test", requests[0]["url"])
+        self.assertIn("/models/gemini-3.1-flash-image:generateContent?key=test", requests[0]["url"])
         self.assertEqual(requests[0]["json"]["generationConfig"]["responseModalities"], ["IMAGE"])
 
     async def test_gemini_imagen_generation_client_uses_predict(self) -> None:
@@ -243,6 +243,10 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.media[0].b64_data, "mp3-b64")
         self.assertEqual(result.media[0].media_type, "audio/mpeg")
         self.assertIn("/models/lyria-3-clip-preview:generateContent?key=test", requests[0]["url"])
+
+        pro = await provider.media().generate_music(prompt="Create a short orchestral cue.", model="lyria-3-pro-preview")
+        self.assertEqual(pro.media[0].b64_data, "mp3-b64")
+        self.assertIn("/models/lyria-3-pro-preview:generateContent?key=test", requests[1]["url"])
 
     async def test_gemini_batches_and_interactions_clients(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -380,14 +384,14 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
-        image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image-preview")
-        video = await provider.videos().generate(model="veo-3.1-generate-001", prompt="video")
+        image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image")
+        video = await provider.videos().generate(model="veo-3.1-lite-generate-preview", prompt="video")
 
         self.assertEqual(image.images[0].b64_json, "vertex-img")
         self.assertEqual(video.name, "operations/vertex-video")
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
-        self.assertIn("/publishers/google/models/gemini-3.1-flash-image-preview:generateContent", requests[0]["url"])
-        self.assertIn("/publishers/google/models/veo-3.1-generate-001:predictLongRunning", requests[1]["url"])
+        self.assertIn("/publishers/google/models/gemini-3.1-flash-image:generateContent", requests[0]["url"])
+        self.assertIn("/publishers/google/models/veo-3.1-lite-generate-preview:predictLongRunning", requests[1]["url"])
 
     async def test_gemini_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []

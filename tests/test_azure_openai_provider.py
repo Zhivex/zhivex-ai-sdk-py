@@ -196,8 +196,8 @@ class AzureOpenAIHostedToolTests(IsolatedAsyncioTestCase):
         await provider.responses().create({"model": "gpt-4o-mini", "input": "hello"})
         await provider.conversations().create({"metadata": {"team": "sdk"}})
         await provider.file_search_stores().create(display_name="Docs")
-        await provider.native.realtime_model("gpt-realtime").create_browser_token()
-        session = await provider.native.realtime_model("gpt-realtime").connect()
+        await provider.native.realtime_model("gpt-realtime-2").create_browser_token()
+        session = await provider.native.realtime_model("gpt-realtime-2").connect()
         await session.aclose()
 
         self.assertTrue(all(request["headers"]["authorization"] == "Bearer entra-token" for request in requests))  # type: ignore[index]
