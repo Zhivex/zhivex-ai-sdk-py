@@ -31,8 +31,17 @@ DOCUMENTED_STABLE_EXPORTS = {
     "embed_content_many",
     "Agent",
     "AgentRegistry",
+    "AgentReplayEvent",
+    "AgentReplayResult",
     "AgentRuntime",
     "AgentSession",
+    "AgentChildRun",
+    "AgentRunSnapshot",
+    "AgentRunState",
+    "AgentRunStatus",
+    "AgentRunStep",
+    "AgentRunStore",
+    "AgentRunTreeCancellationResult",
     "AgentSkillActivatedEvent",
     "AgentSkillSkippedEvent",
     "ToolRegistry",
@@ -51,7 +60,17 @@ DOCUMENTED_STABLE_EXPORTS = {
     "get_agent_session_skills",
     "clear_agent_session_skills",
     "create_postgres_agent_memory_store",
+    "create_postgres_agent_run_store",
     "create_postgres_checkpoint_store",
+    "PostgresAgentRunStore",
+    "serialize_agent_run_state",
+    "deserialize_agent_run_state",
+    "agent_run_state_to_json",
+    "agent_run_state_from_json",
+    "cancel_agent_run",
+    "cancel_agent_run_tree",
+    "create_agent_run_snapshot",
+    "replay_agent_run",
     "discover_mcp_tools",
     "mcp_stdio_server",
     "mcp_http_server",
@@ -130,7 +149,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.9.0"', pyproject)
+        self.assertIn('version = "0.10.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

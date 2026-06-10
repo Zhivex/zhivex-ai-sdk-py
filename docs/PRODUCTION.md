@@ -49,7 +49,7 @@ Gateway calls expose `max_retries`, `retry_backoff_ms`, retry number, target ran
 
 For production gateway routes, set `GatewayConfig(fail_on_missing_adapter=True)` when every configured provider target is expected to have an adapter at startup. This prevents an accidentally missing primary adapter from being hidden by a successful fallback. Skipped targets now emit `on_attempt` payloads, so missing adapters, capability skips, vision skips, and cost-budget skips can be correlated with request logs.
 
-Gateway routes fall back on provider refusals by default. A result with `finish_reason="refusal"` or `provider_finish_reason="refusal"` is recorded as an attempt and the gateway tries the next configured target; set `GatewayConfig(fallback_on_refusal=False)` when an application should surface the selected provider's refusal directly.
+Gateway routes do not fall back on provider refusals by default. A result with `finish_reason="refusal"` or `provider_finish_reason="refusal"` is recorded as an attempt and returned from the selected target; set `GatewayConfig(fallback_on_refusal=True)` when an application should explicitly retry refusals on fallback targets.
 
 Use `create_circuit_breaker_middleware(...)` around provider calls that should fail fast during an outage. Log state changes with request id, provider, model, failure count, and breaker status.
 

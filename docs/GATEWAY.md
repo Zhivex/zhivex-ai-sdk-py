@@ -41,7 +41,7 @@ gateway = create_gateway(
 
 With this setting, a missing adapter raises `GatewayError` instead of silently moving to a fallback target.
 
-Gateway routing treats a generated refusal as a fallback signal by default. When a provider returns `finish_reason="refusal"` or `provider_finish_reason="refusal"`, the attempt is recorded and the gateway moves to the next configured fallback. Set `GatewayConfig(fallback_on_refusal=False)` to return refusals from the selected target without trying fallback models.
+Gateway routing returns generated refusals by default. When a provider returns `finish_reason="refusal"` or `provider_finish_reason="refusal"`, the attempt is recorded and the refusal is returned from the selected target. Set `GatewayConfig(fallback_on_refusal=True)` to explicitly retry refusals on fallback models.
 
 ## Operations
 

@@ -22,10 +22,11 @@ agent = Agent(
 Postgres is the production default:
 
 ```python
-from zhivex_ai import create_postgres_agent_memory_store, create_postgres_checkpoint_store
+from zhivex_ai import create_postgres_agent_memory_store, create_postgres_agent_run_store, create_postgres_checkpoint_store
 
 memory = create_postgres_agent_memory_store(dsn)
 checkpoints = create_postgres_checkpoint_store(dsn)
+runs = create_postgres_agent_run_store(dsn)
 ```
 
-Run stores are beta. Use them when you need `idempotency_key`, replay, snapshots, or cancellation tree helpers.
+Postgres run stores and the matching run-state serialization, replay, run-snapshot, and cancellation helpers are stable. In-memory and SQLite run stores remain beta/local-development choices.

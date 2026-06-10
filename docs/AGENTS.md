@@ -16,9 +16,10 @@ The stable core is:
 - `run_agent(...)`, `stream_agent(...)`, and `resume_agent(...)`
 - session helpers such as `create_agent_session(...)` and `load_agent_session(...)`
 - portable skills and MCP discovery/registry helpers
-- Postgres memory and checkpoint stores
+- Postgres memory, checkpoint, and run stores
+- run-state serialization, cancellation tree, replay, and run-snapshot helpers
 
-The beta layer includes run stores, checkpoint events, replay/evaluation, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite stores, packaged skills, and workflow agents. Live/realtime agent APIs are experimental.
+The beta layer includes checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite stores, packaged skills, and workflow agents. Live/realtime agent APIs are experimental.
 
 ## Runtime Shape
 
@@ -46,7 +47,7 @@ Attach memory, checkpoint, and run stores independently:
 - checkpoint stores support `resume_agent(...)`
 - run stores support idempotency, replay, snapshots, and cancellation tree helpers
 
-SQLite and in-memory stores are excellent for local development and tests. Use Postgres stores for production backend persistence.
+SQLite and in-memory stores are excellent for local development and tests and remain beta. Use Postgres stores for production backend persistence.
 
 ## Failure Semantics
 

@@ -22,7 +22,7 @@ Legend:
 | Gateway fallback | Yes | Yes | Yes | provider-dependent | stable |
 | Tier-1 provider adapters | Yes | Yes | Yes | optional | stable provider story |
 | Agent core runtime | Yes | Yes | Yes | provider-dependent | stable |
-| Agent run stores and replay | Yes | Yes | Yes | N/A | beta |
+| Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
 | Human approval policies | Yes | Yes | Yes | provider-dependent | beta |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |
 | Declarative workflows | Yes | Yes | Yes | N/A | beta |

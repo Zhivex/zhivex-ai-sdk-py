@@ -24,10 +24,11 @@ class ReleaseArtifactToolingTests(TestCase):
         for gate in ["compile", "public contract", "artifact install smoke"]:
             self.assertIn(gate, source)
 
-        release_plan = (ROOT / "docs/releases/0.9.0.md").read_text("utf-8")
-        self.assertIn("0.9.0", release_plan)
+        version = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+        release_plan = (ROOT / f"docs/releases/{version}.md").read_text("utf-8")
+        self.assertIn(version, release_plan)
         self.assertIn("make release-evidence", release_plan)
-        self.assertIn("fail_on_missing_adapter", release_plan)
+        self.assertIn("Postgres run store", release_plan)
 
     def test_makefile_release_check_runs_install_verification(self) -> None:
         makefile = (ROOT / "Makefile").read_text("utf-8")
