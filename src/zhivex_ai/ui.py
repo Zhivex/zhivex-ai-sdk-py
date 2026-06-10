@@ -256,8 +256,8 @@ def to_ui_message_stream(source: Any, message_id: str | None = None):
                 yield UIMessageFinishChunk(
                     message_id=resolved_id,
                     finish_reason=event.finish_reason,
-                    provider_finish_reason=event.provider_finish_reason,
-                    usage=event.usage,
+                    provider_finish_reason=getattr(event, "provider_finish_reason", None),
+                    usage=getattr(event, "usage", None),
                 )
             elif event.type == "error":
                 message = str(event.error) if event.error is not None else ""

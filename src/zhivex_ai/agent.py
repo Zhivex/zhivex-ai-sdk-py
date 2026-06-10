@@ -4054,6 +4054,7 @@ def stream_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
+    idempotency_key: str | None = None,
 ) -> AgentStreamResult:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     broadcast = _Broadcast(history=[])
@@ -4083,6 +4084,7 @@ def stream_agent(
                 stop_on_handoff=stop_on_handoff,
                 emit=emit,
                 live_stream=True,
+                idempotency_key=idempotency_key,
             )
         finally:
             await broadcast.close()

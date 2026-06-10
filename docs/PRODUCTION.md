@@ -12,7 +12,7 @@ Create one application request id per inbound request and carry it through:
 - trace exports
 - run-store metadata
 
-Use `idempotency_key` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
+Use `idempotency_key` with `run_agent(...)` or `stream_agent(...)` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
 
 ## Storage Defaults
 

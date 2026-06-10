@@ -38,6 +38,7 @@ from zhivex_ai import (  # noqa: E402
     resume_agent_run,
     run_agent,
     stream_agent,
+    to_ui_message_stream,
     tool,
 )
 from zhivex_ai.types import (  # noqa: E402
@@ -47,6 +48,7 @@ from zhivex_ai.types import (  # noqa: E402
     ModelMessage,
     StreamFinishEvent,
     StreamTextDeltaEvent,
+    StreamToolCallEvent,
     ToolCall,
     ToolCallPart,
     TokenUsage,
@@ -109,6 +111,19 @@ class ToolModel:
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
         async def generator() -> AsyncIterable[object]:
+            yield StreamTextDeltaEvent(text_delta="tool done")
+            yield StreamFinishEvent(finish_reason="stop")
+
+        return generator()
+
+
+class StreamingToolModel(ToolModel):
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
+            if not any(message.role == "tool" for message in input.messages):
+                yield StreamToolCallEvent(tool_call=ToolCall(id="call_1", name="lookup", input={"item": "apollo"}))
+                yield StreamFinishEvent(finish_reason="tool-calls")
+                return
             yield StreamTextDeltaEvent(text_delta="tool done")
             yield StreamFinishEvent(finish_reason="stop")
 
@@ -264,6 +279,50 @@ async def test_tool_approval_can_suspend_and_resume_from_run_store() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_approval_can_suspend_and_resume_with_denial() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def suspend_policy(request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("manager approval required", approval_id="approval_lookup")
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda input: {"item": input["item"], "status": "approved"},
+                requires_approval=True,
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup", idempotency_key="approval-deny-job")
+
+    resumed = await resume_agent_run(
+        agent=agent,
+        run_id=suspended.run_id,
+        approval_id="approval_lookup",
+        approved=False,
+        reason="manager rejected request",
+    )
+
+    assert resumed.text == "tool done"
+    assert resumed.state is not None
+    assert resumed.state.parent_run_id == suspended.run_id
+    final_state = await store.load(suspended.run_id)
+    assert final_state is not None
+    assert final_state.status == "completed"
+    assert final_state.pending_approvals == []
+    assert final_state.metadata["resolved_approval"]["approved"] is False
+    assert final_state.metadata["resolved_approval"]["reason"] == "manager rejected request"
+    assert final_state.tool_results[0].is_error is True
+    assert final_state.tool_results[0].provider_metadata["approval_status"] == "denied"
+
+
+@pytest.mark.asyncio
 async def test_suspended_tool_approval_generates_stable_event_and_state_id() -> None:
     store = create_in_memory_agent_run_store()
 
@@ -294,6 +353,40 @@ async def test_suspended_tool_approval_generates_stable_event_and_state_id() -> 
     approval_id = result.state.pending_approvals[0].id
     assert approval_id.startswith("approval_")
     assert approval_events[0].approval_request_id == approval_id
+
+
+@pytest.mark.asyncio
+async def test_suspended_tool_approval_streams_to_ui_message_chunk() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def suspend_policy(request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("manager approval required", approval_id="approval_lookup")
+
+    agent = Agent(
+        name="assistant",
+        model=StreamingToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda input: {"item": input["item"], "status": "approved"},
+                requires_approval=True,
+            )
+        },
+    )
+
+    stream = stream_agent(agent=agent, prompt="lookup")
+    chunks = [chunk async for chunk in to_ui_message_stream(stream, message_id="assistant-approval")]
+    result = await stream.collect()
+
+    approval_chunks = [chunk for chunk in chunks if chunk.type == "tool-approval"]
+    assert result.state is not None
+    assert result.state.status == "suspended"
+    assert len(approval_chunks) == 1
+    assert approval_chunks[0].approval_request_id == "approval_lookup"
+    assert approval_chunks[0].metadata["suspended"] is True
 
 
 @pytest.mark.asyncio
@@ -347,6 +440,21 @@ async def test_run_store_idempotency_cancel_and_replay_contract(name: str, facto
     finally:
         if cleanup is not None:
             cleanup.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_reuses_idempotency_key_from_run_store() -> None:
+    store = create_in_memory_agent_run_store()
+    agent = Agent(name="assistant", model=EchoModel(), run_store=store)
+
+    first_stream = stream_agent(agent=agent, prompt="hello", idempotency_key="stream-idem")
+    first = await first_stream.collect()
+    second_stream = stream_agent(agent=agent, prompt="ignored", idempotency_key="stream-idem")
+    second = await second_stream.collect()
+
+    assert first.run_id == second.run_id
+    assert second.state is not None
+    assert second.state.idempotency_key == "stream-idem"
 
 
 @pytest.mark.asyncio

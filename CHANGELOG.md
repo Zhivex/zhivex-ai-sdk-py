@@ -50,12 +50,14 @@ Related documents:
 ### Changed
 
 - Bumped the package version to `0.11.0` while keeping the package in Beta.
+- Added `stream_agent(..., idempotency_key=...)` parity with `run_agent(...)` for retry-safe streaming agent APIs backed by run stores.
 - Promoted the local-tool approval lifecycle types and helpers into the documented stable surface when backed by the production run-store contract.
 - Clarified production agent docs around suspended runs, pending approvals, and the distinction between `resume_agent(...)` and `resume_agent_run(...)`.
 
 ### Fixed
 
 - Preserved serialized `AgentRunStep.messages` when deserializing stored run state so suspended runs retain enough context for approval resume and audit.
+- Covered durable approval denial/resume behavior so rejected pending approvals persist as denied tool results and clear the pending queue.
 - Normalized all Gemini callable-tool schemas before sending `functionDeclarations`, so strict Pydantic schemas with `additionalProperties: false` work in live agent tool loops.
 
 ### Deprecated
