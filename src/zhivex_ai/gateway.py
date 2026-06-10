@@ -86,7 +86,7 @@ class GatewayConfig:
     attempt_timeouts_ms: dict[GatewayProviderId, int] = field(default_factory=dict)
     retry_backoff_ms: int = 200
     fail_on_missing_adapter: bool = False
-    fallback_on_refusal: bool = True
+    fallback_on_refusal: bool = False
     on_attempt: Any = None
 
 

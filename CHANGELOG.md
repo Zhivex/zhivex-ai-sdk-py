@@ -55,7 +55,7 @@ Related documents:
 ### Changed
 
 - Bumped the package version to `0.9.0` while keeping the package in Beta.
-- Gateway routing now falls back from provider refusals by default with `GatewayConfig(fallback_on_refusal=True)` and exposes normalized finish reasons on gateway responses.
+- `GatewayConfig.fallback_on_refusal` now defaults to `False`; set `fallback_on_refusal=True` to retry provider refusals on fallback targets.
 - Gateway routing now emits `on_attempt` payloads for skipped targets, including missing adapters, capability skips, vision skips, and cost-budget skips.
 - Gateway routing can now fail fast on missing provider adapters with `GatewayConfig(fail_on_missing_adapter=True)`.
 - Updated OpenAI, Gemini, and Vertex examples/tests to use current realtime, image, and media model IDs while keeping OpenAI/Azure Sora or video-generation clients out of scope.
@@ -63,6 +63,10 @@ Related documents:
 
 ### Fixed
 
+- Skill entrypoint tools no longer rebase `project_root` from absolute `output_path` values, and generated skill tools now propagate filesystem/network permission metadata for approval policies.
+- Gemini resumable uploads and Qwen speech audio downloads now validate provider-returned URLs before sending user bytes or fetching generated media.
+- Provider HTTP errors now redact sensitive response-body fields before formatting exceptions, gateway attempt payloads, and log-friendly messages.
+- HTTP, SSE, realtime, UI-message parsing, and OpenAI-compatible audio streaming paths now apply defensive timeout, size, history, or raw-event caps.
 - Gemini Files API get/delete now normalize official `files/*` names correctly instead of constructing duplicate `/files/files/*` paths.
 
 ### Deprecated

@@ -56,6 +56,11 @@ class FakeBufferedHTTPResponse(FakeStreamingHTTPResponse):
         raise AssertionError("Buffered requests should not iterate streamed lines.")
 
 
+class FakeLargeBufferedHTTPResponse(FakeBufferedHTTPResponse):
+    async def aread(self) -> bytes:
+        return b"x" * 20
+
+
 class FakeAsyncClient:
     last_instance: FakeAsyncClient | None = None
     instances: list[FakeAsyncClient] = []
@@ -85,6 +90,12 @@ class FakeBufferedAsyncClient(FakeAsyncClient):
     def __init__(self, *, timeout: float | None = None) -> None:
         super().__init__(timeout=timeout)
         self.response = FakeBufferedHTTPResponse()
+
+
+class FakeLargeBufferedAsyncClient(FakeAsyncClient):
+    def __init__(self, *, timeout: float | None = None) -> None:
+        super().__init__(timeout=timeout)
+        self.response = FakeLargeBufferedHTTPResponse()
 
 
 class HttpTests(IsolatedAsyncioTestCase):
@@ -132,6 +143,38 @@ class HttpTests(IsolatedAsyncioTestCase):
         finally:
             await http_module.aclose_default_clients()
             http_module.httpx.AsyncClient = original_client
+
+    async def test_default_fetch_rejects_oversized_buffered_response(self) -> None:
+        original_client = http_module.httpx.AsyncClient
+        original_limit = http_module.DEFAULT_MAX_BUFFERED_RESPONSE_BYTES
+        http_module.httpx.AsyncClient = FakeLargeBufferedAsyncClient
+        http_module.DEFAULT_MAX_BUFFERED_RESPONSE_BYTES = 10
+        try:
+            with self.assertRaises(http_module.ResponseTooLargeError):
+                await http_module.default_fetch(
+                    "https://example.com/buffered",
+                    headers={"content-type": "application/json"},
+                    json_body={"hello": "world"},
+                    timeout_ms=500,
+                    stream=False,
+                )
+            client = FakeLargeBufferedAsyncClient.last_instance
+            assert client is not None
+            self.assertTrue(client.response.closed)
+        finally:
+            http_module.DEFAULT_MAX_BUFFERED_RESPONSE_BYTES = original_limit
+            await http_module.aclose_default_clients()
+            http_module.httpx.AsyncClient = original_client
+
+    async def test_streaming_response_stops_caching_after_cache_limit(self) -> None:
+        raw = FakeStreamingHTTPResponse()
+        response = http_module.StreamingResponse(response=raw, max_cached_bytes=10)
+
+        lines = [line async for line in response.iter_lines()]
+
+        self.assertEqual(lines, ['data: {"chunk":1}', "", 'data: {"chunk":2}', ""])
+        self.assertTrue(raw.closed)
+        self.assertEqual(await response.read(), b"")
 
     async def test_default_fetch_reuses_clients_for_matching_timeouts(self) -> None:
         original_client = http_module.httpx.AsyncClient

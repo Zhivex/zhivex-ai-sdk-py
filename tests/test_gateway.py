@@ -99,6 +99,15 @@ class NonRetryableHTTPModel(WorkingModel):
         raise ProviderHTTPError("OpenAI request failed with status 503.", 503, retryable=False)
 
 
+class SecretHTTPModel(WorkingModel):
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        raise ProviderHTTPError(
+            "OpenAI request failed with status 400.",
+            400,
+            response_body='{"api_key":"sk-live-secret","message":"Bad schema"}',
+        )
+
+
 class StreamingModel(WorkingModel):
     async def stream(self, input: ModelGenerateInput):
         async def generator():
@@ -162,7 +171,30 @@ class GatewayTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts[0].provider, "openai")
         self.assertEqual(result.route_decision.ordered_targets[0].provider, "openai")
 
-    async def test_gateway_falls_back_when_primary_returns_refusal(self) -> None:
+    async def test_gateway_falls_back_when_primary_returns_refusal_if_enabled(self) -> None:
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: RefusalModel()),
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: WorkingModel()),
+                },
+                max_retries=0,
+                fallback_on_refusal=True,
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="anthropic", model_id="claude-fable-5"),
+            fallbacks=[GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini")],
+        )
+
+        self.assertEqual(result.text, "fallback ok")
+        self.assertEqual(result.provider_used, "openai")
+        self.assertFalse(result.attempts[0].ok)
+        self.assertIn("refusal", result.attempts[0].error_message or "")
+
+    async def test_gateway_returns_refusal_by_default_without_trying_fallbacks(self) -> None:
         gateway = create_gateway(
             GatewayConfig(
                 adapters={
@@ -179,30 +211,11 @@ class GatewayTests(IsolatedAsyncioTestCase):
             fallbacks=[GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini")],
         )
 
-        self.assertEqual(result.text, "fallback ok")
-        self.assertEqual(result.provider_used, "openai")
-        self.assertFalse(result.attempts[0].ok)
-        self.assertIn("refusal", result.attempts[0].error_message or "")
-
-    async def test_gateway_returns_refusal_when_no_fallback_succeeds(self) -> None:
-        gateway = create_gateway(
-            GatewayConfig(
-                adapters={
-                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: RefusalModel()),
-                },
-                max_retries=0,
-            )
-        )
-
-        result = await gateway.generate(
-            messages=[GatewayMessage(role="user", content="hello")],
-            primary=GatewayModelTarget(provider="anthropic", model_id="claude-fable-5"),
-        )
-
         self.assertEqual(result.provider_used, "anthropic")
         self.assertEqual(result.finish_reason, "refusal")
         self.assertEqual(result.provider_finish_reason, "refusal")
-        self.assertFalse(result.attempts[0].ok)
+        self.assertTrue(result.attempts[0].ok)
+        self.assertEqual(len(result.attempts), 1)
 
     async def test_gateway_can_disable_fallback_on_refusal(self) -> None:
         gateway = create_gateway(
@@ -253,6 +266,35 @@ class GatewayTests(IsolatedAsyncioTestCase):
         self.assertIn("latencyMs", attempt_events[1])
         self.assertEqual(attempt_events[1]["ok"], False)
         self.assertEqual(attempt_events[2]["provider"], "anthropic")
+
+    async def test_gateway_redacts_provider_http_error_body_in_attempts(self) -> None:
+        attempt_events: list[dict[str, object]] = []
+
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: SecretHTTPModel()),
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: WorkingModel()),
+                },
+                max_retries=0,
+                on_attempt=lambda payload: attempt_events.append(payload),
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="gpt-4o-mini"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-3-5-sonnet")],
+        )
+
+        failed_message = result.attempts[0].error_message or ""
+        callback_message = str(attempt_events[0]["errorMessage"])
+        self.assertEqual(result.provider_used, "anthropic")
+        self.assertNotIn("sk-live-secret", failed_message)
+        self.assertNotIn("sk-live-secret", callback_message)
+        self.assertIn("[redacted]", failed_message)
+        self.assertIn("Bad schema", failed_message)
+        self.assertIn("400", failed_message)
 
     async def test_gateway_on_attempt_emits_skipped_targets(self) -> None:
         attempt_events: list[dict[str, object]] = []

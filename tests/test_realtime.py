@@ -19,6 +19,7 @@ from zhivex_ai import (  # noqa: E402
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeResponseCompletedEvent,
+    RealtimeSessionEndedEvent,
     RealtimeSessionConfig,
     RealtimeTextDeltaEvent,
     RealtimeToolCallEvent,
@@ -57,6 +58,23 @@ class FakeRealtimeConnection:
 
 
 class RealtimeProviderTests(IsolatedAsyncioTestCase):
+    async def test_realtime_session_rejects_oversized_provider_message(self) -> None:
+        async def connection_factory(url: str, headers: dict[str, str], options: RealtimeConnectOptions | None):
+            return FakeRealtimeConnection([{"server_content": {"model_turn": {"parts": [{"text": "x" * (1024 * 1024 + 1)}]}}}])
+
+        provider = create_gemini(api_key="test", realtime_connection_factory=connection_factory)
+        session = await provider.realtime_model("gemini-3.1-flash-live-preview").connect()
+        events = []
+        async for event in session.event_stream():
+            events.append(event)
+            if isinstance(event, RealtimeSessionEndedEvent):
+                break
+        await session.aclose()
+
+        ended = [event for event in events if isinstance(event, RealtimeSessionEndedEvent)]
+        self.assertTrue(ended)
+        self.assertEqual(ended[0].reason, "error")
+
     async def test_openai_realtime_connects_sends_payloads_and_creates_browser_token(self) -> None:
         requests: list[dict[str, Any]] = []
         connections: list[FakeRealtimeConnection] = []

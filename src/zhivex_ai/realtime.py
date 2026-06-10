@@ -33,6 +33,9 @@ class RealtimeConnection(Protocol):
 RealtimeEventParser = Callable[[dict[str, Any]], list[RealtimeEvent]]
 RealtimePayloadBuilder = Callable[..., list[dict[str, Any]]]
 RealtimeConnectionFactory = Callable[[str, dict[str, str], RealtimeConnectOptions | None], Awaitable[RealtimeConnection]]
+DEFAULT_MAX_REALTIME_HISTORY_EVENTS = 1_000
+DEFAULT_MAX_REALTIME_QUEUE_EVENTS = 1_000
+DEFAULT_MAX_REALTIME_MESSAGE_BYTES = 1 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -49,6 +52,8 @@ class RealtimeSessionCallbacks:
 @dataclass
 class _Broadcast:
     history: list[RealtimeEvent]
+    max_history_events: int = DEFAULT_MAX_REALTIME_HISTORY_EVENTS
+    max_queue_events: int = DEFAULT_MAX_REALTIME_QUEUE_EVENTS
     done: bool = False
     subscribers: list[asyncio.Queue[RealtimeEvent | None]] | None = None
 
@@ -57,17 +62,19 @@ class _Broadcast:
 
     async def publish(self, event: RealtimeEvent) -> None:
         self.history.append(event)
+        if len(self.history) > self.max_history_events:
+            del self.history[: len(self.history) - self.max_history_events]
         for queue in list(self.subscribers or []):
-            await queue.put(event)
+            _queue_put_bounded(queue, event)
 
     async def close(self) -> None:
         self.done = True
         for queue in list(self.subscribers or []):
-            await queue.put(None)
+            _queue_put_bounded(queue, None)
 
     def stream(self) -> AsyncIterable[RealtimeEvent]:
         async def generator() -> AsyncIterable[RealtimeEvent]:
-            queue: asyncio.Queue[RealtimeEvent | None] = asyncio.Queue()
+            queue: asyncio.Queue[RealtimeEvent | None] = asyncio.Queue(maxsize=self.max_queue_events)
             cursor = 0
             self.subscribers = self.subscribers or []
             self.subscribers.append(queue)
@@ -87,6 +94,18 @@ class _Broadcast:
                     self.subscribers.remove(queue)
 
         return generator()
+
+
+def _queue_put_bounded(queue: asyncio.Queue[RealtimeEvent | None], item: RealtimeEvent | None) -> None:
+    try:
+        queue.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    queue.put_nowait(item)
 
 
 class CallbackRealtimeSession(RealtimeSession):
@@ -181,6 +200,8 @@ class CallbackRealtimeSession(RealtimeSession):
                 payload = await self._connection.recv_json()
                 if payload is None:
                     break
+                if len(json.dumps(payload, separators=(",", ":")).encode("utf-8")) > DEFAULT_MAX_REALTIME_MESSAGE_BYTES:
+                    raise ValueError(f"Realtime provider message exceeded maximum size of {DEFAULT_MAX_REALTIME_MESSAGE_BYTES} bytes.")
                 for event in self._callbacks.parse_event(dict(payload or {})):
                     if isinstance(event, RealtimeSessionEndedEvent):
                         self._ended = True

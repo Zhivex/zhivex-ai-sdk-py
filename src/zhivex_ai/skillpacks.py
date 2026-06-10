@@ -125,6 +125,7 @@ def publish_skill(path: str | Path, *, registry_dir: str | Path) -> SkillRegistr
 def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | Path | None = None) -> dict[str, ToolDefinition]:
     tools: dict[str, ToolDefinition] = {}
     root = _project_root(project_root)
+    permissions = _skill_tool_permissions(skill)
     for entrypoint in skill.entrypoints:
         tool_name = entrypoint.tool_name or f"{skill.name}_{entrypoint.name}"
 
@@ -138,14 +139,7 @@ def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | 
             _entrypoint: str = entrypoint.name,
             _root: Path = root,
         ) -> dict[str, Any]:
-            run_root = _root
-            if isinstance(input, dict):
-                raw_output_path = input.get("output_path")
-                if isinstance(raw_output_path, str):
-                    output_path = Path(raw_output_path).expanduser()
-                    if output_path.is_absolute():
-                        run_root = output_path.parent.resolve()
-            result = await run_skill(_skill_name, entrypoint=_entrypoint, input=input, project_root=run_root)
+            result = await run_skill(_skill_name, entrypoint=_entrypoint, input=input, project_root=_root)
             return {
                 "skill_name": result.skill_name,
                 "skill_version": result.skill_version,
@@ -161,14 +155,31 @@ def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | 
             schema=entrypoint.input_schema or {"type": "object"},
             execute=execute,
             source="local",
+            permissions=list(permissions),
             metadata={
                 "skill_name": skill.name,
                 "skill_version": skill.version,
                 "skill_entrypoint": entrypoint.name,
                 "skill_package": bool(skill.package_manifest is not None),
+                "skill_permissions": {
+                    "allow_network": skill.permissions.allow_network,
+                    "read_paths": list(skill.permissions.read_paths),
+                    "write_paths": list(skill.permissions.write_paths),
+                },
             },
         )
     return tools
+
+
+def _skill_tool_permissions(skill: SkillDefinition) -> list[str]:
+    permissions: list[str] = []
+    if skill.permissions.read_paths or skill.permissions.write_paths:
+        permissions.append("filesystem")
+    if skill.permissions.write_paths:
+        permissions.append("write")
+    if skill.permissions.allow_network:
+        permissions.append("network")
+    return permissions
 
 
 def _project_root(project_root: str | Path | None) -> Path:
@@ -363,7 +374,7 @@ def _install_from_registry(*, name: str, version: str, registry_url: str, projec
             if "filter" in inspect.signature(archive.extractall).parameters:
                 archive.extractall(extract_dir, filter="data")
             else:
-                archive.extractall(extract_dir)
+                _safe_extract_tar(archive, extract_dir)
         skill_dir = extract_dir / name
         if not skill_dir.exists():
             nested_dirs = [item for item in extract_dir.iterdir() if item.is_dir()]
@@ -381,6 +392,19 @@ def _parse_registry_ref(source: str) -> tuple[str, str]:
     if not name or not version:
         raise ValidationError('Registry installs require "name@version".')
     return name, version
+
+
+def _safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    destination = destination.resolve()
+    for member in archive.getmembers():
+        target = (destination / member.name).resolve()
+        if not _is_relative_to(target, destination):
+            raise ValidationError(f'Registry artifact contains unsafe path "{member.name}".')
+        if member.islnk() or member.issym():
+            link_target = (target.parent / member.linkname).resolve()
+            if not _is_relative_to(link_target, destination):
+                raise ValidationError(f'Registry artifact contains unsafe link "{member.name}".')
+    archive.extractall(destination)
 
 
 def _resolve_skill_for_run(name: str, root: Path) -> SkillDefinition:

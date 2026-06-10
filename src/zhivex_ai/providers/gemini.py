@@ -108,6 +108,7 @@ from ..types import (
 )
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
+from ._url_security import validate_provider_url
 
 GEMINI_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -864,6 +865,14 @@ def _normalize_gemini_file(payload: dict[str, Any], *, provider: str) -> Provide
     )
 
 
+def _gemini_upload_allowed_suffixes(base_url: str) -> tuple[str, ...]:
+    host = (urlparse(base_url).hostname or "").strip(".").lower()
+    suffixes = ["googleapis.com"]
+    if host and host != "googleapis.com" and not host.endswith(".googleapis.com"):
+        suffixes.append(host)
+    return tuple(suffixes)
+
+
 @dataclass(slots=True)
 class GeminiFilesClient(FilesClient):
     provider: str
@@ -917,8 +926,14 @@ class GeminiFilesClient(FilesClient):
         upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
         if not upload_url:
             raise ValidationError('Provider "gemini" did not return an upload URL for the Files API.')
-        finalize = await self.fetch(
+        safe_upload_url = validate_provider_url(
             str(upload_url),
+            provider="gemini",
+            purpose="upload",
+            allowed_suffixes=_gemini_upload_allowed_suffixes(self.base_url),
+        )
+        finalize = await self.fetch(
+            safe_upload_url,
             headers={
                 "content-length": str(len(raw)),
                 "x-goog-upload-offset": "0",
@@ -1217,8 +1232,14 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
         if not upload_url:
             raise ValidationError('Provider "gemini" did not return an upload URL for File Search.')
-        finalize = await self.fetch(
+        safe_upload_url = validate_provider_url(
             str(upload_url),
+            provider="gemini",
+            purpose="upload",
+            allowed_suffixes=_gemini_upload_allowed_suffixes(self.base_url),
+        )
+        finalize = await self.fetch(
+            safe_upload_url,
             method="POST",
             headers={
                 "content-length": str(len(raw)),

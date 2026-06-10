@@ -25,6 +25,7 @@ from zhivex_ai import (  # noqa: E402
     to_ui_message_stream,
     to_ui_messages,
 )
+from zhivex_ai.transport import _parse_sse_events  # noqa: E402
 from zhivex_ai.types import (  # noqa: E402
     CodeExecutionResultPart,
     GenerateResult,
@@ -155,6 +156,12 @@ class TransportTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(parsed[0].id, message.id)
 
+    async def test_parse_ui_message_request_rejects_oversized_body(self) -> None:
+        request = _FakeRequest("x" * 20, "application/x-ndjson")
+
+        with self.assertRaisesRegex(Exception, "maximum size"):
+            await parse_ui_message_request(request, max_body_bytes=10)
+
     async def test_create_ui_responses_set_content_types(self) -> None:
         messages = to_ui_messages([create_text_message("user", "hello")])
         json_response = create_ui_message_json_response(messages)
@@ -183,6 +190,12 @@ class TransportTests(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Exception, "Streaming request failed with status 503"):
             failing = _FakeResponse(status_code=503, lines=[], text="unavailable")
             [event async for event in stream_sse(failing)]
+
+    async def test_stream_sse_rejects_oversized_event(self) -> None:
+        response = _FakeResponse(status_code=200, lines=[f"data: {'x' * 20}", ""])
+
+        with self.assertRaisesRegex(Exception, "maximum size"):
+            [event async for event in _parse_sse_events(response.iter_lines(), max_event_bytes=10)]
 
     async def test_sse_and_text_responses_encode_streams(self) -> None:
         async def source():

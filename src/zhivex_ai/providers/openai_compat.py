@@ -109,6 +109,10 @@ from ..types import (
 from .base import ProviderAdapter
 from ._payload import drop_none
 
+MAX_STREAM_RAW_CHUNKS = 1_000
+MAX_STREAM_AUDIO_BASE64_BYTES = 64 * 1024 * 1024
+
+
 def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
     if provider_name in {"openai", "azure-openai"}:
         return AgentCapabilities(
@@ -3089,15 +3093,22 @@ class OpenAICompatibleChatSpeechModel(_BaseOpenAICompatible, SpeechModel):
 
         raw_chunks: list[dict[str, Any]] = []
         audio_chunks: list[str] = []
+        audio_bytes = 0
         async for event in parse_sse(response.iter_lines()):
             if event.data == "[DONE]":
                 break
             payload = json.loads(event.data)
-            raw_chunks.append(payload)
+            if len(raw_chunks) < MAX_STREAM_RAW_CHUNKS:
+                raw_chunks.append(payload)
             delta = ((payload.get("choices") or [{}])[0] or {}).get("delta") or {}
             audio = delta.get("audio") or {}
             data = audio.get("data")
             if isinstance(data, str) and data:
+                audio_bytes += len(data.encode("ascii", errors="ignore"))
+                if audio_bytes > MAX_STREAM_AUDIO_BASE64_BYTES:
+                    raise ValidationError(
+                        f'Provider "{self.provider}" returned audio data larger than {MAX_STREAM_AUDIO_BASE64_BYTES} bytes.'
+                    )
                 audio_chunks.append(data)
 
         if not audio_chunks:
