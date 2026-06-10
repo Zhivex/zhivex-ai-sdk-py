@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
+from ._serde import deserialize_messages
 from .errors import ValidationError
 from .types import FinishReason, JsonValue, ModelMessage, TokenUsage, ToolCall, ToolExecutionResult
 
@@ -71,6 +72,12 @@ class PendingApproval:
     arguments: JsonValue | None = None
     provider: str | None = None
     reason: str | None = None
+    tool_call_id: str | None = None
+    permissions: list[str] = field(default_factory=list)
+    source: str = "local"
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+    created_at_ms: int | None = None
+    handoff_path: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -181,6 +188,7 @@ def _tool_result_from_payload(payload: Any) -> ToolExecutionResult | None:
         output=payload.get("output"),
         error=ToolExecutionError(message=str(error.get("message", ""))) if isinstance(error, dict) else None,
         is_error=bool(payload.get("is_error", False)),
+        provider_metadata=dict(payload.get("provider_metadata") or {}),
     )
 
 
@@ -206,7 +214,7 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
                 tool_calls=tool_calls,
                 tool_results=step_tool_results,
                 usage=_usage_from_payload(raw_step.get("usage")),
-                messages=[],
+                messages=deserialize_messages(raw_step.get("messages") if isinstance(raw_step.get("messages"), list) else None),
                 error=raw_step.get("error"),
                 started_at_ms=raw_step.get("started_at_ms"),
                 finished_at_ms=raw_step.get("finished_at_ms"),
@@ -236,6 +244,12 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
             arguments=item.get("arguments"),
             provider=item.get("provider"),
             reason=item.get("reason"),
+            tool_call_id=item.get("tool_call_id"),
+            permissions=[str(permission) for permission in item.get("permissions") or []],
+            source=str(item.get("source") or "local"),
+            metadata=_json_metadata_from_payload(item.get("metadata")),
+            created_at_ms=item.get("created_at_ms"),
+            handoff_path=[str(path_item) for path_item in item.get("handoff_path") or []],
         )
         for item in payload.get("pending_approvals") or []
         if isinstance(item, dict)
@@ -490,6 +504,11 @@ def create_sqlite_agent_run_store(path: str, *, namespace: str = "default") -> S
 
 def create_postgres_agent_run_store(dsn: str, *, table_prefix: str = "zhivex_agent") -> PostgresAgentRunStore:
     return PostgresAgentRunStore(dsn, table_prefix=table_prefix)
+
+
+async def get_pending_agent_approvals(store: AgentRunStore, run_id: str) -> list[PendingApproval]:
+    state = await store.load(run_id)
+    return list(state.pending_approvals) if state is not None and state.status == "suspended" else []
 
 
 async def cancel_agent_run(

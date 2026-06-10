@@ -240,7 +240,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - `kimi_official_tools.py` loads Moonshot official Formulas tools through `provider.formulas().toolset(...)` and runs them inside the normal local tool loop.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, Bedrock, and vLLM now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
-- `production/fastapi_agent_api.py` is the recommended starting point for backend agent APIs that need request IDs, idempotency keys, durable run storage, sanitized errors, and fail-fast gateway adapter configuration.
+- `production/fastapi_agent_api.py` is the recommended starting point for backend agent APIs that need request IDs, idempotency keys, durable run storage, pending approval endpoints, sanitized errors, and fail-fast gateway adapter configuration.
 - `production/worker_resume.py` is the recommended offline worker pattern for queue idempotency, checkpoint resume, and replay evidence.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.
 - Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.

@@ -39,6 +39,33 @@ Related documents:
 
 - None.
 
+## 0.11.0
+
+### Added
+
+- Added durable human-in-the-loop agent approvals with `ApprovalDecision.require_human(...)`, persisted `PendingApproval` records, `get_pending_agent_approvals(...)`, and `resume_agent_run(...)`.
+- Added `UIMessageToolApprovalChunk` so `to_ui_message_stream(...)` can preserve agent approval requests for frontend/SSE consumers.
+- Added a `0.11.0` release plan focused on production agent apps.
+
+### Changed
+
+- Bumped the package version to `0.11.0` while keeping the package in Beta.
+- Promoted the local-tool approval lifecycle types and helpers into the documented stable surface when backed by the production run-store contract.
+- Clarified production agent docs around suspended runs, pending approvals, and the distinction between `resume_agent(...)` and `resume_agent_run(...)`.
+
+### Fixed
+
+- Preserved serialized `AgentRunStep.messages` when deserializing stored run state so suspended runs retain enough context for approval resume and audit.
+- Normalized all Gemini callable-tool schemas before sending `functionDeclarations`, so strict Pydantic schemas with `additionalProperties: false` work in live agent tool loops.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.10.0
 
 ### Added

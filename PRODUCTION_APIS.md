@@ -92,8 +92,8 @@ For agent-backed API servers, keep application policy outside the SDK:
 
 - use `idempotency_key` for retryable user actions
 - attach memory/checkpoint stores when sessions need recovery
-- attach run stores when you need replay, snapshots, or cancellation records
-- keep human approval queues and authorization in application storage
+- attach run stores when you need replay, snapshots, cancellation records, or pending approvals
+- keep human authorization, notification, and audit policy in application storage
 - pass request ids through agent metadata and logs
 
 See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.

@@ -25,19 +25,18 @@ memory = create_postgres_agent_memory_store(dsn)
 checkpoints = create_postgres_checkpoint_store(dsn)
 ```
 
-Use run stores when you need idempotency, cancellation-tree records, replay, or audit snapshots. SQLite and in-memory stores are beta/local development choices.
+Use run stores when you need idempotency, cancellation-tree records, replay, audit snapshots, or pending approvals. SQLite and in-memory stores are beta/local development choices.
 
 ## Approval Ownership
 
-The SDK emits approval requests and applies `approval_policy`. Your application owns:
+The SDK emits approval requests, applies `approval_policy`, and can persist suspended runs with pending approvals in the configured run store. Your application owns:
 
 - the user/admin approval UI
-- durable approval queues
 - role checks
 - audit records
 - escalation and timeout policy
 
-For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. For asynchronous HITL systems, persist the pending request in app storage and resume through app-owned workflow when the user responds.
+For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. For asynchronous HITL systems, return `ApprovalDecision.require_human(...)`, load the pending approval with `get_pending_agent_approvals(...)`, and call `resume_agent_run(...)` when the user responds.
 
 ## Timeouts And Retries
 
@@ -79,7 +78,7 @@ Use run stores when you need cancellation records, idempotency, replay, or audit
 
 ## Serverless Vs Workers
 
-Use serverless handlers for short generation, streaming, or gateway requests that fit within platform timeouts. Use long-running workers for tool-heavy agents, approval queues, resumable workflows, large file processing, and jobs that need durable checkpoints.
+Use serverless handlers for short generation, streaming, or gateway requests that fit within platform timeouts. Use long-running workers for tool-heavy agents, human approval handoffs, resumable workflows, large file processing, and jobs that need durable checkpoints.
 
 Serverless handlers should avoid production reliance on in-memory stores. Workers should use durable run/checkpoint stores, idempotency keys, bounded concurrency, cooperative cancellation, and queue-owned retry/dead-letter policy.
 
@@ -100,7 +99,7 @@ Use `create_otel_agent_observer(...)` for OpenTelemetry spans, and `create_agent
 
 ## Recovery
 
-Use `resume_agent(...)` for session/checkpoint recovery. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
+Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
 
 ## Release Evidence
 

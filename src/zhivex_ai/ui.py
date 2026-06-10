@@ -28,6 +28,7 @@ from .types import (
     UIMessageFinishChunk,
     UIMessageProviderDataChunk,
     UIMessageTextChunk,
+    UIMessageToolApprovalChunk,
     UIMessageToolCallChunk,
     UIMessageToolResultChunk,
 )
@@ -191,6 +192,20 @@ def deserialize_ui_message_chunk(value: str) -> UIMessageChunk:
             provider=payload.get("provider", ""),
             data=payload.get("data"),
         )
+    if chunk_type == "tool-approval":
+        return UIMessageToolApprovalChunk(
+            message_id=payload["message_id"],
+            role=payload.get("role", "assistant"),
+            tool_name=payload.get("tool_name", ""),
+            tool_input=payload.get("tool_input"),
+            approved=bool(payload.get("approved", False)),
+            reason=payload.get("reason"),
+            approval_request_id=payload.get("approval_request_id"),
+            provider=payload.get("provider"),
+            provider_managed=bool(payload.get("provider_managed", False)),
+            tool_source=payload.get("tool_source"),
+            metadata=payload.get("metadata") or {},
+        )
     if chunk_type == "finish":
         return UIMessageFinishChunk(
             message_id=payload["message_id"],
@@ -223,6 +238,19 @@ def to_ui_message_stream(source: Any, message_id: str | None = None):
                     message_id=resolved_id,
                     provider=event.provider,
                     data=event.data,
+                )
+            elif event.type == "tool-approval":
+                yield UIMessageToolApprovalChunk(
+                    message_id=resolved_id,
+                    tool_name=event.tool_name,
+                    tool_input=event.tool_input,
+                    approved=event.approved,
+                    reason=event.reason,
+                    approval_request_id=event.approval_request_id,
+                    provider=event.provider,
+                    provider_managed=event.provider_managed,
+                    tool_source=event.tool_source,
+                    metadata=dict(event.metadata),
                 )
             elif event.type == "finish":
                 yield UIMessageFinishChunk(

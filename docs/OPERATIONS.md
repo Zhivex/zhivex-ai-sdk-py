@@ -4,7 +4,7 @@ This guide is the operations runbook for services built on the Zhivex AI SDK.
 
 ## Correlation IDs
 
-Carry one application request ID through every boundary. Use stable field names so logs, traces, approval queues, and gateway dashboards can be joined.
+Carry one application request ID through every boundary. Use stable field names so logs, traces, human approval UIs, and gateway dashboards can be joined.
 
 | Field | Owner | Use |
 | --- | --- | --- |
@@ -63,14 +63,14 @@ The SDK is async-first. Production services should:
 - set request and job timeouts before calling `run_agent(...)`, `stream_agent(...)`, `generate_text(...)`, or gateway calls
 - propagate cancellation from HTTP disconnects or worker shutdowns
 - keep tool implementations cooperative and timeout-aware
-- use run stores when cancellation, replay, idempotency, or auditability matters
+- use run stores when cancellation, replay, idempotency, pending approvals, or auditability matters
 - use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled
 
 Stored cancellation records do not stop already-running provider calls or arbitrary app tools by themselves. Workers must check their own cancellation signals.
 
 ## Serverless And Workers
 
-Serverless handlers fit short request/response generation, gateway calls, and small agent runs. Use durable workers for long-running agents, tool-heavy workflows, approval queues, large file processing, and resumable jobs.
+Serverless handlers fit short request/response generation, gateway calls, and small agent runs. Use durable workers for long-running agents, tool-heavy workflows, human approval handoffs, large file processing, and resumable jobs.
 
 Serverless defaults:
 
@@ -81,7 +81,7 @@ Serverless defaults:
 
 Worker defaults:
 
-- durable run store and checkpoint store
+- durable run store, pending approval resume, and checkpoint store
 - idempotency key per job
 - cooperative cancellation
 - bounded concurrency per provider/model

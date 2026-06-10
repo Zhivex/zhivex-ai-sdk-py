@@ -75,12 +75,12 @@
       "stability": "stable for Postgres/run-state/replay; beta for local stores"
     },
     {
-      "area": "Human approval policies",
+      "area": "Durable human approvals",
       "implemented": "yes",
       "documented": "yes",
       "offline_tested": "yes",
       "live_smoked": "provider-dependent",
-      "stability": "beta"
+      "stability": "stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks"
     },
     {
       "area": "MCP helpers and registries",

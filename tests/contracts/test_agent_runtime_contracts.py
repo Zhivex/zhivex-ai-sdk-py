@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    ApprovalDecision,
     AgentRunState,
     AgentRunStore,
     GuardrailResult,
@@ -29,10 +30,12 @@ from zhivex_ai import (  # noqa: E402
     create_sqlite_checkpoint_store,
     create_text_message,
     deny_all_approval_policy,
+    get_pending_agent_approvals,
     handoff_to,
     permission_allowlist_approval_policy,
     replay_agent_run,
     resume_agent,
+    resume_agent_run,
     run_agent,
     stream_agent,
     tool,
@@ -210,6 +213,87 @@ async def test_tool_approval_allow_and_deny_contract() -> None:
     denied_result = await run_agent(agent=denied, prompt="lookup")
     assert denied_result.tool_results[0].is_error
     assert "denied" in (denied_result.tool_results[0].error.message if denied_result.tool_results[0].error else "")
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_can_suspend_and_resume_from_run_store() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def suspend_policy(request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("manager approval required", approval_id="approval_lookup")
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda input: {"item": input["item"], "status": "approved"},
+                requires_approval=True,
+                permissions=["project:read"],
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup", idempotency_key="approval-job")
+    assert suspended.state is not None
+    assert suspended.state.status == "suspended"
+    assert suspended.state.pending_approvals[0].id == "approval_lookup"
+    assert suspended.finish_reason == "tool-calls"
+
+    pending = await get_pending_agent_approvals(store, suspended.run_id)
+    assert len(pending) == 1
+    assert pending[0].name == "lookup"
+    assert pending[0].arguments == {"item": "apollo"}
+    assert pending[0].permissions == ["project:read"]
+
+    resumed = await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+    assert resumed.text == "tool done"
+    assert resumed.state is not None
+    assert resumed.state.parent_run_id == suspended.run_id
+
+    final_state = await store.load(suspended.run_id)
+    assert final_state is not None
+    assert final_state.status == "completed"
+    assert final_state.output_text == "tool done"
+    assert final_state.pending_approvals == []
+    assert final_state.child_runs[0].run_id == resumed.run_id
+    assert final_state.metadata["resolved_approval"]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_suspended_tool_approval_generates_stable_event_and_state_id() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def suspend_policy(request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("manager approval required")
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda input: {"item": input["item"], "status": "approved"},
+                requires_approval=True,
+            )
+        },
+    )
+
+    result = await run_agent(agent=agent, prompt="lookup")
+
+    assert result.trace is not None
+    approval_events = [event for event in result.trace.events if event.type == "tool-approval"]
+    assert len(approval_events) == 1
+    assert result.state is not None
+    approval_id = result.state.pending_approvals[0].id
+    assert approval_id.startswith("approval_")
+    assert approval_events[0].approval_request_id == approval_id
 
 
 @pytest.mark.asyncio

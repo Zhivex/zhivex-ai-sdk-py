@@ -538,11 +538,7 @@ def _map_tools(
                     {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": (
-                            _normalize_gemini_tool_schema(create_schema_adapter(tool.schema).json_schema())
-                            if getattr(tool, "source", None) == "mcp"
-                            else create_schema_adapter(tool.schema).json_schema()
-                        ),
+                        "parameters": _normalize_gemini_tool_schema(create_schema_adapter(tool.schema).json_schema()),
                     }
                     for tool in callable_tools.values()
                 ]

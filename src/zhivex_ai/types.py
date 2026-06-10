@@ -1173,6 +1173,22 @@ class UIMessageProviderDataChunk:
 
 
 @dataclass(slots=True)
+class UIMessageToolApprovalChunk:
+    type: Literal["tool-approval"] = "tool-approval"
+    message_id: str = ""
+    role: Literal["assistant"] = "assistant"
+    tool_name: str = ""
+    tool_input: JsonValue | None = None
+    approved: bool = False
+    reason: str | None = None
+    approval_request_id: str | None = None
+    provider: str | None = None
+    provider_managed: bool = False
+    tool_source: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class UIMessageFinishChunk:
     type: Literal["finish"] = "finish"
     message_id: str = ""
@@ -1193,6 +1209,7 @@ UIMessageChunk: TypeAlias = (
     | UIMessageToolCallChunk
     | UIMessageToolResultChunk
     | UIMessageProviderDataChunk
+    | UIMessageToolApprovalChunk
     | UIMessageFinishChunk
     | UIMessageErrorChunk
 )

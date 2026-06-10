@@ -24,8 +24,9 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
+- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `create_agent_session`, `load_agent_session`
 - Agent run state and replay: `AgentRunStore`, `AgentRunState`, `AgentRunStatus`, `AgentRunStep`, `AgentChildRun`, `PostgresAgentRunStore`, `create_postgres_agent_run_store`, `serialize_agent_run_state`, `deserialize_agent_run_state`, `agent_run_state_to_json`, `agent_run_state_from_json`, `cancel_agent_run`, `cancel_agent_run_tree`, `AgentRunTreeCancellationResult`, `AgentRunSnapshot`, `create_agent_run_snapshot`, `AgentReplayEvent`, `AgentReplayResult`, `replay_agent_run`
+- Durable agent approvals: `ApprovalDecision`, `ToolApprovalRequest`, `AgentToolApprovalEvent`, `PendingApproval`, `get_pending_agent_approvals`
 - Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
 - Agent skill session controls: `set_agent_session_skills`, `get_agent_session_skills`, `clear_agent_session_skills`
 - Agent skill observability: `AgentSkillActivatedEvent`, `AgentSkillSkippedEvent`
@@ -48,7 +49,7 @@ These APIs are supported and documented, but they may still change between minor
 - Provider-data content parts and hosted-tool control payloads: `ProviderDataPart`, `provider_data_part`, `get_provider_data_parts`, `get_last_provider_data_part`, `openai_mcp_approval_response`, `azure_openai_mcp_approval_response`
 - Typed OpenAI/Azure provider-data payloads and parsers: `OpenAIResponseReference`, `OpenAIMcpApprovalRequest`, `OpenAIMcpApprovalResponse`, `OpenAIMcpCall`, `OpenAIMcpListTools`, `OpenAIProviderData`, `AzureOpenAIResponseReference`, `AzureOpenAIMcpApprovalRequest`, `AzureOpenAIMcpApprovalResponse`, `AzureOpenAIMcpCall`, `AzureOpenAIMcpListTools`, `AzureOpenAIProviderData`, `parse_openai_provider_data_part`, `parse_azure_openai_provider_data_part`
 - Response-reference helpers: `openai_response_reference`, `get_openai_response_reference`, `get_openai_response_id`, `azure_openai_response_reference`, `get_azure_openai_response_reference`, `get_azure_openai_response_id`
-- Hosted-tool streaming transport: `StreamProviderDataEvent`, `UIMessageProviderDataChunk`
+- Hosted-tool and approval streaming transport: `StreamProviderDataEvent`, `UIMessageProviderDataChunk`, `UIMessageToolApprovalChunk`
 - Packaged skill APIs and installers: `load_skill_package`, `validate_skill`, `install_skill`, `list_installed_skills`, `run_skill`, `publish_skill`
 - Packaged skill types and artifacts: `SkillArtifact`, `SkillEntrypoint`, `SkillPermissions`, `SkillPackageManifest`, `InstalledSkill`, `SkillRegistryIndex`, `SkillRunResult`
 - Packaged skill runtime events: `AgentSkillResolvedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillArtifactCreatedEvent`
@@ -56,7 +57,7 @@ These APIs are supported and documented, but they may still change between minor
 - Qwen native hosted-tool, Files, Batch, ASR, and TTS helpers exposed through `provider.native`, `provider.responses()`, `provider.files()`, and `provider.batches()`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
-- Agent platform helpers beyond the stable run-state/replay surface: in-memory and SQLite run stores, native subagent tools, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
+- Agent platform helpers beyond the stable run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
 - Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, workflow expectation helpers, and documented workflow examples in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.

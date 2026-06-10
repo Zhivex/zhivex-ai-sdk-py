@@ -51,7 +51,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 
 ## Highlights
 
-- Agent runtime with executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, transcript + summary memory, permission-aware tool execution, and traces
+- Agent runtime with executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
 - Declarative workflow agents with `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `session.state`, `output_key`, and templated step inputs
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
@@ -977,7 +977,7 @@ follow_up = openai_response_options(previous_response=first)
 assert get_openai_response_id(first) is not None
 ```
 
-The UI helpers now preserve provider-managed control traffic as `provider-data` chunks as well, so `to_ui_message_stream(...)` can surface MCP approval requests, response references, and other typed provider-data events to frontend consumers.
+The UI helpers now preserve provider-managed control traffic as `provider-data` chunks and agent approval requests as `tool-approval` chunks, so `to_ui_message_stream(...)` can surface MCP approval requests, response references, pending local approvals, and other typed events to frontend consumers.
 
 When these approval requests appear inside `run_agent(...)` or `stream_agent(...)`, the runtime reuses `approval_policy` to emit `AgentToolApprovalEvent` events, append the provider-specific approval response, and continue the loop. This provider-managed approval path is currently beta and limited to OpenAI and Azure OpenAI; other providers may expose hosted-tool metadata in the support matrix before they share this same approval/runtime integration.
 
@@ -1336,6 +1336,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `AgentSession`
 - `run_agent(...)`
 - `resume_agent(...)`
+- `resume_agent_run(...)`
 - `stream_agent(...)`
 - `create_in_memory_agent_memory_store()`
 - `create_in_memory_checkpoint_store()`
@@ -1357,6 +1358,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `apply_safety_policy_to_agent(...)`
 - `load_agent_session(...)`
 - `ApprovalDecision`, `ToolApprovalRequest`
+- `PendingApproval`, `get_pending_agent_approvals(...)`
 - `GuardrailResult`, `InputGuardrailRequest`, `OutputGuardrailRequest`
 - `permission_allowlist_approval_policy(...)`
 - input and output guardrails on `Agent(...)`
@@ -1373,7 +1375,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
-This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, native subagent tools, shared sessions, transcript + summary memory, approval hooks, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, native subagent tools, shared sessions, transcript + summary memory, approval hooks, durable pending approvals, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
 
 For production semantics, persistence, approvals, tool registries, event ordering, and recovery guidance, see [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).
 
@@ -1408,6 +1410,8 @@ agent = Agent(name="assistant", model=model, run_store=store)
 result = await run_agent(agent=agent, prompt="Draft a reply", idempotency_key="reply-1")
 state = await store.load(result.run_id)
 ```
+
+Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call.
 
 Safety policies compose approval, redaction, and budget defaults without mutating the original agent:
 
