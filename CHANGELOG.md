@@ -39,6 +39,31 @@ Related documents:
 
 - None.
 
+## 0.10.0
+
+### Added
+
+- Added a `0.10.0` release plan focused on GA-candidate groundwork while keeping the package in Beta.
+
+### Changed
+
+- Bumped the package version to `0.10.0` while keeping the package in Beta.
+- Promoted the production run-state, Postgres run-store, run serialization, cancellation, replay, and run-snapshot helpers into the documented stable surface.
+- Clarified that in-memory and SQLite run stores, workflow agents, packaged skills, provider-managed approvals, trace artifacts, evaluation reports, and safety/redaction/budget helpers remain beta.
+- Updated production API guidance so the tier-1 provider set includes OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM.
+
+### Fixed
+
+- Corrected gateway production docs to reflect that `GatewayConfig.fallback_on_refusal` defaults to `False` and fallback-on-refusal must be explicitly enabled.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.9.0
 
 ### Added

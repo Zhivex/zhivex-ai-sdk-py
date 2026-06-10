@@ -32,7 +32,7 @@ make dev
 For production-facing API servers:
 
 - import supported APIs from `zhivex_ai`
-- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, and vLLM
+- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM
 - validate request bodies with Pydantic
 - pass `timeout_ms` explicitly from the API layer into SDK calls
 - map SDK exceptions into stable HTTP error responses

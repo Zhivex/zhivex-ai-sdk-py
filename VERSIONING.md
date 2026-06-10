@@ -39,9 +39,9 @@ When a stable API needs to change:
 
 ## Beta and experimental expectations
 
-Beta APIs are intended for early adoption with documented change management. The packaged-skill layer, durable agent run stores, native subagent tools, declarative workflow agents, replay/evaluation helpers, trace artifacts, redaction policies, and budget guards follow this beta policy.
+Beta APIs are intended for early adoption with documented change management. The packaged-skill layer, in-memory and SQLite agent run stores, native subagent tools, declarative workflow agents, evaluation helpers, trace artifacts, redaction policies, and budget guards follow this beta policy.
 
-The current beta-only areas are narrower than the full agent story. Middleware helpers and model catalog helpers remain beta. The agent runtime, session helpers, agent skills, MCP helpers, MCP-backed registries, and Postgres-backed agent stores are now part of the documented stable surface and follow the stable-surface rules above.
+The current beta-only areas are narrower than the full agent story. Middleware helpers and model catalog helpers remain beta. The agent runtime, session helpers, agent skills, MCP helpers, MCP-backed registries, Postgres-backed agent stores, run-state serialization, cancellation, replay, and run-snapshot helpers are now part of the documented stable surface and follow the stable-surface rules above.
 
 Experimental APIs are intended for evaluation. They should be consumed behind an application-owned abstraction if production teams need to try them before they graduate.
 

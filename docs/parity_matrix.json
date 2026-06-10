@@ -72,7 +72,7 @@
       "documented": "yes",
       "offline_tested": "yes",
       "live_smoked": "n/a",
-      "stability": "beta"
+      "stability": "stable for Postgres/run-state/replay; beta for local stores"
     },
     {
       "area": "Human approval policies",

@@ -25,6 +25,7 @@ These APIs are the supported public contract for application code and production
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
 - Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `create_agent_session`, `load_agent_session`
+- Agent run state and replay: `AgentRunStore`, `AgentRunState`, `AgentRunStatus`, `AgentRunStep`, `AgentChildRun`, `PostgresAgentRunStore`, `create_postgres_agent_run_store`, `serialize_agent_run_state`, `deserialize_agent_run_state`, `agent_run_state_to_json`, `agent_run_state_from_json`, `cancel_agent_run`, `cancel_agent_run_tree`, `AgentRunTreeCancellationResult`, `AgentRunSnapshot`, `create_agent_run_snapshot`, `AgentReplayEvent`, `AgentReplayResult`, `replay_agent_run`
 - Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
 - Agent skill session controls: `set_agent_session_skills`, `get_agent_session_skills`, `clear_agent_session_skills`
 - Agent skill observability: `AgentSkillActivatedEvent`, `AgentSkillSkippedEvent`
@@ -55,7 +56,7 @@ These APIs are supported and documented, but they may still change between minor
 - Qwen native hosted-tool, Files, Batch, ASR, and TTS helpers exposed through `provider.native`, `provider.responses()`, `provider.files()`, and `provider.batches()`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
-- Agent platform helpers: durable `AgentRunState` stores, native subagent tools, evaluation fixtures/reports, replay, trace artifacts, run-tree cancellation, safety policies, redaction policies, and budget guards
+- Agent platform helpers beyond the stable run-state/replay surface: in-memory and SQLite run stores, native subagent tools, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
 - Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, workflow expectation helpers, and documented workflow examples in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
