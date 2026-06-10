@@ -23,6 +23,7 @@ from zhivex_ai import (
     ReasoningConfig,
     ToolChoiceName,
     UnsupportedFeatureError,
+    ValidationError,
     create_qwen,
     embed,
     generate_speech,
@@ -470,3 +471,30 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["json"]["input"]["instructions"], "Speak clearly.")
         self.assertEqual(requests[1]["method"], "GET")
         self.assertEqual(requests[1]["url"], "https://files.example.com/audio.wav")
+
+    async def test_qwen_speech_rejects_untrusted_audio_url(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            if method == "GET":
+                raise AssertionError("Unsafe audio URL should not be fetched.")
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "output": {
+                        "finish_reason": "stop",
+                        "audio": {"url": "http://127.0.0.1:8000/admin"},
+                    }
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError):
+            await generate_speech(model=provider.native.speech_model("qwen-tts"), input="hello")

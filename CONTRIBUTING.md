@@ -50,8 +50,11 @@ Before release-oriented changes:
 
 ```bash
 make check
+make release-evidence
 make release-check
 ```
+
+`make release-evidence` writes the local gate output to `docs/releases/<version>-evidence.md`; use it for publish candidates and attach live-smoke notes separately when provider credentials are available.
 
 Optional live smoke runs require configured credentials:
 

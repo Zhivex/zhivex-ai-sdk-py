@@ -17,10 +17,24 @@ class ReleaseArtifactToolingTests(TestCase):
         for extra in ["postgres", "mcp", "api", "otel", "docx"]:
             self.assertIn(f'"{extra}"', source)
 
+    def test_release_evidence_collector_and_plan_are_present(self) -> None:
+        script = ROOT / "scripts/collect_release_evidence.py"
+        source = script.read_text("utf-8")
+        ast.parse(source)
+        for gate in ["compile", "public contract", "artifact install smoke"]:
+            self.assertIn(gate, source)
+
+        release_plan = (ROOT / "docs/releases/0.9.0.md").read_text("utf-8")
+        self.assertIn("0.9.0", release_plan)
+        self.assertIn("make release-evidence", release_plan)
+        self.assertIn("fail_on_missing_adapter", release_plan)
+
     def test_makefile_release_check_runs_install_verification(self) -> None:
         makefile = (ROOT / "Makefile").read_text("utf-8")
         self.assertIn("release-install-check:", makefile)
+        self.assertIn("release-evidence:", makefile)
         self.assertIn("scripts/verify_release_artifacts.py", makefile)
+        self.assertIn("scripts/collect_release_evidence.py", makefile)
         self.assertIn("release-check: build release-install-check", makefile)
 
     def test_sdist_includes_root_docs_linked_from_packaged_docs(self) -> None:

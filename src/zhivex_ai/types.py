@@ -10,7 +10,7 @@ JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 PartialJsonValue = JsonPrimitive | list["PartialJsonValue"] | dict[str, "PartialJsonValue | None"]
 
 MessageRole = Literal["system", "user", "assistant", "tool"]
-FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "error", "unknown"]
+FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "refusal", "error", "unknown"]
 StructuredOutputMode = Literal["auto", "native", "prompted"]
 ToolChoiceMode = Literal["none", "auto", "required"]
 PortableProviderTier = Literal["portable", "native-only", "compatibility"]
@@ -1245,7 +1245,7 @@ class StructuredOutputConfig:
 
 @dataclass(slots=True)
 class ReasoningConfig:
-    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     budget_tokens: int | None = None
 
 
@@ -1453,6 +1453,8 @@ class RealtimeSessionConfig:
     input_sample_rate_hz: int | None = None
     output_sample_rate_hz: int | None = None
     channels: int | None = None
+    translation_target_language_code: str | None = None
+    translation_echo_target_language: bool | None = None
     turn_detection: dict[str, Any] | None = None
     provider_options: ProviderOptions | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

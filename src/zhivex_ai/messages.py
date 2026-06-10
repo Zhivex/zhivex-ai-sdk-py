@@ -342,6 +342,8 @@ def normalize_finish_reason(reason: str | None) -> FinishReason | None:
         return "tool-calls"
     if lowered == "content_filter":
         return "content-filter"
+    if lowered == "refusal":
+        return "refusal"
     if lowered == "error":
         return "error"
     return "unknown"

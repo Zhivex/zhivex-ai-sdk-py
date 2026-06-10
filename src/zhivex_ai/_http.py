@@ -7,6 +7,13 @@ from typing import Any, Protocol
 import httpx
 
 _DEFAULT_CLIENTS: dict[float | None, httpx.AsyncClient] = {}
+DEFAULT_TIMEOUT_MS = 300_000
+DEFAULT_MAX_BUFFERED_RESPONSE_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_STREAM_CACHE_BYTES = 8 * 1024 * 1024
+
+
+class ResponseTooLargeError(RuntimeError):
+    pass
 
 
 class ResponseLike(Protocol):
@@ -57,18 +64,20 @@ class BufferedResponse:
 
 
 class StreamingResponse:
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx.Response, *, max_cached_bytes: int = DEFAULT_MAX_STREAM_CACHE_BYTES) -> None:
         self.status_code = response.status_code
         self.headers: Mapping[str, str] = dict(getattr(response, "headers", {}) or {})
         self._response = response
         self._closed = False
         self._body_bytes: bytes | None = None
+        self._max_cached_bytes = max_cached_bytes
 
     async def _read_body(self) -> bytes:
         if self._body_bytes is not None:
             return self._body_bytes
         try:
             self._body_bytes = await self._response.aread()
+            _enforce_max_bytes(self._body_bytes, DEFAULT_MAX_BUFFERED_RESPONSE_BYTES, "streamed response body")
             return self._body_bytes
         finally:
             await self._close()
@@ -95,12 +104,20 @@ class StreamingResponse:
             return
 
         chunks: list[str] = []
+        cached_bytes = 0
+        cache_enabled = True
         try:
             async for line in self._response.aiter_lines():
-                chunks.append(line)
+                if cache_enabled:
+                    cached_bytes += len(line.encode("utf-8")) + 1
+                    if cached_bytes <= self._max_cached_bytes:
+                        chunks.append(line)
+                    else:
+                        chunks = []
+                        cache_enabled = False
                 yield line
         finally:
-            self._body_bytes = "\n".join(chunks).encode("utf-8")
+            self._body_bytes = "\n".join(chunks).encode("utf-8") if cache_enabled else b""
             await self._close()
 
 
@@ -129,6 +146,11 @@ def _shared_client(timeout: float | None) -> httpx.AsyncClient:
     return client
 
 
+def _enforce_max_bytes(body: bytes, max_bytes: int, label: str) -> None:
+    if len(body) > max_bytes:
+        raise ResponseTooLargeError(f"{label} exceeded maximum size of {max_bytes} bytes.")
+
+
 async def aclose_default_clients() -> None:
     clients = list(_DEFAULT_CLIENTS.values())
     _DEFAULT_CLIENTS.clear()
@@ -146,7 +168,8 @@ async def default_fetch(
     timeout_ms: int | None,
     stream: bool = False,
 ) -> ResponseLike:
-    timeout = None if timeout_ms is None else timeout_ms / 1000
+    effective_timeout_ms = DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms
+    timeout = effective_timeout_ms / 1000
     client = _shared_client(timeout)
     request = client.build_request(method, url, headers=headers, **_build_request_kwargs(json_body, body))
     response = await client.send(request, stream=stream)
@@ -154,6 +177,7 @@ async def default_fetch(
         return StreamingResponse(response=response)
     try:
         body_bytes = await response.aread()
+        _enforce_max_bytes(body_bytes, DEFAULT_MAX_BUFFERED_RESPONSE_BYTES, "response body")
         return BufferedResponse(
             status_code=response.status_code,
             body_bytes=body_bytes,

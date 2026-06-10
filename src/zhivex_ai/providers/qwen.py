@@ -34,6 +34,7 @@ from .openai_compat import (
     OpenAICompatibleResponsesClient,
     create_openai_compatible_provider,
 )
+from ._url_security import validate_provider_url
 
 QwenRegion = Literal["intl", "us", "cn"]
 
@@ -300,9 +301,10 @@ class QwenSpeechModel(SpeechModel):
         payload = await response.json()
         audio_info = ((payload.get("output") or {}).get("audio") or {})
         if isinstance(audio_info.get("url"), str) and audio_info.get("url"):
+            audio_url = validate_provider_url(str(audio_info["url"]), provider=self.provider, purpose="audio download")
             audio_response = await with_retry(
                 lambda: self.fetch(
-                    str(audio_info["url"]),
+                    audio_url,
                     method="GET",
                     headers={},
                     json_body=None,

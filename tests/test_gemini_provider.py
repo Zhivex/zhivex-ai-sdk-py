@@ -106,11 +106,11 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_gemini(api_key="test", fetch=fetch)
-        result = await provider.images().generate(prompt="draw a transit map", model="gemini-3.1-flash-image-preview")
+        result = await provider.images().generate(prompt="draw a transit map", model="gemini-3.1-flash-image")
 
         self.assertEqual(result.images[0].b64_json, "iVBORw0KGgo=")
         self.assertEqual(result.images[0].media_type, "image/png")
-        self.assertIn("/models/gemini-3.1-flash-image-preview:generateContent?key=test", requests[0]["url"])
+        self.assertIn("/models/gemini-3.1-flash-image:generateContent?key=test", requests[0]["url"])
         self.assertEqual(requests[0]["json"]["generationConfig"]["responseModalities"], ["IMAGE"])
 
     async def test_gemini_imagen_generation_client_uses_predict(self) -> None:
@@ -243,6 +243,10 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.media[0].b64_data, "mp3-b64")
         self.assertEqual(result.media[0].media_type, "audio/mpeg")
         self.assertIn("/models/lyria-3-clip-preview:generateContent?key=test", requests[0]["url"])
+
+        pro = await provider.media().generate_music(prompt="Create a short orchestral cue.", model="lyria-3-pro-preview")
+        self.assertEqual(pro.media[0].b64_data, "mp3-b64")
+        self.assertIn("/models/lyria-3-pro-preview:generateContent?key=test", requests[1]["url"])
 
     async def test_gemini_batches_and_interactions_clients(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -380,14 +384,14 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
-        image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image-preview")
-        video = await provider.videos().generate(model="veo-3.1-generate-001", prompt="video")
+        image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image")
+        video = await provider.videos().generate(model="veo-3.1-lite-generate-preview", prompt="video")
 
         self.assertEqual(image.images[0].b64_json, "vertex-img")
         self.assertEqual(video.name, "operations/vertex-video")
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
-        self.assertIn("/publishers/google/models/gemini-3.1-flash-image-preview:generateContent", requests[0]["url"])
-        self.assertIn("/publishers/google/models/veo-3.1-generate-001:predictLongRunning", requests[1]["url"])
+        self.assertIn("/publishers/google/models/gemini-3.1-flash-image:generateContent", requests[0]["url"])
+        self.assertIn("/publishers/google/models/veo-3.1-lite-generate-preview:predictLongRunning", requests[1]["url"])
 
     async def test_gemini_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -1215,8 +1219,8 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             if method == "DELETE" and "/fileSearchStores/alpha?key=" in url:
                 return FakeResponse(status_code=200, payload={})
             if "upload/v1beta/fileSearchStores/alpha:uploadToFileSearchStore" in url:
-                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/store"})
-            if url == "https://upload.example.com/store":
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.googleapis.com/store"})
+            if url == "https://upload.googleapis.com/store":
                 return FakeResponse(status_code=200, payload={"name": "operations/upload-1", "done": False})
             if method == "POST" and "/fileSearchStores/alpha:importFile?key=" in url:
                 return FakeResponse(status_code=200, payload={"name": "operations/import-1", "done": False})
@@ -1291,6 +1295,34 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(deleted_document)
         self.assertTrue(deleted_store)
 
+    async def test_gemini_file_search_store_upload_rejects_untrusted_upload_url(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method})
+            if "upload/v1beta/fileSearchStores/alpha:uploadToFileSearchStore" in url:
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "http://169.254.169.254/latest/meta-data"})
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError):
+            await provider.file_search_stores().upload(
+                file_search_store_name="fileSearchStores/alpha",
+                data=b"%PDF-1.4",
+                filename="manual.pdf",
+            )
+
+        self.assertEqual(len(requests), 1)
+
     async def test_gemini_files_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -1306,14 +1338,14 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         ):
             requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
             if "upload/v1beta/files" in url:
-                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/resumable"})
-            if url == "https://upload.example.com/resumable":
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.googleapis.com/resumable"})
+            if url == "https://upload.googleapis.com/resumable":
                 return FakeResponse(status_code=200, payload={"file": {"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}})
             if method == "GET" and "/files?" in url:
                 return FakeResponse(status_code=200, payload={"files": [{"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}]})
-            if method == "GET":
+            if method == "GET" and "/v1beta/files/123?" in url:
                 return FakeResponse(status_code=200, payload={"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"})
-            if method == "DELETE":
+            if method == "DELETE" and "/v1beta/files/123?" in url:
                 return FakeResponse(status_code=200, payload={})
             raise AssertionError(f"Unexpected request: {method} {url}")
 
@@ -1330,6 +1362,34 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(fetched.media_type, "application/pdf")
         self.assertTrue(deleted)
         self.assertEqual(requests[0]["headers"]["x-goog-upload-header-content-type"], "application/pdf")
+        self.assertIn("/v1beta/files/123?", requests[3]["url"])
+        self.assertIn("/v1beta/files/123?", requests[4]["url"])
+        self.assertNotIn("/v1beta/files/files/123", requests[3]["url"])
+        self.assertNotIn("/v1beta/files/files/123", requests[4]["url"])
+
+    async def test_gemini_files_upload_rejects_untrusted_upload_url(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+            method: str = "POST",
+            body: Any = None,
+        ):
+            requests.append({"url": url, "method": method})
+            if "upload/v1beta/files" in url:
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "file:///tmp/payload"})
+            raise AssertionError(f"Unexpected request: {method} {url}")
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError):
+            await provider.files().upload(data=b"%PDF-1.4", filename="stub.pdf")
+
+        self.assertEqual(len(requests), 1)
 
     async def test_gemini_files_client_supports_audio_uploads(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -1346,8 +1406,8 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         ):
             requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body})
             if "upload/v1beta/files" in url:
-                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.example.com/audio"})
-            if url == "https://upload.example.com/audio":
+                return FakeResponse(status_code=200, payload={}, headers={"x-goog-upload-url": "https://upload.googleapis.com/audio"})
+            if url == "https://upload.googleapis.com/audio":
                 return FakeResponse(
                     status_code=200,
                     payload={"file": {"name": "files/audio-1", "displayName": "sample.mp3", "mimeType": "audio/mpeg", "uri": "files/audio-1"}},

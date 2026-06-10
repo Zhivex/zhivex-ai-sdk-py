@@ -8,7 +8,7 @@ async def main() -> None:
     agent = Agent(
         name="voice-assistant",
         instructions="Be brief and helpful.",
-        model=provider.realtime_model("gpt-realtime"),
+        model=provider.realtime_model("gpt-realtime-2"),
         tools={
             "lookup_weather": tool(
                 name="lookup_weather",

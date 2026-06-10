@@ -51,7 +51,7 @@ Scope checks with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,v
 | Kimi/Moonshot | `MOONSHOT_API_KEY` or `KIMI_API_KEY`, `ZHIVEX_SMOKE_KIMI_MODEL`; optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL` |
 | vLLM | `ZHIVEX_SMOKE_VLLM_MODEL`; optional `ZHIVEX_SMOKE_VLLM_BASE_URL`, `ZHIVEX_SMOKE_VLLM_API_KEY` or `VLLM_API_KEY` |
 
-Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the relevant Gemini or Vertex image/video/media model IDs.
+Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the relevant Gemini or Vertex image/video/media model IDs, such as `gemini-3.1-flash-image`, `gemini-3.5-live-translate-preview`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 
 ## Focused Example
 
@@ -60,10 +60,10 @@ Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1
 ## Capability Notes
 
 - OpenAI, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM expose portable text, streaming, structured output, and tool paths.
-- Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, and Vector Store / File Search management through `provider.native` / bundle helper methods.
-- Anthropic is tier-1 for portable text-generation paths; embeddings, transcription, and speech are outside the current Anthropic SDK surface.
-- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, and Veo-style workflows through native clients rather than the stable portable contract. Gemini also exposes explicit context caching through `create_gemini().caches()`.
-- Qwen exposes hosted web/file/code/MCP tools, raw Responses, Files, Batch, ASR, and TTS as native/provider-specific beta surfaces. File Search remains a hosted Responses tool with `vector_store_ids`, not a lifecycle client.
+- Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, Realtime, and Vector Store / File Search management through `provider.native` / bundle helper methods. Azure OpenAI image/video lifecycle clients remain outside this release even though the catalog tracks current deployment IDs such as GPT Image 2.
+- Anthropic is tier-1 for portable text-generation paths. Claude Fable 5 is cataloged as `claude-fable-5`, uses adaptive thinking with `ReasoningConfig(effort=...)`, and provider refusals normalize to `finish_reason="refusal"`. Embeddings, transcription, and speech are outside the current Anthropic SDK surface.
+- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, Live Translate, and Veo-style workflows through native clients rather than the stable portable contract. Gemini also exposes explicit context caching through `create_gemini().caches()`. The catalog tracks current Gemini 3.5 Flash, Gemini 3.5 Live Translate, and Gemini 3.1 live/image/TTS IDs as selection guidance.
+- Qwen exposes hosted web/file/code/MCP tools, raw Responses, Files, Batch, ASR, and TTS as native/provider-specific beta surfaces. The catalog tracks Qwen3.7 Max/Plus plus Qwen3.6 and current embedding/rerank/audio IDs. File Search remains a hosted Responses tool with `vector_store_ids`, not a lifecycle client.
 - Kimi exposes Files, Batch, token counting, and Formulas as native/provider-specific beta surfaces. Portable Kimi does not claim embeddings, speech, or transcription.
 - vLLM support depends on the tasks served by the local OpenAI-compatible server. Custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK contract.
 - DeepSeek is deferred for Python GA and is not part of `TIER_1_PROVIDERS`.

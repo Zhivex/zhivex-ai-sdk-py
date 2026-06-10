@@ -68,13 +68,37 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         expected = [
             ("openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
             ("openai", "gpt-5.4-mini", {"speed", "tools"}),
-            ("anthropic", "claude-opus-4-7", {"reasoning", "tools", "vision"}),
+            ("openai", "gpt-image-2", {"vision"}),
+            ("openai", "gpt-realtime-2", {"audio", "speed"}),
+            ("azure-openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
+            ("azure-openai", "gpt-image-2", {"vision"}),
+            ("azure-openai", "gpt-realtime-2", {"audio", "speed"}),
+            ("azure-openai", "text-embedding-3-large", {"embedding", "retrieval"}),
+            ("anthropic", "claude-fable-5", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
-            ("gemini", "gemini-3-flash-preview", {"speed", "tools", "vision"}),
+            ("gemini", "gemini-3.5-flash", {"speed", "tools", "vision"}),
+            ("gemini", "gemini-3.5-live-translate-preview", {"audio", "translation", "realtime"}),
+            ("gemini", "gemini-3.1-flash-live-preview", {"audio", "speed", "vision"}),
+            ("gemini", "gemini-3.1-flash-tts-preview", {"audio"}),
+            ("gemini", "gemini-3.1-flash-image", {"vision"}),
+            ("gemini", "gemini-3-pro-image", {"reasoning", "vision"}),
+            ("gemini", "veo-3.1-lite-generate-preview", {"speed", "vision"}),
+            ("gemini", "lyria-3-pro-preview", {"audio"}),
             ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("vertex", "gemini-3.5-flash", {"speed", "tools", "vision"}),
+            ("vertex", "gemini-3.1-flash-live-preview", {"audio", "speed", "vision"}),
+            ("vertex", "gemini-3.1-flash-tts-preview", {"audio"}),
+            ("vertex", "gemini-3.1-flash-image", {"vision"}),
+            ("vertex", "gemini-3-pro-image", {"reasoning", "vision"}),
+            ("vertex", "veo-3.1-lite-generate-preview", {"speed", "vision"}),
+            ("vertex", "lyria-3-pro-preview", {"audio"}),
+            ("bedrock", "anthropic.claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
+            ("qwen", "qwen3.7-max", {"reasoning", "tools"}),
+            ("qwen", "qwen3.7-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.6-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "text-embedding-v4", {"embedding", "retrieval"}),
             ("qwen", "qwen3-asr-flash", {"audio", "speed"}),
@@ -88,7 +112,17 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             self.assertTrue(recommended.issubset(set(entry.recommended_for)))  # type: ignore[union-attr]
 
         self.assertEqual(default_model_catalog.find("gemini", "gemini-pro-latest").model_id, "gemini-3.1-pro-preview")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("gemini", "gemini-flash-latest").model_id, "gemini-3.5-flash")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("vertex", "gemini-flash-latest").model_id, "gemini-3.5-flash")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("openai", "gpt-realtime").model_id, "gpt-realtime-2")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("openai", "gpt-image-1.5").model_id, "gpt-image-2")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("azure-openai", "gpt-realtime").model_id, "gpt-realtime-2")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("gemini", "gemini-3.1-flash-image-preview").model_id, "gemini-3.1-flash-image")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("vertex", "gemini-3-pro-image-preview").model_id, "gemini-3-pro-image")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("anthropic", "claude-opus-4-7").model_id, "claude-opus-4-8")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-max-2026-05-20").model_id, "qwen3.7-max")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-plus-2026-05-26").model_id, "qwen3.7-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.6-plus-2026-04-02").model_id, "qwen3.6-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.5-plus-2026-04-20").model_id, "qwen3.5-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "text-embedding-v3").model_id, "text-embedding-v4")  # type: ignore[union-attr]

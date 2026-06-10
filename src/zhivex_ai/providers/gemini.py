@@ -108,6 +108,7 @@ from ..types import (
 )
 from .base import ProviderAdapter, create_provider_bundle
 from ._payload import drop_none
+from ._url_security import validate_provider_url
 
 GEMINI_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -609,6 +610,8 @@ def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] |
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=none" for Gemini 3 models.')
         if input.reasoning.effort == "xhigh":
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".')
+        if input.reasoning.effort == "max":
+            raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=max".')
         if input.reasoning.effort == "minimal" and _is_gemini_3_pro_model(model_id):
             raise UnsupportedFeatureError(
                 'Provider "gemini" does not support "reasoning.effort=minimal" for Gemini 3 Pro models.'
@@ -862,6 +865,14 @@ def _normalize_gemini_file(payload: dict[str, Any], *, provider: str) -> Provide
     )
 
 
+def _gemini_upload_allowed_suffixes(base_url: str) -> tuple[str, ...]:
+    host = (urlparse(base_url).hostname or "").strip(".").lower()
+    suffixes = ["googleapis.com"]
+    if host and host != "googleapis.com" and not host.endswith(".googleapis.com"):
+        suffixes.append(host)
+    return tuple(suffixes)
+
+
 @dataclass(slots=True)
 class GeminiFilesClient(FilesClient):
     provider: str
@@ -874,6 +885,11 @@ class GeminiFilesClient(FilesClient):
 
     def _upload_url(self) -> str:
         return f"{self.base_url.replace('/v1beta', '')}/upload/v1beta/files?key={self.api_key}"
+
+    def _file_url(self, file_id: str) -> str:
+        name = file_id.strip("/")
+        path = f"/{name}" if name.startswith("files/") else f"/files/{name}"
+        return self._json_url(path)
 
     async def upload(
         self,
@@ -910,8 +926,14 @@ class GeminiFilesClient(FilesClient):
         upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
         if not upload_url:
             raise ValidationError('Provider "gemini" did not return an upload URL for the Files API.')
-        finalize = await self.fetch(
+        safe_upload_url = validate_provider_url(
             str(upload_url),
+            provider="gemini",
+            purpose="upload",
+            allowed_suffixes=_gemini_upload_allowed_suffixes(self.base_url),
+        )
+        finalize = await self.fetch(
+            safe_upload_url,
             headers={
                 "content-length": str(len(raw)),
                 "x-goog-upload-offset": "0",
@@ -949,7 +971,7 @@ class GeminiFilesClient(FilesClient):
 
     async def get(self, file_id: str) -> ProviderFile:
         response = await self.fetch(
-            self._json_url(f"/files/{file_id}"),
+            self._file_url(file_id),
             method="GET",
             headers={"content-type": "application/json"},
             json_body=None,
@@ -970,7 +992,7 @@ class GeminiFilesClient(FilesClient):
 
     async def delete(self, file_id: str) -> bool:
         response = await self.fetch(
-            self._json_url(f"/files/{file_id}"),
+            self._file_url(file_id),
             method="DELETE",
             headers={"content-type": "application/json"},
             json_body=None,
@@ -1210,8 +1232,14 @@ class GeminiFileSearchStoresClient(FileSearchStoresClient):
         upload_url = start.headers.get("x-goog-upload-url") or start.headers.get("X-Goog-Upload-URL")
         if not upload_url:
             raise ValidationError('Provider "gemini" did not return an upload URL for File Search.')
-        finalize = await self.fetch(
+        safe_upload_url = validate_provider_url(
             str(upload_url),
+            provider="gemini",
+            purpose="upload",
+            allowed_suffixes=_gemini_upload_allowed_suffixes(self.base_url),
+        )
+        finalize = await self.fetch(
+            safe_upload_url,
             method="POST",
             headers={
                 "content-length": str(len(raw)),
@@ -1449,6 +1477,10 @@ def _gemini_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]
     return _map_tools(config.tools, config.provider_options)
 
 
+def _is_gemini_live_translate_model(model_id: str) -> bool:
+    return model_id.strip().lower().startswith("gemini-3.5-live-translate")
+
+
 def _gemini_realtime_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any] | None:
     remaining = _provider_options_without_mapped_tools(provider_options) or {}
     cleaned = {
@@ -1459,22 +1491,99 @@ def _gemini_realtime_provider_options(provider_options: dict[str, Any] | None) -
     return cleaned or None
 
 
+def _pop_gemini_generation_config(provider_options: dict[str, Any]) -> dict[str, Any]:
+    raw = provider_options.pop("generationConfig", None)
+    raw_snake = provider_options.pop("generation_config", None)
+    if raw is not None and raw_snake is not None and raw != raw_snake:
+        raise ValidationError('Provider "gemini" received conflicting generationConfig values.')
+    generation_config = raw if raw is not None else raw_snake
+    if generation_config is None:
+        return {}
+    if not isinstance(generation_config, dict):
+        raise ValidationError('Provider "gemini" expects realtime generationConfig to be a dict.')
+    return deepcopy(generation_config)
+
+
+def _merge_gemini_translation_config(config: RealtimeSessionConfig, generation_config: dict[str, Any], model_id: str) -> None:
+    raw = generation_config.pop("translation_config", None)
+    raw_camel = generation_config.get("translationConfig")
+    if raw is not None and raw_camel is not None and raw != raw_camel:
+        raise ValidationError('Provider "gemini" received conflicting translationConfig values.')
+    translation_config = raw_camel if raw_camel is not None else raw
+    if translation_config is None:
+        translation_config = {} if _is_gemini_live_translate_model(model_id) else None
+    if translation_config is not None and not isinstance(translation_config, dict):
+        raise ValidationError('Provider "gemini" expects realtime translationConfig to be a dict.')
+    if translation_config is None:
+        return
+    translated = deepcopy(translation_config)
+    typed_values = {
+        "targetLanguageCode": config.translation_target_language_code,
+        "echoTargetLanguage": config.translation_echo_target_language,
+    }
+    for key, value in typed_values.items():
+        if value is None:
+            continue
+        existing = translated.get(key)
+        if existing is not None and existing != value:
+            raise ValidationError(f'Provider "gemini" received conflicting translationConfig.{key} values.')
+        translated[key] = value
+    generation_config["translationConfig"] = translated
+
+
+def _validate_gemini_realtime_config(config: RealtimeSessionConfig, model_id: str) -> None:
+    if not _is_gemini_live_translate_model(model_id):
+        if config.translation_target_language_code is not None or config.translation_echo_target_language is not None:
+            raise UnsupportedFeatureError('Provider "gemini" only supports translation config for Live Translate models.')
+        return
+    if config.instructions:
+        raise UnsupportedFeatureError('Provider "gemini" does not support instructions for Live Translate models.')
+    if config.tool_choice is not None:
+        raise UnsupportedFeatureError('Provider "gemini" does not support tool_choice for Live Translate models.')
+    if _gemini_realtime_tools(config):
+        raise UnsupportedFeatureError('Provider "gemini" does not support tools for Live Translate models.')
+
+
+def _gemini_realtime_generation_config(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any]:
+    provider_options = _gemini_realtime_provider_options(config.provider_options) or {}
+    generation_config = _pop_gemini_generation_config(provider_options)
+    if config.voice:
+        generation_config.setdefault("speechConfig", {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}})
+    response_modalities = generation_config.get("responseModalities")
+    if _is_gemini_live_translate_model(model_id):
+        if response_modalities is not None and response_modalities != ["AUDIO"]:
+            raise ValidationError('Provider "gemini" Live Translate requires generationConfig.responseModalities=["AUDIO"].')
+        generation_config["responseModalities"] = ["AUDIO"]
+    else:
+        generation_config.setdefault("responseModalities", ["AUDIO"] if config.output_audio_media_type else ["TEXT"])
+    _merge_gemini_translation_config(config, generation_config, model_id)
+    return generation_config
+
+
+def _gemini_realtime_extra_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any]:
+    remaining = _gemini_realtime_provider_options(provider_options) or {}
+    remaining.pop("generationConfig", None)
+    remaining.pop("generation_config", None)
+    return remaining
+
+
 def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any]:
+    _validate_gemini_realtime_config(config, model_id)
     payload: dict[str, Any] = {
         "model": f"models/{model_id}",
-        "generationConfig": drop_none({
-            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}} if config.voice else None,
-            "responseModalities": ["AUDIO"] if config.output_audio_media_type else ["TEXT"],
-        }),
+        "generationConfig": drop_none(_gemini_realtime_generation_config(config, model_id)),
         "tools": _gemini_realtime_tools(config),
         "systemInstruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
-        **(_gemini_realtime_provider_options(config.provider_options) or {}),
+        **_gemini_realtime_extra_provider_options(config.provider_options),
     }
+    if _is_gemini_live_translate_model(model_id):
+        payload.setdefault("inputAudioTranscription", {})
+        payload.setdefault("outputAudioTranscription", {})
     return {"setup": drop_none(payload)}
 
 
 def _gemini_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
-    return [
+    payloads: list[dict[str, Any]] = [
         {
             "realtimeInput": {
                 "audio": {
@@ -1484,9 +1593,14 @@ def _gemini_realtime_build_audio(frame: AudioFrame, _config: RealtimeSessionConf
             }
         }
     ]
+    if frame.is_final:
+        payloads.append({"realtimeInput": {"audioStreamEnd": True}})
+    return payloads
 
 
-def _gemini_realtime_build_text(text: str, _config: RealtimeSessionConfig) -> list[dict[str, Any]]:
+def _gemini_realtime_build_text(text: str, _config: RealtimeSessionConfig, model_id: str) -> list[dict[str, Any]]:
+    if _is_gemini_live_translate_model(model_id):
+        raise UnsupportedFeatureError('Provider "gemini" Live Translate only supports audio input; text input is not supported.')
     return [
         {
             "clientContent": {
@@ -1515,6 +1629,25 @@ def _gemini_realtime_build_tool_result(result: ToolExecutionResult, _config: Rea
 
 def _gemini_realtime_build_update(config: RealtimeSessionConfig, model_id: str) -> list[dict[str, Any]]:
     return [_gemini_realtime_setup(config, model_id)]
+
+
+def _gemini_realtime_live_connect_constraints(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any] | None:
+    provider_options = config.provider_options or {}
+    raw = provider_options.get("liveConnectConstraints") or provider_options.get("live_connect_constraints")
+    if raw is not None:
+        if not isinstance(raw, dict):
+            raise ValidationError('Provider "gemini" expects liveConnectConstraints to be a dict.')
+        return deepcopy(raw)
+    if not _is_gemini_live_translate_model(model_id):
+        return None
+    _validate_gemini_realtime_config(config, model_id)
+    live_config = drop_none(_gemini_realtime_generation_config(config, model_id))
+    live_config.setdefault("inputAudioTranscription", {})
+    live_config.setdefault("outputAudioTranscription", {})
+    return {
+        "model": model_id,
+        "config": live_config,
+    }
 
 
 def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
@@ -2743,6 +2876,8 @@ class GeminiRealtimeModel(RealtimeModel):
         options: RealtimeConnectOptions | None = None,
     ) -> RealtimeSession:
         resolved_config = config or RealtimeSessionConfig()
+        _validate_gemini_realtime_config(resolved_config, self.model_id)
+        _gemini_realtime_generation_config(resolved_config, self.model_id)
         url = self.realtime_url or _gemini_realtime_url(self.base_url, self.api_key, resolved_config.provider_options)
         headers = _gemini_realtime_headers(resolved_config.provider_options)
         factory = self.connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
@@ -2756,7 +2891,7 @@ class GeminiRealtimeModel(RealtimeModel):
             callbacks=RealtimeSessionCallbacks(
                 parse_event=_gemini_realtime_parse_event,
                 build_audio_payloads=_gemini_realtime_build_audio,
-                build_text_payloads=_gemini_realtime_build_text,
+                build_text_payloads=lambda text, session_config: _gemini_realtime_build_text(text, session_config, self.model_id),
                 build_tool_result_payloads=_gemini_realtime_build_tool_result,
                 build_update_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
                 build_initial_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
@@ -2773,6 +2908,7 @@ class GeminiRealtimeModel(RealtimeModel):
         resolved_config = config or RealtimeSessionConfig()
         url = self.auth_token_url or f"{self.base_url.replace('/v1beta', '')}/v1alpha/authTokens?key={self.api_key}"
         provider_options = resolved_config.provider_options or {}
+        live_connect_constraints = _gemini_realtime_live_connect_constraints(resolved_config, self.model_id)
         payload = drop_none(
             {
                 "authToken": drop_none(
@@ -2780,6 +2916,8 @@ class GeminiRealtimeModel(RealtimeModel):
                         "expireTime": provider_options.get("expireTime") or provider_options.get("expire_time"),
                         "newSessionExpireTime": provider_options.get("newSessionExpireTime") or provider_options.get("new_session_expire_time"),
                         "uses": provider_options.get("uses"),
+                        "liveConnectConstraints": live_connect_constraints,
+                        "lockAdditionalFields": provider_options.get("lockAdditionalFields") or provider_options.get("lock_additional_fields"),
                     }
                 )
             }

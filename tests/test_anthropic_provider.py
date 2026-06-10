@@ -152,6 +152,72 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "grounded portable")
         self.assertEqual(result.sources[0].url, "https://example.com/portable")
 
+    async def test_anthropic_refusal_stop_reason_is_normalized(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "I cannot help with that."}],
+                    "stop_reason": "refusal",
+                    "usage": {"input_tokens": 2, "output_tokens": 3},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-fable-5")
+        result = await generate_text(model=model, prompt="hello")
+        provider_result = await model.generate(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="hello")])])
+        )
+
+        self.assertEqual(result.finish_reason, "refusal")
+        self.assertEqual(result.provider_finish_reason, "refusal")
+        self.assertEqual(provider_result.raw_response["stop_reason"], "refusal")
+
+    async def test_anthropic_streaming_refusal_stop_reason_is_normalized(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'event: content_block_delta\n'
+                    'data: {"delta":{"type":"text_delta","text":"I cannot help."}}\n\n'
+                    'event: message_delta\n'
+                    'data: {"delta":{"stop_reason":"refusal"},"usage":{"input_tokens":2,"output_tokens":3}}\n\n'
+                    'event: message_stop\n'
+                    'data: {"stop_reason":"refusal"}\n'
+                ),
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await stream_text(model=provider.native.language_model("claude-fable-5"), prompt="hello").collect()
+
+        self.assertEqual(result.text, "I cannot help.")
+        self.assertEqual(result.finish_reason, "refusal")
+        self.assertEqual(result.provider_finish_reason, "refusal")
+
+    async def test_anthropic_grounded_refusal_stop_reason_is_normalized(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "I cannot help with that."}],
+                    "stop_reason": "refusal",
+                    "usage": {"input_tokens": 2, "output_tokens": 3},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await generate_grounded_text(model=provider.native.grounded_language_model("claude-fable-5"), prompt="hello")
+
+        self.assertEqual(result.finish_reason, "refusal")
+        self.assertEqual(result.provider_finish_reason, "refusal")
+
     async def test_anthropic_portable_models_reject_provider_options(self) -> None:
         async def fetch(
             url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
@@ -332,6 +398,269 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
                 reasoning=ReasoningConfig(budget_tokens=1024),
             )
         self.assertEqual(requests, [])
+
+    async def test_anthropic_opus_4_8_maps_effort_to_adaptive_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-opus-4-8"),
+            prompt="migrate this codebase",
+            reasoning=ReasoningConfig(effort="xhigh"),
+            provider_options={"speed": "fast"},
+        )
+
+        self.assertEqual(requests[0]["model"], "claude-opus-4-8")
+        self.assertEqual(requests[0]["speed"], "fast")
+        self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
+        self.assertEqual(requests[0]["output_config"], {"effort": "xhigh"})
+
+    async def test_anthropic_opus_4_8_accepts_max_effort(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-opus-4-8"),
+            prompt="solve the hard problem",
+            reasoning=ReasoningConfig(effort="max"),
+        )
+
+        self.assertEqual(requests[0]["output_config"]["effort"], "max")
+
+    async def test_anthropic_fable_5_maps_effort_to_adaptive_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-fable-5"),
+            prompt="plan the migration",
+            reasoning=ReasoningConfig(effort="high"),
+        )
+
+        self.assertEqual(requests[0]["model"], "claude-fable-5")
+        self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
+        self.assertEqual(requests[0]["output_config"], {"effort": "high"})
+
+    async def test_anthropic_fable_5_rejects_non_adaptive_thinking_config(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                reasoning=ReasoningConfig(budget_tokens=1024),
+            )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                provider_options={"thinking": {"type": "enabled", "budget_tokens": 1024}},
+            )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                provider_options={"thinking": {"type": "disabled"}},
+            )
+
+    async def test_anthropic_fable_5_rejects_non_default_sampling_parameters(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                temperature=0.2,
+            )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                provider_options={"top_p": 0.9},
+            )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-fable-5"),
+                prompt="hello",
+                provider_options={"top_k": 40},
+            )
+
+    async def test_anthropic_merges_structured_output_with_effort(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": '{"answer":"ok"}'}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await generate_object(
+            model=provider.native.language_model("claude-opus-4-8"),
+            prompt="return json",
+            schema={"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]},
+            reasoning=ReasoningConfig(effort="medium"),
+        )
+
+        self.assertEqual(result.object["answer"], "ok")
+        self.assertEqual(requests[0]["output_config"]["effort"], "medium")
+        self.assertEqual(requests[0]["output_config"]["format"]["type"], "json_schema")
+
+    async def test_anthropic_rejects_conflicting_output_config_effort(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError):
+            await generate_text(
+                model=provider.native.language_model("claude-opus-4-8"),
+                prompt="hello",
+                reasoning=ReasoningConfig(effort="high"),
+                provider_options={"output_config": {"effort": "low"}},
+            )
+
+    async def test_anthropic_opus_4_8_rejects_manual_thinking_budget(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError) as context:
+            await generate_text(
+                model=provider.native.language_model("claude-opus-4-8"),
+                prompt="hello",
+                reasoning=ReasoningConfig(budget_tokens=1024),
+            )
+
+        self.assertIn("does not support reasoning.budget_tokens", str(context.exception))
+
+    async def test_anthropic_opus_4_8_rejects_non_default_sampling_parameters(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-opus-4-8"),
+                prompt="hello",
+                temperature=0.2,
+            )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider.native.language_model("claude-opus-4-8"),
+                prompt="hello",
+                provider_options={"top_p": 0.9},
+            )
+
+    async def test_anthropic_opus_4_8_preserves_mid_conversation_system_messages(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-4-8")
+        await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="system", parts=[TextPart(text="base instructions")]),
+                    ModelMessage(role="user", parts=[TextPart(text="start task")]),
+                    ModelMessage(role="system", parts=[TextPart(text="narrow the scope")]),
+                ]
+            )
+        )
+
+        self.assertEqual(requests[0]["system"], "base instructions")
+        self.assertEqual([message["role"] for message in requests[0]["messages"]], ["user", "system"])
+        self.assertEqual(requests[0]["messages"][1]["content"][0]["text"], "narrow the scope")
+
+    async def test_anthropic_mid_conversation_system_messages_validate_placement(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-4-8")
+        with self.assertRaises(ValidationError):
+            await model.generate(
+                ModelGenerateInput(
+                    messages=[
+                        ModelMessage(role="user", parts=[TextPart(text="start task")]),
+                        ModelMessage(role="system", parts=[TextPart(text="narrow the scope")]),
+                        ModelMessage(role="user", parts=[TextPart(text="continue")]),
+                    ]
+                )
+            )
 
     async def test_anthropic_maps_data_url_images_to_base64_source(self) -> None:
         requests: list[dict[str, Any]] = []

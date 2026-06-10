@@ -15,6 +15,10 @@ from .ui import (
     to_ui_message_stream,
 )
 
+DEFAULT_MAX_SSE_EVENT_BYTES = 1 * 1024 * 1024
+DEFAULT_MAX_UI_MESSAGE_REQUEST_BYTES = 1 * 1024 * 1024
+DEFAULT_MAX_UI_MESSAGES = 1_000
+
 
 @dataclass(slots=True)
 class HTTPResponse:
@@ -35,9 +39,10 @@ async def stream_sse(response: ResponseLike):
         yield event
 
 
-async def _parse_sse_events(lines: AsyncIterable[str]):
+async def _parse_sse_events(lines: AsyncIterable[str], *, max_event_bytes: int = DEFAULT_MAX_SSE_EVENT_BYTES):
     event_name: str | None = None
     data_lines: list[str] = []
+    data_bytes = 0
 
     async for line in lines:
         if line == "":
@@ -45,6 +50,7 @@ async def _parse_sse_events(lines: AsyncIterable[str]):
                 yield {"event": event_name, "data": "\n".join(data_lines)}
             event_name = None
             data_lines = []
+            data_bytes = 0
             continue
         if line.startswith(":"):
             continue
@@ -52,7 +58,11 @@ async def _parse_sse_events(lines: AsyncIterable[str]):
             event_name = line.removeprefix("event:").strip()
             continue
         if line.startswith("data:"):
-            data_lines.append(line.removeprefix("data:").strip())
+            data = line.removeprefix("data:").strip()
+            data_bytes += len(data.encode("utf-8")) + 1
+            if data_bytes > max_event_bytes:
+                raise ParseError(f"SSE event exceeded maximum size of {max_event_bytes} bytes.")
+            data_lines.append(data)
 
     if data_lines:
         yield {"event": event_name, "data": "\n".join(data_lines)}
@@ -142,14 +152,26 @@ async def _read_request_text(request: Any) -> tuple[str, str]:
     raise ParseError("Unsupported UI message request type.")
 
 
-async def parse_ui_message_request(request: Any) -> list[UIMessage]:
+async def parse_ui_message_request(
+    request: Any,
+    *,
+    max_body_bytes: int = DEFAULT_MAX_UI_MESSAGE_REQUEST_BYTES,
+    max_messages: int = DEFAULT_MAX_UI_MESSAGES,
+) -> list[UIMessage]:
     text, content_type = await _read_request_text(request)
+    if len(text.encode("utf-8")) > max_body_bytes:
+        raise ParseError(f"UI message request exceeded maximum size of {max_body_bytes} bytes.")
     if "application/json" in content_type or isinstance(request, (str, bytes)):
         payload = json.loads(text) if text.strip() else []
+        if len(payload) > max_messages:
+            raise ParseError(f"UI message request exceeded maximum message count of {max_messages}.")
         return [deserialize_ui_message(json.dumps(item)) for item in payload]
     if not text.strip():
         return []
-    return [deserialize_ui_message(line) for line in text.strip().splitlines()]
+    lines = text.strip().splitlines()
+    if len(lines) > max_messages:
+        raise ParseError(f"UI message request exceeded maximum message count of {max_messages}.")
+    return [deserialize_ui_message(line) for line in lines]
 
 
 def create_ui_message_json_response(messages: list[UIMessage], *, status_code: int = 200, headers: Mapping[str, str] | None = None) -> HTTPResponse:

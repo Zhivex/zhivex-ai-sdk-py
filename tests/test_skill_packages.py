@@ -32,6 +32,7 @@ from zhivex_ai import (  # noqa: E402
     publish_skill,
     run_skill,
 )
+from zhivex_ai.skillpacks import build_skill_entrypoint_tools
 from zhivex_ai.skill_cli import main as skill_cli_main  # noqa: E402
 from zhivex_ai.types import GenerateResult, ModelCapabilities, ModelGenerateInput, ModelMessage, ToolCall, ToolCallPart  # noqa: E402
 
@@ -192,6 +193,22 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValidationError, "outside the allowed write roots"):
                 await run_skill(str(skill_dir), input={"output_path": "../escape.txt", "content": "hello"}, project_root=project_root)
 
+    async def test_package_entrypoint_tool_rejects_absolute_output_outside_project_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            definition = load_skill(skill_dir)
+            tool = build_skill_entrypoint_tools(definition, project_root=project_root)["writer_create"]
+            assert tool.execute is not None
+            escape_path = root / "escape.txt"
+
+            with self.assertRaisesRegex(ValidationError, "outside the allowed write roots"):
+                await tool.execute({"output_path": str(escape_path), "content": "hello"})
+
+            self.assertFalse(escape_path.exists())
+
     async def test_install_skill_from_path_updates_manifest_and_lockfile(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -245,8 +262,9 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             async def collect(event: object) -> None:
                 events.append(event)
 
-            agent = Agent(name="assistant", model=PackageToolModel(str(project_root / "note.txt")), skills={"writer": definition})
-            result = await runtime.run(agent=agent, prompt="$writer create a file", emit=collect)
+            agent = Agent(name="assistant", model=PackageToolModel("note.txt"), skills={"writer": definition})
+            with patch("zhivex_ai.skillpacks.Path.cwd", return_value=project_root):
+                result = await runtime.run(agent=agent, prompt="$writer create a file", emit=collect)
 
             self.assertEqual(result.text, "created")
             self.assertEqual(len(result.artifacts), 1)
@@ -255,6 +273,35 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             self.assertTrue(any(isinstance(event, AgentSkillExecutionStartEvent) for event in events))
             self.assertTrue(any(isinstance(event, AgentSkillExecutionFinishEvent) for event in events))
             self.assertTrue(any(isinstance(event, AgentSkillArtifactCreatedEvent) for event in events))
+
+    async def test_package_skill_permissions_are_passed_to_approval_policy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            project_root = Path(tmp) / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(Path(tmp))
+            definition = load_skill(skill_dir)
+            requests: list[object] = []
+
+            async def approval_policy(request: object) -> bool:
+                requests.append(request)
+                return True
+
+            agent = Agent(
+                name="assistant",
+                model=PackageToolModel("note.txt"),
+                skills={"writer": definition},
+                approval_policy=approval_policy,
+            )
+            with patch("zhivex_ai.skillpacks.Path.cwd", return_value=project_root):
+                result = await AgentRuntime().run(agent=agent, prompt="$writer create a file")
+
+            self.assertEqual(result.text, "created")
+            self.assertTrue(requests)
+            request = requests[0]
+            self.assertEqual(getattr(request, "tool_name"), "writer_create")
+            self.assertIn("filesystem", getattr(request, "tool_permissions"))
+            self.assertIn("write", getattr(request, "tool_permissions"))
+            self.assertTrue(getattr(request, "tool_metadata")["skill_package"])
 
 
 class SkillCLITests(TestCase):
