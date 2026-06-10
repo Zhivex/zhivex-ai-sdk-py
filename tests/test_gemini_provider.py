@@ -1315,9 +1315,9 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
                 return FakeResponse(status_code=200, payload={"file": {"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}})
             if method == "GET" and "/files?" in url:
                 return FakeResponse(status_code=200, payload={"files": [{"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"}]})
-            if method == "GET":
+            if method == "GET" and "/v1beta/files/123?" in url:
                 return FakeResponse(status_code=200, payload={"name": "files/123", "displayName": "stub.pdf", "mimeType": "application/pdf", "sizeBytes": 12, "state": "ACTIVE", "uri": "gs://files/123"})
-            if method == "DELETE":
+            if method == "DELETE" and "/v1beta/files/123?" in url:
                 return FakeResponse(status_code=200, payload={})
             raise AssertionError(f"Unexpected request: {method} {url}")
 
@@ -1334,6 +1334,10 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(fetched.media_type, "application/pdf")
         self.assertTrue(deleted)
         self.assertEqual(requests[0]["headers"]["x-goog-upload-header-content-type"], "application/pdf")
+        self.assertIn("/v1beta/files/123?", requests[3]["url"])
+        self.assertIn("/v1beta/files/123?", requests[4]["url"])
+        self.assertNotIn("/v1beta/files/files/123", requests[3]["url"])
+        self.assertNotIn("/v1beta/files/files/123", requests[4]["url"])
 
     async def test_gemini_files_client_supports_audio_uploads(self) -> None:
         requests: list[dict[str, Any]] = []

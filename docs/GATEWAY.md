@@ -26,7 +26,7 @@ result = await gateway.generate(
 )
 ```
 
-The result includes `text`, `provider_used`, `model_used`, attempt metadata, and latency fields.
+The result includes `text`, `provider_used`, `model_used`, normalized finish reasons, attempt metadata, and latency fields.
 
 For production routes where every configured provider should be present, enable fail-fast adapter validation:
 
@@ -40,6 +40,8 @@ gateway = create_gateway(
 ```
 
 With this setting, a missing adapter raises `GatewayError` instead of silently moving to a fallback target.
+
+Gateway routing treats a generated refusal as a fallback signal by default. When a provider returns `finish_reason="refusal"` or `provider_finish_reason="refusal"`, the attempt is recorded and the gateway moves to the next configured fallback. Set `GatewayConfig(fallback_on_refusal=False)` to return refusals from the selected target without trying fallback models.
 
 ## Operations
 

@@ -46,13 +46,16 @@ Related documents:
 - Production examples now include a FastAPI agent API boundary and an offline worker resume/idempotency boundary.
 - `scripts/collect_release_evidence.py` and `make release-evidence` now generate release gate evidence under `docs/releases/<version>-evidence.md`.
 - Anthropic support now tracks Claude Opus 4.8 (`claude-opus-4-8`), including native `reasoning.effort` mapping, adaptive thinking for Opus 4.7/4.8, and Opus 4.8 mid-conversation system messages.
+- Anthropic support now tracks Claude Fable 5 (`claude-fable-5`) with adaptive-thinking request validation, refusal finish-reason normalization, and model-catalog guidance.
 - Model catalog support for current OpenAI/Azure OpenAI GPT Realtime 2, GPT Image 2, Azure GPT-5.5, and text-embedding-3 reference IDs.
 - Model catalog support for current Gemini/Vertex Gemini 3.5 Flash, Gemini 3.1 live/image/TTS, Imagen 4, Veo 3.1, and Lyria 3 reference IDs.
+- Gemini realtime support now tracks Gemini 3.5 Live Translate (`gemini-3.5-live-translate-preview`) with typed translation config, audio-only validation, browser-token constraints, and model-catalog guidance.
 - Model catalog support for current Qwen3.7 Max/Plus reference IDs while retaining Qwen3.6 and Qwen3.5 aliases.
 
 ### Changed
 
 - Bumped the package version to `0.9.0` while keeping the package in Beta.
+- Gateway routing now falls back from provider refusals by default with `GatewayConfig(fallback_on_refusal=True)` and exposes normalized finish reasons on gateway responses.
 - Gateway routing now emits `on_attempt` payloads for skipped targets, including missing adapters, capability skips, vision skips, and cost-budget skips.
 - Gateway routing can now fail fast on missing provider adapters with `GatewayConfig(fail_on_missing_adapter=True)`.
 - Updated OpenAI, Gemini, and Vertex examples/tests to use current realtime, image, and media model IDs while keeping OpenAI/Azure Sora or video-generation clients out of scope.
@@ -60,7 +63,7 @@ Related documents:
 
 ### Fixed
 
-- None.
+- Gemini Files API get/delete now normalize official `files/*` names correctly instead of constructing duplicate `/files/files/*` paths.
 
 ### Deprecated
 

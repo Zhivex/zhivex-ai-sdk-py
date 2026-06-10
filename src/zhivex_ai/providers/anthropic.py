@@ -101,7 +101,7 @@ _ANTHROPIC_MCP_BETA = "mcp-client-2025-04-04"
 _ANTHROPIC_CURRENT_MCP_BETA = "mcp-client-2025-11-20"
 _ANTHROPIC_CODE_EXECUTION_BETA = "code-execution-2025-08-25"
 _ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20250305"
-_ANTHROPIC_OPUS_ADAPTIVE_THINKING_PREFIXES = ("claude-opus-4-7", "claude-opus-4-8")
+_ANTHROPIC_ADAPTIVE_THINKING_PREFIXES = ("claude-opus-4-7", "claude-opus-4-8", "claude-fable-5")
 _ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = ("claude-opus-4-8",)
 _ANTHROPIC_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 AnthropicMcpVersion = Literal["legacy", "current"]
@@ -506,9 +506,9 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
     return blocks
 
 
-def _is_anthropic_opus_adaptive_thinking_model(model_id: str) -> bool:
+def _is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
     normalized = model_id.strip().lower()
-    return any(normalized.startswith(prefix) for prefix in _ANTHROPIC_OPUS_ADAPTIVE_THINKING_PREFIXES)
+    return any(normalized.startswith(prefix) for prefix in _ANTHROPIC_ADAPTIVE_THINKING_PREFIXES)
 
 
 def _supports_mid_conversation_system_messages(model_id: str) -> bool:
@@ -775,14 +775,14 @@ def _map_reasoning(input: ModelGenerateInput | GroundedModelGenerateInput, model
             raise UnsupportedFeatureError(
                 'Provider "anthropic" supports reasoning.effort values "low", "medium", "high", "xhigh", and "max".'
             )
-        if _is_anthropic_opus_adaptive_thinking_model(model_id):
+        if _is_anthropic_adaptive_thinking_model(model_id):
             return {"type": "adaptive"}
         return None
     if input.reasoning.budget_tokens is None:
         return None
-    if _is_anthropic_opus_adaptive_thinking_model(model_id):
+    if _is_anthropic_adaptive_thinking_model(model_id):
         raise UnsupportedFeatureError(
-            'Provider "anthropic" does not support reasoning.budget_tokens on Claude Opus 4.7 or 4.8; '
+            f'Provider "anthropic" does not support reasoning.budget_tokens on model "{model_id}"; '
             "use reasoning.effort with adaptive thinking instead."
         )
     return {"type": "enabled", "budget_tokens": input.reasoning.budget_tokens}
@@ -848,12 +848,12 @@ def _merge_thinking_config(
     return mapped_thinking, options
 
 
-def _validate_opus_adaptive_request(
+def _validate_adaptive_thinking_request(
     model_id: str,
     input: ModelGenerateInput | GroundedModelGenerateInput,
     provider_options: dict[str, Any],
 ) -> None:
-    if not _is_anthropic_opus_adaptive_thinking_model(model_id):
+    if not _is_anthropic_adaptive_thinking_model(model_id):
         return
     if input.temperature is not None:
         raise UnsupportedFeatureError(
@@ -866,7 +866,7 @@ def _validate_opus_adaptive_request(
             f'Provider "anthropic" does not support non-default sampling parameters for model "{model_id}": {joined}.'
         )
     thinking = provider_options.get("thinking")
-    if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+    if isinstance(thinking, dict) and thinking.get("type") != "adaptive":
         raise UnsupportedFeatureError(
             f'Provider "anthropic" only supports adaptive thinking for model "{model_id}".'
         )
@@ -1292,7 +1292,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         validate_message_parts(cast(Any, self), input.messages)
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
-        _validate_opus_adaptive_request(self.model_id, input, provider_options)
+        _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
@@ -1359,7 +1359,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         validate_message_parts(cast(Any, self), input.messages)
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
-        _validate_opus_adaptive_request(self.model_id, input, provider_options)
+        _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
@@ -1489,7 +1489,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
         validate_message_parts(cast(Any, self), input.messages)
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
-        _validate_opus_adaptive_request(self.model_id, input, provider_options)
+        _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
         body_tools, remaining_options = _merge_tool_payloads([web_search_tool], remaining_options)
         output_config, remaining_options = _merge_output_config(None, remaining_options, effort=_map_effort(input))
