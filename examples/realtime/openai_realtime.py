@@ -13,7 +13,7 @@ from zhivex_ai import (
 
 async def main() -> None:
     provider = create_openai()
-    session = await provider.realtime_model("gpt-realtime-2").connect(
+    session = await provider.realtime_model("gpt-realtime-2.1").connect(
         RealtimeSessionConfig(
             instructions="Be concise.",
             voice="alloy",

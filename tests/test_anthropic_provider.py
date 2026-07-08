@@ -480,6 +480,33 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
         self.assertEqual(requests[0]["output_config"], {"effort": "high"})
 
+    async def test_anthropic_sonnet_5_maps_effort_to_adaptive_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-sonnet-5"),
+            prompt="plan the implementation",
+            reasoning=ReasoningConfig(effort="high"),
+        )
+
+        self.assertEqual(requests[0]["model"], "claude-sonnet-5")
+        self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
+        self.assertEqual(requests[0]["output_config"], {"effort": "high"})
+
     async def test_anthropic_fable_5_rejects_non_adaptive_thinking_config(self) -> None:
         async def fetch(
             url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False

@@ -21,11 +21,12 @@ Related documents:
 
 ### Added
 
-- None.
+- Added current catalog guidance for OpenAI GPT Realtime 2.1, Azure OpenAI `gpt-chat-latest`, Anthropic Claude Sonnet 5, and stable Gemini/Vertex `gemini-3.1-flash-lite`.
 
 ### Changed
 
-- None.
+- Updated Anthropic Sonnet 5 reasoning support to use the adaptive-thinking `ReasoningConfig(effort=...)` path.
+- Clarified that GPT-5.6 is not promoted into default OpenAI catalog guidance while official availability remains limited preview.
 
 ### Fixed
 

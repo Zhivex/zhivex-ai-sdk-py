@@ -691,7 +691,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider.native.language_model("gemini-3.1-flash-preview"),
+            model=provider.native.language_model("gemini-3.5-flash"),
             prompt="Research this",
             provider_options={
                 "google_search": {"excludeDomains": ["example.com"]},
@@ -1446,7 +1446,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError) as context:
-            await generate_text(model=provider("gemini-3.1-flash-preview"), prompt="Research Apollo.")
+            await generate_text(model=provider("gemini-3.5-flash"), prompt="Research Apollo.")
 
         self.assertIn("google_search", str(context.exception))
 

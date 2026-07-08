@@ -162,14 +162,15 @@ Tool support now follows the same rule everywhere:
 - Hosted tools now fail fast in the shared foundation layer when they target the wrong provider, request an unsupported hosted-tool class, or use hosted-only combinations such as unsupported `tool_choice="none"` / `ToolChoiceName(...)`.
 - The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
-- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Fable 5 is available as `claude-fable-5`, while Claude Opus 4.8 remains available as `claude-opus-4-8`. Use `ReasoningConfig(effort="medium" | "high" | "xhigh" | "max")` to send `output_config.effort`, with adaptive thinking automatically selected for Fable 5 and Opus 4.7/4.8. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
+- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Fable 5 is available as `claude-fable-5`, Claude Sonnet 5 is available as `claude-sonnet-5`, and Claude Opus 4.8 remains available as `claude-opus-4-8`. Use `ReasoningConfig(effort="medium" | "high" | "xhigh" | "max")` to send `output_config.effort`, with adaptive thinking automatically selected for Fable 5, Sonnet 5, and Opus 4.7/4.8. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
 - Claude Opus 4.8 accepts mid-conversation `ModelMessage(role="system", ...)` entries on the Anthropic native path when they follow Anthropic's placement rules. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}`.
 - Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason`. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`.
 - Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
 - OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM now participate in the tier-1 portable text-generation contract.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
-- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`.
-- Gemini and Vertex are portable for the core contract, but Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
+- OpenAI catalog guidance tracks GPT-5.5 as the current generally available flagship, keeps GPT-5.4 mini/nano for lower-latency and lower-cost paths, and updates Realtime guidance to `gpt-realtime-2.1`. GPT-5.6 is not a default catalog entry yet because current OpenAI documentation lists it as limited preview availability.
+- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog also tracks Azure `gpt-chat-latest` for the continuously updated preview chat deployment and `gpt-realtime-2.1` where the deployment is available.
+- Gemini and Vertex are portable for the core contract, with `gemini-3.5-flash` as the current stable Flash reference and `gemini-3.1-flash-lite` as the stable low-latency Flash-Lite reference. Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
@@ -866,7 +867,7 @@ If you want Gemini research with provider-native web search in an agent run, put
 from zhivex_ai import create_gemini
 
 gemini = create_gemini()
-triage.model = gemini.native.language_model("gemini-3.1-flash-preview")
+triage.model = gemini.native.language_model("gemini-3.5-flash")
 result = await run_agent(
     agent=triage,
     prompt="Research the Apollo migration status.",
@@ -878,7 +879,7 @@ Built-in Gemini tools can also be configured directly:
 
 ```python
 result = await generate_text(
-    model=gemini.native.language_model("gemini-3.1-flash-preview"),
+    model=gemini.native.language_model("gemini-3.5-flash"),
     prompt="Research this page and show your work.",
     provider_options={
         "google_search": {"excludeDomains": ["example.com"]},
@@ -1203,7 +1204,7 @@ For local Ollama installs, `api_key="ollama"` is the default compatibility token
 
 Adapters may also expose optional factories such as:
 
-- `provider.native.realtime_model("gpt-realtime-2")`
+- `provider.native.realtime_model("gpt-realtime-2.1")`
 - `provider.files()`
 - `provider.images()`
 - `provider.videos()`
@@ -1262,7 +1263,7 @@ Notes:
 - `create_vertex().images()` mirrors Google image routes through Vertex publisher model endpoints.
 - `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers, including the current `veo-3.1-*` model IDs where available.
 - `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it, including `lyria-3-pro-preview` and `lyria-3-clip-preview`.
-- `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model.
+- `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model. The catalog also tracks stable `gemini-3.5-flash` and stable `gemini-3.1-flash-lite` for regular generation paths.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
 - `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client. Deep Research payloads default to background storage.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
