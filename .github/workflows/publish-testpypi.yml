@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: python -m pip install --upgrade pip build hatchling twine
+        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine
 
       - name: Build package
         run: python -m build

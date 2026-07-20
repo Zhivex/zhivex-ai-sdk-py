@@ -30,7 +30,7 @@ Related documents:
 
 ### Fixed
 
-- Raised known-vulnerable optional/development dependency floors and added a dependency-audit release gate.
+- Raised known-vulnerable optional/development and CI tooling floors, including `setuptools>=83.0.0`, and added a dependency-audit release gate.
 - Split package building from trusted publishing so only protected publish jobs receive PyPI OIDC permission, with GitHub Actions pinned to immutable commits.
 - Release evidence now records the source commit, working-tree state, tool versions, and SHA256 digests for built artifacts.
 - Required local-tool approvals now fail closed when no `approval_policy` is configured.

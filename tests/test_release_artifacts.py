@@ -91,6 +91,7 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("python-dotenv>=1.2.2", extras["dev"])
         self.assertIn("pytest>=9.0.3", extras["dev"])
         self.assertIn("pip-audit>=2.10.1", extras["dev"])
+        self.assertIn("setuptools>=83.0.0", extras["dev"])
         self.assertIn("mcp>=1.28.1", extras["mcp"])
 
     def test_makefile_release_check_runs_install_verification(self) -> None:
@@ -141,6 +142,9 @@ class ReleaseArtifactToolingTests(TestCase):
         for workflow in [ci, publish, test_publish]:
             self.assertIn("persist-credentials: false", workflow)
         self.assertIn("python -m pip_audit --skip-editable", ci)
+        self.assertEqual(ci.count('"setuptools>=83.0.0"'), 3)
+        self.assertIn('"setuptools>=83.0.0"', publish)
+        self.assertIn('"setuptools>=83.0.0"', test_publish)
         for workflow, environment in [(publish, "pypi"), (test_publish, "testpypi")]:
             self.assertIn("actions/upload-artifact@", workflow)
             self.assertIn("actions/download-artifact@", workflow)
