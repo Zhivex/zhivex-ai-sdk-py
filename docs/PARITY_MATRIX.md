@@ -23,7 +23,7 @@ Legend:
 | Tier-1 provider adapters | Yes | Yes | Yes | optional | stable provider story |
 | Agent core runtime | Yes | Yes | Yes | provider-dependent | stable |
 | Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
-| Human approval policies | Yes | Yes | Yes | provider-dependent | beta |
+| Durable human approvals | Yes | Yes | Yes | provider-dependent | stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |
 | Declarative workflows | Yes | Yes | Yes | N/A | beta |
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
@@ -37,4 +37,4 @@ Legend:
 
 Python GA should include the stable public API surface, tier-1 provider story, agent core runtime, gateway contracts, production API patterns, and release/install verification. DeepSeek is deferred from Python GA. vLLM remains a tier-1 Python provider for SDK primitives exposed by its OpenAI-compatible server.
 
-The SDK orchestrates. Applications own business policy, durable vertical storage, approval queues, compliance systems, and provider selection policy.
+The SDK orchestrates. Applications own business policy, durable vertical storage, approval UI/authorization, compliance systems, and provider selection policy.

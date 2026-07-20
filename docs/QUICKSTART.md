@@ -46,4 +46,4 @@ The smoke runner skips providers whose credentials or model IDs are missing. For
 - Observability: [OBSERVABILITY.md](./OBSERVABILITY.md)
 - Troubleshooting: [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
 
-Production integrations should import from `zhivex_ai`, prefer stable APIs from [../STABILITY.md](../STABILITY.md), and keep provider policy, business storage, and approval UI in application code.
+Production integrations should import from `zhivex_ai`, prefer stable APIs from [../STABILITY.md](../STABILITY.md), attach run stores for durable approvals/replay, and keep provider policy, business storage, authorization, and approval UI in application code.

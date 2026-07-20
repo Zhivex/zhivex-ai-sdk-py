@@ -40,6 +40,20 @@ Local tools run inside your application process. A tool can read data, write dat
 
 Do not expose broad shell, filesystem, deployment, or HTTP request tools to untrusted prompts without an application sandbox and approval gate.
 
+## Packaged Skills
+
+Packaged skill entrypoints are executable Python code loaded into the SDK process. Their `read_paths`, `write_paths`, and `allow_network` declarations are policy metadata and runtime guardrails; they are not an operating-system sandbox. In particular, direct `run_skill(...)` calls are an explicit request to execute the selected local, installed, or official package.
+
+- Review local packages before installing or running them.
+- Registry installs fail closed unless the caller sets `trust_remote_code=True`; only do that for a registry and package you trust.
+- Agent tools generated from package entrypoints carry `code-execution` permission and `requires_approval=True`; they fail closed unless the agent has an approval policy. Direct `run_skill(...)` remains an explicit trusted-code call.
+- Use HTTPS registries. Plain HTTP is accepted only for loopback development, and artifacts must remain on the registry index origin.
+- Keep the generated lockfile: installed package contents are verified against its content checksum before named execution.
+- Reinstall remote packages recorded by legacy lockfiles that do not contain `content_checksum`; they fail closed rather than treating an artifact checksum as a content checksum. Legacy local-package locks remain compatible.
+- Run third-party or tenant-supplied packages in an app-owned container, VM, or other real sandbox with filesystem, process, credential, and network isolation.
+
+The installer rejects archive traversal, links, special files, unsafe package identities, transport downgrades, oversized downloads/extractions, and artifact or declared paths outside their allowed project roots. These checks reduce packaging risk but do not make trusted Python code safe to execute.
+
 ## MCP And Hosted Tools
 
 Remote MCP servers and provider-hosted tools can move execution outside your process. Treat them as third-party integrations with their own trust boundary.

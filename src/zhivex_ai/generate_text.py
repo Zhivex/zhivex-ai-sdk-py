@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, cast
 
-from .errors import ParseError, UnsupportedFeatureError, ValidationError
+from .errors import ParseError, ToolExecutionSuspended, UnsupportedFeatureError, ValidationError
 from .messages import (
     create_text_message,
     get_agent_capabilities,
@@ -274,6 +274,8 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             output=serialize_json_value(output),
             is_error=False,
         )
+    except ToolExecutionSuspended:
+        raise
     except Exception as error:
         return ToolExecutionResult(
             tool_call_id=call.id,
@@ -471,12 +473,18 @@ async def generate_text(
         if not step_tool_calls:
             break
         _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
-        current_results = await _execute_tools(
-            step_tool_calls,
-            tools,
-            options=tool_execution,
-            default_parallel=model.capabilities.parallel_tool_calls,
-        )
+        try:
+            current_results = await _execute_tools(
+                step_tool_calls,
+                tools,
+                options=tool_execution,
+                default_parallel=model.capabilities.parallel_tool_calls,
+            )
+        except ToolExecutionSuspended as suspended:
+            suspended.messages = list(all_messages)
+            suspended.steps = list(steps)
+            suspended.tool_results = list(tool_results)
+            raise
         tool_results.extend(current_results)
         for result in current_results:
             all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
@@ -655,12 +663,18 @@ def stream_text(
                 if not step_tool_calls:
                     break
                 _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
-                current_results = await _execute_tools(
-                    step_tool_calls,
-                    tools,
-                    options=tool_execution,
-                    default_parallel=model.capabilities.parallel_tool_calls,
-                )
+                try:
+                    current_results = await _execute_tools(
+                        step_tool_calls,
+                        tools,
+                        options=tool_execution,
+                        default_parallel=model.capabilities.parallel_tool_calls,
+                    )
+                except ToolExecutionSuspended as suspended:
+                    suspended.messages = list(all_messages)
+                    suspended.steps = list(steps)
+                    suspended.tool_results = list(tool_results)
+                    raise
                 tool_results.extend(current_results)
                 for result in current_results:
                     all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))

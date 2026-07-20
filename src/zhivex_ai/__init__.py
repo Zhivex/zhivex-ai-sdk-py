@@ -80,6 +80,7 @@ _MODULE_EXPORTS = {
         "permission_allowlist_approval_policy",
         "prepare_subagents_for_agent",
         "resume_agent",
+        "resume_agent_run",
         "run_agent",
         "run_agent_group",
         "set_agent_session_skills",
@@ -106,6 +107,7 @@ _MODULE_EXPORTS = {
         "create_sqlite_agent_run_store",
         "create_postgres_agent_run_store",
         "deserialize_agent_run_state",
+        "get_pending_agent_approvals",
         "serialize_agent_run_state",
     ),
     "agent_evaluation": (
@@ -498,6 +500,7 @@ _MODULE_EXPORTS = {
         "UIMessage",
         "UIMessageChunk",
         "UIMessageProviderDataChunk",
+        "UIMessageToolApprovalChunk",
     ),
 }
 

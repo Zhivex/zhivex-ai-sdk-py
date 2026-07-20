@@ -12,7 +12,9 @@ Create one application request id per inbound request and carry it through:
 - trace exports
 - run-store metadata
 
-Use `idempotency_key` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
+Use `idempotency_key` with `run_agent(...)` or `stream_agent(...)` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
+
+Authenticate and authorize before constructing an agent or gateway request. Bind each credential to a server-owned tenant partition and provider/model policy; do not treat `X-Tenant-ID`, model IDs, tool names, or run IDs supplied by a client as authorization. Enforce request-body and field-size limits while the body is read, plus distributed rate/concurrency limits before provider work begins. The production FastAPI example demonstrates a fail-closed single-tenant bearer boundary and an in-process limiter; replace the limiter with a shared gateway or datastore implementation across replicas.
 
 ## Storage Defaults
 
@@ -25,19 +27,18 @@ memory = create_postgres_agent_memory_store(dsn)
 checkpoints = create_postgres_checkpoint_store(dsn)
 ```
 
-Use run stores when you need idempotency, cancellation-tree records, replay, or audit snapshots. SQLite and in-memory stores are beta/local development choices.
+Use run stores when you need idempotency, cancellation-tree records, replay, audit snapshots, or pending approvals. SQLite and in-memory stores are beta/local development choices.
 
 ## Approval Ownership
 
-The SDK emits approval requests and applies `approval_policy`. Your application owns:
+The SDK emits approval requests, applies `approval_policy`, and can persist suspended runs with pending approvals in the configured run store. Your application owns:
 
 - the user/admin approval UI
-- durable approval queues
 - role checks
 - audit records
 - escalation and timeout policy
 
-For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. For asynchronous HITL systems, persist the pending request in app storage and resume through app-owned workflow when the user responds.
+For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. A tool marked `requires_approval=True` is denied when no policy is configured. For asynchronous HITL systems, return `ApprovalDecision.require_human(...)`, load the pending approval with `get_pending_agent_approvals(...)`, and call `resume_agent_run(...)` when the user responds. Built-in run stores claim that pending approval atomically before any tool execution; duplicate workers are rejected instead of repeating a side effect. Custom stores used for approval resume must implement the same atomic claim contract.
 
 ## Timeouts And Retries
 
@@ -79,7 +80,7 @@ Use run stores when you need cancellation records, idempotency, replay, or audit
 
 ## Serverless Vs Workers
 
-Use serverless handlers for short generation, streaming, or gateway requests that fit within platform timeouts. Use long-running workers for tool-heavy agents, approval queues, resumable workflows, large file processing, and jobs that need durable checkpoints.
+Use serverless handlers for short generation, streaming, or gateway requests that fit within platform timeouts. Use long-running workers for tool-heavy agents, human approval handoffs, resumable workflows, large file processing, and jobs that need durable checkpoints.
 
 Serverless handlers should avoid production reliance on in-memory stores. Workers should use durable run/checkpoint stores, idempotency keys, bounded concurrency, cooperative cancellation, and queue-owned retry/dead-letter policy.
 
@@ -100,7 +101,7 @@ Use `create_otel_agent_observer(...)` for OpenTelemetry spans, and `create_agent
 
 ## Recovery
 
-Use `resume_agent(...)` for session/checkpoint recovery. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
+Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
 
 ## Release Evidence
 

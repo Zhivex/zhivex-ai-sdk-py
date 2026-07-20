@@ -81,6 +81,7 @@ artifacts:
 permissions:
   allow_network: false
   read_paths:
+    - .
     - resources
   write_paths:
     - .

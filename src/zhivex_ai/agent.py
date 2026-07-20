@@ -25,17 +25,18 @@ from ._serde import (
     serialize_model_generate_input,
     serialize_tool_execution_context,
 )
-from .errors import ProviderHTTPError, ValidationError
+from .errors import ProviderHTTPError, ToolExecutionSuspended, ValidationError
 from .agent_state import (
     AgentChildRun,
     AgentRunState,
     AgentRunStatus,
     AgentRunStep,
     AgentRunStore,
+    PendingApproval,
     agent_child_run_from_state,
 )
 from .generate_text import generate_text, stream_text
-from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
+from .messages import create_text_message, is_callable_tool_definition, provider_data_part, serialize_json_value, tool_result_part
 from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
 from .types import (
     AnyToolDefinition,
@@ -77,6 +78,7 @@ from .types import (
     TextPart,
     ToolCallPart,
     ToolResultPart,
+    ToolSource,
 )
 
 if TYPE_CHECKING:
@@ -305,6 +307,12 @@ class AgentContext:
 class ApprovalDecision:
     approved: bool
     reason: str | None = None
+    suspend: bool = False
+    approval_id: str | None = None
+
+    @classmethod
+    def require_human(cls, reason: str | None = None, *, approval_id: str | None = None) -> "ApprovalDecision":
+        return cls(approved=False, reason=reason, suspend=True, approval_id=approval_id)
 
 
 @dataclass(slots=True)
@@ -1825,6 +1833,27 @@ def _normalize_approval_decision(value: ApprovalDecision | bool | None) -> Appro
     return ApprovalDecision(approved=True)
 
 
+def _pending_approval_from_request(
+    request: ToolApprovalRequest,
+    decision: ApprovalDecision,
+    *,
+    tool_call_id: str,
+) -> PendingApproval:
+    return PendingApproval(
+        id=decision.approval_id or _new_id("approval"),
+        name=request.tool_name,
+        arguments=serialize_json_value(request.tool_input),
+        provider=str(request.tool_metadata.get("provider") or "") or None,
+        reason=decision.reason,
+        tool_call_id=tool_call_id or None,
+        permissions=list(request.tool_permissions),
+        source=request.tool_source,
+        metadata={str(key): serialize_json_value(value) for key, value in request.tool_metadata.items()},
+        created_at_ms=_now_ms(),
+        handoff_path=list(request.handoff_path),
+    )
+
+
 def _effective_max_steps(limits: RunLimits, requested: int | None) -> int | None:
     if limits.max_steps is None:
         return requested
@@ -2401,6 +2430,56 @@ def _agent_run_state_from_result(
     return state
 
 
+def _agent_run_state_from_suspension(
+    *,
+    run_id: str,
+    agent_name: str,
+    session_id: str,
+    agent: Agent,
+    parent_run_id: str | None,
+    idempotency_key: str | None,
+    started_at_ms: int,
+    suspended_at_ms: int,
+    suspended: ToolExecutionSuspended,
+    orchestration_path: list[str],
+) -> AgentRunState:
+    steps = [
+        AgentRunStep(
+            index=index,
+            status="suspended" if index == len(suspended.steps) else "completed",
+            tool_calls=_extract_tool_calls_from_steps([step]),
+            tool_results=[],
+            usage=step.response.usage,
+            messages=_response_messages(step),
+            started_at_ms=started_at_ms,
+            finished_at_ms=suspended_at_ms if index == len(suspended.steps) else None,
+        )
+        for index, step in enumerate(cast(list[GenerateTextStep], suspended.steps), start=1)
+    ]
+    pending = cast(PendingApproval, suspended.pending_approval)
+    return AgentRunState(
+        run_id=run_id,
+        agent_name=agent_name,
+        provider=str(getattr(agent.model, "provider", "")),
+        model_id=str(getattr(agent.model, "model_id", "")),
+        status="suspended",
+        session_id=session_id,
+        parent_run_id=parent_run_id,
+        idempotency_key=idempotency_key,
+        started_at_ms=started_at_ms,
+        updated_at_ms=suspended_at_ms,
+        current_step=len(steps),
+        steps=steps,
+        pending_approvals=[pending],
+        tool_results=list(cast(list[ToolExecutionResult], suspended.tool_results)),
+        finish_reason="tool-calls",
+        metadata={
+            "orchestration_path": list(orchestration_path),
+            "resume_messages": cast(JsonValue, serialize_messages(cast(list[ModelMessage], suspended.messages))),
+        },
+    )
+
+
 def _segment_text(result: GenerateTextOutput) -> str:
     if result.steps and result.steps[-1].response.text:
         return result.steps[-1].response.text or ""
@@ -2733,6 +2812,47 @@ class AgentRuntime:
                 current_prompt = handoff.input or f"Continue the delegated task from {trace.orchestration_path[-2]}."
                 current_messages = None
                 handoff_depth += 1
+        except ToolExecutionSuspended as suspended:
+            suspended_at_ms = _now_ms()
+            trace.finished_at_ms = suspended_at_ms
+            pending = cast(PendingApproval, suspended.pending_approval)
+            run_state = _agent_run_state_from_suspension(
+                run_id=run_id,
+                agent_name=current_agent.name,
+                session_id=resolved_session.id,
+                agent=agent,
+                parent_run_id=parent_run_id,
+                idempotency_key=idempotency_key,
+                started_at_ms=started_at_ms,
+                suspended_at_ms=suspended_at_ms,
+                suspended=suspended,
+                orchestration_path=list(trace.orchestration_path),
+            )
+            if agent.run_store is not None:
+                await agent.run_store.save(run_state)
+            await publish(
+                AgentFinishEvent(
+                    run_id=run_id,
+                    session_id=resolved_session.id,
+                    text="",
+                    finish_reason="tool-calls",
+                )
+            )
+            return AgentRunResult(
+                run_id=run_id,
+                agent_name=current_agent.name,
+                session=resolved_session,
+                text="",
+                finish_reason="tool-calls",
+                steps=list(cast(list[GenerateTextStep], suspended.steps)),
+                messages=list(cast(list[ModelMessage], suspended.messages)),
+                tool_results=list(cast(list[ToolExecutionResult], suspended.tool_results)),
+                trace=trace,
+                orchestration_path=list(trace.orchestration_path),
+                resumed_from_checkpoint=resumed_from_checkpoint,
+                state=run_state,
+                provider_finish_reason=pending.reason,
+            )
         except Exception as error:
             await publish(AgentErrorEvent(error=error))
             trace.finished_at_ms = _now_ms()
@@ -3306,16 +3426,46 @@ class AgentRuntime:
                 if _definition.requires_approval or (
                     _definition.requires_approval is None and agent.approval_policy is not None
                 ):
+                    if _definition.requires_approval and agent.approval_policy is None:
+                        raise RuntimeError(
+                            f'Local tool "{_tool_name}" requires an approval_policy on the agent.'
+                        )
                     trace.approval_count += 1
                     if agent.approval_policy is not None:
                         decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
+                    pending_approval = (
+                        _pending_approval_from_request(
+                            request,
+                            decision,
+                            tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                        )
+                        if decision.suspend
+                        else None
+                    )
                     await emit(
                         AgentToolApprovalEvent(
                             tool_name=_tool_name,
                             tool_input=input,
                             approved=decision.approved,
                             reason=decision.reason,
+                            approval_request_id=pending_approval.id if pending_approval is not None else decision.approval_id,
+                            tool_source=_definition.source,
+                            metadata={"suspended": decision.suspend} if decision.suspend else {},
                         )
+                    )
+                    if pending_approval is not None:
+                        raise ToolExecutionSuspended(
+                            decision.reason or f'Tool "{_tool_name}" is waiting for human approval.',
+                            pending_approval=pending_approval,
+                        )
+                if decision.suspend:
+                    raise ToolExecutionSuspended(
+                        decision.reason or f'Tool "{_tool_name}" is waiting for human approval.',
+                        pending_approval=_pending_approval_from_request(
+                            request,
+                            decision,
+                            tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                        ),
                     )
                 if not decision.approved:
                     raise RuntimeError(decision.reason or f'Tool "{_tool_name}" denied by approval policy.')
@@ -3715,6 +3865,220 @@ def resume_agent(
     return runner()
 
 
+def _resume_messages_from_state(state: AgentRunState) -> list[ModelMessage]:
+    raw_messages = state.metadata.get("resume_messages")
+    if not isinstance(raw_messages, list):
+        raise ValidationError(
+            'Suspended run state is missing "resume_messages"; it cannot be resumed from an approval decision.'
+        )
+    return deserialize_messages(cast(list[dict[str, Any]], raw_messages))
+
+
+async def _execute_resolved_approval_tool(
+    *,
+    agent: Agent,
+    state: AgentRunState,
+    pending: PendingApproval,
+    approved: bool,
+    reason: str | None,
+    tools: ToolSet | ToolRegistry | None,
+) -> ToolExecutionResult:
+    if not approved:
+        return ToolExecutionResult(
+            tool_call_id=pending.tool_call_id or pending.id,
+            tool_name=pending.name,
+            error=ToolExecutionError(message=reason or pending.reason or "Tool execution denied by approval decision."),
+            is_error=True,
+            provider_metadata={"approval_id": pending.id, "approval_status": "denied"},
+        )
+    registry = _resolve_tool_registry(agent, tools)
+    definition = registry.get(pending.name)
+    if definition is None or not is_callable_tool_definition(definition):
+        raise ValidationError(f'Pending approval references unknown local tool "{pending.name}".')
+    context = ToolExecutionContext(
+        tool_name=pending.name,
+        tool_call_id=pending.tool_call_id or pending.id,
+        run_id=state.run_id,
+        session_id=state.session_id or "",
+        agent_name=state.agent_name,
+        permissions=list(pending.permissions),
+        source=cast(ToolSource, pending.source),
+        metadata=dict(pending.metadata),
+        handoff_path=list(pending.handoff_path),
+    )
+    try:
+        output = await registry.execute(definition, pending.arguments, context)
+    except Exception as error:
+        return ToolExecutionResult(
+            tool_call_id=pending.tool_call_id or pending.id,
+            tool_name=pending.name,
+            error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+            is_error=True,
+            provider_metadata={"approval_id": pending.id, "approval_status": "approved"},
+        )
+    return ToolExecutionResult(
+        tool_call_id=pending.tool_call_id or pending.id,
+        tool_name=pending.name,
+        output=serialize_json_value(output),
+        is_error=False,
+        provider_metadata={"approval_id": pending.id, "approval_status": "approved"},
+    )
+
+
+def resume_agent_run(
+    *,
+    agent: Agent,
+    run_id: str,
+    approval_id: str | None = None,
+    approved: bool = True,
+    reason: str | None = None,
+    tools: ToolSet | ToolRegistry | None = None,
+    skills: SkillSet | SkillRegistry | None = None,
+    tool_choice: str | ToolChoiceName | None = None,
+    tool_execution: ToolExecutionOptions | None = None,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning: ReasoningConfig | None = None,
+    provider_options: dict[str, Any] | None = None,
+    timeout_ms: int | None = None,
+    max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+    stop_on_handoff: bool = False,
+    runtime: AgentRuntime | None = None,
+    registry: AgentRegistry | None = None,
+    observer: AgentObserver | None = None,
+    idempotency_key: str | None = None,
+) -> Awaitable[AgentRunResult]:
+    resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
+
+    async def runner() -> AgentRunResult:
+        run_store = agent.run_store
+        if run_store is None:
+            raise ValidationError("resume_agent_run(...) requires agent.run_store.")
+        loaded_state = await run_store.load(run_id)
+        if loaded_state is None:
+            raise ValidationError(f'Agent run "{run_id}" was not found.')
+        if loaded_state.status != "suspended":
+            raise ValidationError(f'Agent run "{run_id}" is not suspended.')
+        if not loaded_state.pending_approvals:
+            raise ValidationError(f'Agent run "{run_id}" has no pending approvals.')
+        selected_pending = (
+            next((item for item in loaded_state.pending_approvals if item.id == approval_id), None)
+            if approval_id is not None
+            else loaded_state.pending_approvals[0]
+        )
+        if selected_pending is None:
+            raise ValidationError(f'Pending approval "{approval_id}" was not found on run "{run_id}".')
+        claim_pending_approval = getattr(run_store, "claim_pending_approval", None)
+        if not callable(claim_pending_approval):
+            raise ValidationError(
+                "resume_agent_run(...) requires a run store with atomic pending-approval claims. "
+                "Use a built-in run store or implement claim_pending_approval(...)."
+            )
+        claim_token = str(uuid4())
+        suspended_state = await claim_pending_approval(
+            run_id,
+            selected_pending.id,
+            claim_token=claim_token,
+            claimed_at_ms=_now_ms(),
+        )
+        if suspended_state is None:
+            raise ValidationError(
+                f'Pending approval "{selected_pending.id}" on run "{run_id}" is already being resumed or is no longer pending.'
+            )
+        pending = next(
+            (item for item in suspended_state.pending_approvals if item.id == selected_pending.id),
+            None,
+        )
+        if pending is None:
+            raise ValidationError(f'Pending approval "{selected_pending.id}" was not found on run "{run_id}" after claiming it.')
+
+        async def resume_claimed_run() -> AgentRunResult:
+            approval_result = await _execute_resolved_approval_tool(
+                agent=agent,
+                state=suspended_state,
+                pending=pending,
+                approved=approved,
+                reason=reason,
+                tools=tools,
+            )
+            resume_messages = _resume_messages_from_state(suspended_state)
+            resume_messages.append(ModelMessage(role="tool", parts=[tool_result_part(approval_result)]))
+            session = create_agent_session(
+                id=suspended_state.session_id,
+                messages=[],
+                summary="",
+                metadata={
+                    "resumed_from_run_id": run_id,
+                    "resolved_approval_id": pending.id,
+                },
+            )
+            result = await resolved_runtime.run(
+                agent=agent,
+                session=session,
+                messages=resume_messages,
+                tools=tools,
+                skills=skills,
+                tool_choice=tool_choice,
+                tool_execution=tool_execution,
+                max_steps=max_steps,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                provider_options=provider_options,
+                timeout_ms=timeout_ms,
+                max_retries=max_retries,
+                retry_backoff_ms=retry_backoff_ms,
+                stop_on_handoff=stop_on_handoff,
+                parent_run_id=run_id,
+                idempotency_key=idempotency_key or f"{run_id}:{pending.id}:resume",
+            )
+            resumed_at_ms = result.state.updated_at_ms if result.state is not None else _now_ms()
+            suspended_state.pending_approvals = [item for item in suspended_state.pending_approvals if item.id != pending.id]
+            suspended_state.status = result.state.status if result.state is not None else "completed"
+            suspended_state.updated_at_ms = resumed_at_ms
+            suspended_state.finished_at_ms = result.state.finished_at_ms if result.state is not None else resumed_at_ms
+            suspended_state.output_text = result.text
+            suspended_state.finish_reason = result.finish_reason
+            suspended_state.tool_results = [*suspended_state.tool_results, approval_result, *result.tool_results]
+            if result.state is not None:
+                suspended_state.child_runs.append(agent_child_run_from_state(result.state))
+            resolved_metadata = dict(suspended_state.metadata)
+            resolved_metadata.pop("resume_claim", None)
+            suspended_state.metadata = {
+                **resolved_metadata,
+                "resumed_by_run_id": result.run_id,
+                "resolved_approval": {
+                    "id": pending.id,
+                    "approved": approved,
+                    "reason": reason,
+                    "tool_name": pending.name,
+                    "resumed_at_ms": resumed_at_ms,
+                },
+            }
+            await run_store.save(suspended_state)
+            result.resumed_from_checkpoint = result.resumed_from_checkpoint
+            return result
+
+        try:
+            return await resume_claimed_run()
+        except BaseException as error:
+            failed_at_ms = _now_ms()
+            suspended_state.status = "failed"
+            suspended_state.updated_at_ms = failed_at_ms
+            suspended_state.finished_at_ms = failed_at_ms
+            suspended_state.error = str(error) or type(error).__name__
+            suspended_state.metadata = {
+                **suspended_state.metadata,
+                "resume_claim_failed_at_ms": failed_at_ms,
+            }
+            await run_store.save(suspended_state)
+            raise
+
+    return runner()
+
+
 def stream_agent(
     *,
     agent: Agent,
@@ -3737,6 +4101,7 @@ def stream_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
+    idempotency_key: str | None = None,
 ) -> AgentStreamResult:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     broadcast = _Broadcast(history=[])
@@ -3766,6 +4131,7 @@ def stream_agent(
                 stop_on_handoff=stop_on_handoff,
                 emit=emit,
                 live_stream=True,
+                idempotency_key=idempotency_key,
             )
         finally:
             await broadcast.close()

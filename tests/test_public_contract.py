@@ -44,6 +44,10 @@ DOCUMENTED_STABLE_EXPORTS = {
     "AgentRunTreeCancellationResult",
     "AgentSkillActivatedEvent",
     "AgentSkillSkippedEvent",
+    "AgentToolApprovalEvent",
+    "ApprovalDecision",
+    "PendingApproval",
+    "ToolApprovalRequest",
     "ToolRegistry",
     "run_agent",
     "stream_agent",
@@ -71,6 +75,8 @@ DOCUMENTED_STABLE_EXPORTS = {
     "cancel_agent_run_tree",
     "create_agent_run_snapshot",
     "replay_agent_run",
+    "get_pending_agent_approvals",
+    "resume_agent_run",
     "discover_mcp_tools",
     "mcp_stdio_server",
     "mcp_http_server",
@@ -149,7 +155,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.10.0"', pyproject)
+        self.assertIn('version = "0.11.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

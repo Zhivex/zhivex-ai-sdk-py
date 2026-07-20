@@ -31,6 +31,9 @@ make dev
 
 For production-facing API servers:
 
+- authenticate every non-health route and fail closed when credentials are not configured
+- bind authenticated identities to a tenant-owned data partition; never trust a tenant header by itself
+- enforce request-body, field-length, concurrency, and rate limits before invoking a provider
 - import supported APIs from `zhivex_ai`
 - prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM
 - validate request bodies with Pydantic
@@ -92,8 +95,10 @@ For agent-backed API servers, keep application policy outside the SDK:
 
 - use `idempotency_key` for retryable user actions
 - attach memory/checkpoint stores when sessions need recovery
-- attach run stores when you need replay, snapshots, or cancellation records
-- keep human approval queues and authorization in application storage
+- attach run stores when you need replay, snapshots, cancellation records, or pending approvals
+- keep human authorization, notification, and audit policy in application storage
 - pass request ids through agent metadata and logs
 
 See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.
+
+The production agent example requires `ZHIVEX_AGENT_API_TOKEN`, `ZHIVEX_TENANT_ID`, and a server-owned `ZHIVEX_AGENT_MODEL`; it uses a fixed server-side Postgres table prefix, limits request bodies and Pydantic fields, and applies a small process-local rate limit. Put a distributed limiter at the API gateway when running more than one process or replica. Clients must send both `Authorization: Bearer ...` and the matching `X-Tenant-ID`; a user-controlled tenant header is not an authorization mechanism on its own, and clients do not select provider model IDs.

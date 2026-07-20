@@ -10,6 +10,8 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from pydantic import BaseModel, ConfigDict
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -43,6 +45,12 @@ from zhivex_ai import UnsupportedFeatureError
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
 from zhivex_ai.errors import ProviderHTTPError
 from zhivex_ai.errors import ValidationError
+
+
+class StrictToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticket_id: str
 
 
 @dataclass
@@ -683,7 +691,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         await generate_text(
-            model=provider.native.language_model("gemini-3.1-flash-preview"),
+            model=provider.native.language_model("gemini-3.5-flash"),
             prompt="Research this",
             provider_options={
                 "google_search": {"excludeDomains": ["example.com"]},
@@ -1438,7 +1446,7 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_gemini(api_key="test", fetch=fetch)
         with self.assertRaises(UnsupportedFeatureError) as context:
-            await generate_text(model=provider("gemini-3.1-flash-preview"), prompt="Research Apollo.")
+            await generate_text(model=provider("gemini-3.5-flash"), prompt="Research Apollo.")
 
         self.assertIn("google_search", str(context.exception))
 
@@ -1489,6 +1497,41 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertNotIn("additionalProperties", parameters)
         self.assertNotIn("default", parameters["properties"]["head"])
         self.assertEqual(parameters["properties"]["head"]["type"], "integer")
+
+    async def test_gemini_normalizes_strict_pydantic_tool_schema(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}],
+                },
+            )
+
+        provider = create_gemini(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider("gemini-2.5-flash"),
+            prompt="lookup",
+            tools={
+                "lookup_ticket": tool(
+                    name="lookup_ticket",
+                    schema=StrictToolInput,
+                    execute=lambda input: {"ticket_id": input.ticket_id},
+                )
+            },
+            tool_choice=ToolChoiceName(tool_name="lookup_ticket"),
+        )
+
+        parameters = requests[0]["tools"][0]["functionDeclarations"][0]["parameters"]
+        self.assertEqual(parameters["type"], "object")
+        self.assertEqual(parameters["required"], ["ticket_id"])
+        self.assertEqual(parameters["properties"]["ticket_id"]["type"], "string")
+        self.assertNotIn("title", parameters)
+        self.assertNotIn("additionalProperties", parameters)
 
     async def test_gemini_http_error_includes_response_body(self) -> None:
         async def fetch(

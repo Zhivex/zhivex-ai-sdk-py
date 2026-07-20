@@ -4,7 +4,7 @@ Agent state is split by purpose:
 
 - memory stores preserve session transcript and summary
 - checkpoint stores support `resume_agent(...)`
-- run stores support idempotency, replay, snapshots, and cancellation records
+- run stores support idempotency, replay, snapshots, cancellation records, and pending approvals
 
 SQLite is useful for local development:
 
@@ -29,4 +29,4 @@ checkpoints = create_postgres_checkpoint_store(dsn)
 runs = create_postgres_agent_run_store(dsn)
 ```
 
-Postgres run stores and the matching run-state serialization, replay, run-snapshot, and cancellation helpers are stable. In-memory and SQLite run stores remain beta/local-development choices.
+Postgres run stores and the matching run-state serialization, replay, run-snapshot, cancellation, pending-approval, and approval-resume helpers are stable. In-memory and SQLite run stores remain beta/local-development choices.

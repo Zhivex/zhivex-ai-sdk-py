@@ -43,6 +43,23 @@ class ParseError(ZhivexAIError):
     pass
 
 
+class ToolExecutionSuspended(ZhivexAIError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        pending_approval: Any,
+        messages: list[Any] | None = None,
+        steps: list[Any] | None = None,
+        tool_results: list[Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.pending_approval = pending_approval
+        self.messages = list(messages or [])
+        self.steps = list(steps or [])
+        self.tool_results = list(tool_results or [])
+
+
 class ProviderHTTPError(ZhivexAIError):
     def __init__(
         self,

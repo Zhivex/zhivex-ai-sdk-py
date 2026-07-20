@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-docs test-release test-cov lint typecheck smoke compile support-matrix-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-docs test-release test-cov lint typecheck smoke compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv venv .venv
@@ -54,9 +54,14 @@ compile:
 support-matrix-check:
 	$(PYTHON) scripts/generate_support_matrix.py --check-readme
 
+security-check:
+	$(PYTHON) -m pip check
+	$(PYTHON) -m pip_audit --skip-editable
+
 check: compile lint typecheck support-matrix-check test-cov
 
 build:
+	rm -rf dist build
 	$(PYTHON) -m build --no-isolation --outdir dist
 
 release-install-check:
@@ -65,7 +70,7 @@ release-install-check:
 release-evidence:
 	$(PYTHON) scripts/collect_release_evidence.py
 
-release-check: build release-install-check
+release-check: build release-install-check security-check
 	$(PYTHON) -m twine check dist/*
 
 clean:

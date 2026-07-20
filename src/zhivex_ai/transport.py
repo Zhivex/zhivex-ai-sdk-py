@@ -129,25 +129,68 @@ def to_ui_message_stream_response(
     return to_sse_response(ui_stream, event=lambda chunk: chunk.type, status_code=status_code, headers=headers)
 
 
-async def _read_request_text(request: Any) -> tuple[str, str]:
+def _request_too_large(max_body_bytes: int) -> ParseError:
+    return ParseError(f"UI message request exceeded maximum size of {max_body_bytes} bytes.")
+
+
+def _header_value(headers: Mapping[Any, Any], name: str) -> str | None:
+    lowered_name = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lowered_name:
+            return str(value)
+    return None
+
+
+def _enforce_request_bytes(raw: bytes, max_body_bytes: int) -> bytes:
+    if len(raw) > max_body_bytes:
+        raise _request_too_large(max_body_bytes)
+    return raw
+
+
+async def _read_request_text(request: Any, *, max_body_bytes: int) -> tuple[str, str]:
+    if max_body_bytes < 0:
+        raise ParseError('The "max_body_bytes" field must be at least 0.')
     if isinstance(request, bytes):
-        return request.decode("utf-8"), "application/json"
+        return _enforce_request_bytes(request, max_body_bytes).decode("utf-8"), "application/json"
     if isinstance(request, str):
-        return request, "application/json"
+        raw = _enforce_request_bytes(request.encode("utf-8"), max_body_bytes)
+        return raw.decode("utf-8"), "application/json"
 
     headers = getattr(request, "headers", {}) or {}
     content_type = ""
     if isinstance(headers, Mapping):
-        content_type = str(headers.get("content-type", ""))
+        content_type = _header_value(headers, "content-type") or ""
+        declared_length = _header_value(headers, "content-length")
+        if declared_length is not None:
+            try:
+                parsed_length = int(declared_length)
+            except ValueError:
+                raise ParseError("UI message request contained an invalid Content-Length header.") from None
+            if parsed_length < 0:
+                raise ParseError("UI message request contained an invalid Content-Length header.")
+            if parsed_length > max_body_bytes:
+                raise _request_too_large(max_body_bytes)
 
-    if hasattr(request, "json") and "application/json" in content_type:
-        body = await request.json()
-        return json.dumps(body), content_type
+    # Starlette/FastAPI Request exposes stream(). Prefer it so chunked bodies
+    # are rejected while being received instead of after json()/body() has
+    # already allocated the complete request.
+    if hasattr(request, "stream") and callable(request.stream):
+        streamed_body = bytearray()
+        async for chunk in request.stream():
+            streamed_body.extend(chunk)
+            if len(streamed_body) > max_body_bytes:
+                raise _request_too_large(max_body_bytes)
+        return bytes(streamed_body).decode("utf-8"), content_type
+    if hasattr(request, "body") and callable(request.body):
+        body = await request.body()
+        return _enforce_request_bytes(bytes(body), max_body_bytes).decode("utf-8"), content_type
     if hasattr(request, "text"):
-        return await request.text(), content_type
+        text = await request.text()
+        raw = _enforce_request_bytes(text.encode("utf-8"), max_body_bytes)
+        return raw.decode("utf-8"), content_type
     if hasattr(request, "read"):
         raw = await request.read()
-        return raw.decode("utf-8"), content_type
+        return _enforce_request_bytes(bytes(raw), max_body_bytes).decode("utf-8"), content_type
 
     raise ParseError("Unsupported UI message request type.")
 
@@ -158,9 +201,7 @@ async def parse_ui_message_request(
     max_body_bytes: int = DEFAULT_MAX_UI_MESSAGE_REQUEST_BYTES,
     max_messages: int = DEFAULT_MAX_UI_MESSAGES,
 ) -> list[UIMessage]:
-    text, content_type = await _read_request_text(request)
-    if len(text.encode("utf-8")) > max_body_bytes:
-        raise ParseError(f"UI message request exceeded maximum size of {max_body_bytes} bytes.")
+    text, content_type = await _read_request_text(request, max_body_bytes=max_body_bytes)
     if "application/json" in content_type or isinstance(request, (str, bytes)):
         payload = json.loads(text) if text.strip() else []
         if len(payload) > max_messages:

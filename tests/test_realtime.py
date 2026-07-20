@@ -130,7 +130,7 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
             fetch=fetch,
             realtime_connection_factory=connection_factory,
         )
-        model = provider.realtime_model("gpt-realtime-2")
+        model = provider.realtime_model("gpt-realtime-2.1")
         session = await model.connect(
             RealtimeSessionConfig(voice="alloy", instructions="Speak briefly."),
             RealtimeConnectOptions(timeout_ms=500),
@@ -145,7 +145,7 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
                 break
         await session.aclose()
 
-        self.assertIn("/realtime?model=gpt-realtime-2", connection_meta[0]["url"])
+        self.assertIn("/realtime?model=gpt-realtime-2.1", connection_meta[0]["url"])
         self.assertNotIn("OpenAI-Beta", connection_meta[0]["headers"])
         self.assertEqual(connections[0].sent[0]["type"], "session.update")
         self.assertEqual(connections[0].sent[1]["type"], "input_audio_buffer.append")
@@ -161,7 +161,7 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(token.value, "token-123")
         self.assertEqual(requests[0]["url"], "https://api.openai.com/v1/realtime/client_secrets")
         self.assertEqual(requests[0]["json"]["session"]["type"], "realtime")
-        self.assertEqual(requests[0]["json"]["session"]["model"], "gpt-realtime-2")
+        self.assertEqual(requests[0]["json"]["session"]["model"], "gpt-realtime-2.1")
         self.assertEqual(requests[0]["json"]["session"]["audio"]["output"]["voice"], "alloy")
 
     async def test_gemini_realtime_normalizes_server_content(self) -> None:
@@ -428,7 +428,7 @@ class FakeLiveSession:
 
 class FakeLiveModel:
     provider = "openai"
-    model_id = "gpt-realtime-2"
+    model_id = "gpt-realtime-2.1"
     capabilities = ModelCapabilities(
         streaming=False,
         tools=False,

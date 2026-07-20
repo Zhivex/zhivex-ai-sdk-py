@@ -6,7 +6,13 @@ from dataclasses import asdict
 import json
 from typing import Any
 
-from .skillpacks import install_skill, list_installed_skills, publish_skill, run_skill, validate_skill
+from .skillpacks import (
+    install_skill,
+    list_installed_skills,
+    publish_skill,
+    run_skill,
+    validate_skill,
+)
 
 
 def _json_input(value: str | None) -> dict[str, Any]:
@@ -26,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser.add_argument("source")
     install_parser.add_argument("--project-root")
     install_parser.add_argument("--registry-url")
+    install_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Confirm that executable Python code from the configured registry may be installed.",
+    )
     install_parser.add_argument("--no-lock", action="store_true")
 
     list_parser = subparsers.add_parser("list", help="List installed skills for a project.")
@@ -35,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     lock_parser.add_argument("source")
     lock_parser.add_argument("--project-root")
     lock_parser.add_argument("--registry-url")
+    lock_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Confirm that executable Python code from the configured registry may be installed.",
+    )
 
     run_parser = subparsers.add_parser("run", help="Run a skill entrypoint.")
     run_parser.add_argument("name")
@@ -56,7 +72,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "validate":
         definition = validate_skill(args.path)
-        print(json.dumps({"name": definition.name, "version": definition.version, "path": definition.path}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "name": definition.name,
+                    "version": definition.version,
+                    "path": definition.path,
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.command == "install":
         installed = install_skill(
@@ -64,16 +89,23 @@ def main(argv: list[str] | None = None) -> int:
             project_root=args.project_root,
             lock=not args.no_lock,
             registry_url=args.registry_url,
+            trust_remote_code=args.trust_remote_code,
         )
-        print(json.dumps(installed.__dict__, indent=2))
+        print(json.dumps(asdict(installed), indent=2))
         return 0
     if args.command == "list":
-        items = [item.__dict__ for item in list_installed_skills(project_root=args.project_root)]
+        items = [asdict(item) for item in list_installed_skills(project_root=args.project_root)]
         print(json.dumps(items, indent=2))
         return 0
     if args.command == "lock":
-        installed = install_skill(args.source, project_root=args.project_root, lock=True, registry_url=args.registry_url)
-        print(json.dumps(installed.__dict__, indent=2))
+        installed = install_skill(
+            args.source,
+            project_root=args.project_root,
+            lock=True,
+            registry_url=args.registry_url,
+            trust_remote_code=args.trust_remote_code,
+        )
+        print(json.dumps(asdict(installed), indent=2))
         return 0
     if args.command == "run":
         result = asyncio.run(
@@ -87,13 +119,13 @@ def main(argv: list[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                        "skill_name": result.skill_name,
-                        "skill_version": result.skill_version,
-                        "entrypoint": result.entrypoint,
-                        "output": result.output,
-                        "artifacts": [asdict(artifact) for artifact in result.artifacts],
-                        "logs": result.logs,
-                    },
+                    "skill_name": result.skill_name,
+                    "skill_version": result.skill_version,
+                    "entrypoint": result.entrypoint,
+                    "output": result.output,
+                    "artifacts": [asdict(artifact) for artifact in result.artifacts],
+                    "logs": result.logs,
+                },
                 indent=2,
             )
         )

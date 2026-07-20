@@ -64,20 +64,30 @@ class BufferedResponse:
 
 
 class StreamingResponse:
-    def __init__(self, response: httpx.Response, *, max_cached_bytes: int = DEFAULT_MAX_STREAM_CACHE_BYTES) -> None:
+    def __init__(
+        self,
+        response: httpx.Response,
+        *,
+        max_cached_bytes: int = DEFAULT_MAX_STREAM_CACHE_BYTES,
+        max_body_bytes: int = DEFAULT_MAX_BUFFERED_RESPONSE_BYTES,
+    ) -> None:
         self.status_code = response.status_code
         self.headers: Mapping[str, str] = dict(getattr(response, "headers", {}) or {})
         self._response = response
         self._closed = False
         self._body_bytes: bytes | None = None
         self._max_cached_bytes = max_cached_bytes
+        self._max_body_bytes = max_body_bytes
 
     async def _read_body(self) -> bytes:
         if self._body_bytes is not None:
             return self._body_bytes
         try:
-            self._body_bytes = await self._response.aread()
-            _enforce_max_bytes(self._body_bytes, DEFAULT_MAX_BUFFERED_RESPONSE_BYTES, "streamed response body")
+            self._body_bytes = await _read_limited_body(
+                self._response,
+                max_bytes=self._max_body_bytes,
+                label="streamed response body",
+            )
             return self._body_bytes
         finally:
             await self._close()
@@ -151,6 +161,39 @@ def _enforce_max_bytes(body: bytes, max_bytes: int, label: str) -> None:
         raise ResponseTooLargeError(f"{label} exceeded maximum size of {max_bytes} bytes.")
 
 
+def _content_length(headers: Mapping[str, str]) -> int | None:
+    raw_value = next((value for key, value in headers.items() if str(key).lower() == "content-length"), None)
+    if raw_value is None:
+        return None
+    try:
+        value = int(str(raw_value))
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+async def _read_limited_body(response: Any, *, max_bytes: int, label: str) -> bytes:
+    headers = dict(getattr(response, "headers", {}) or {})
+    declared_length = _content_length(headers)
+    if declared_length is not None and declared_length > max_bytes:
+        raise ResponseTooLargeError(f"{label} exceeded maximum size of {max_bytes} bytes.")
+
+    body = bytearray()
+    if hasattr(response, "aiter_bytes"):
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > max_bytes:
+                raise ResponseTooLargeError(f"{label} exceeded maximum size of {max_bytes} bytes.")
+        return bytes(body)
+
+    # Compatibility fallback for custom Fetcher response doubles. The default
+    # httpx path always uses aiter_bytes and therefore enforces the limit while
+    # the socket is being consumed.
+    raw = await response.aread()
+    _enforce_max_bytes(raw, max_bytes, label)
+    return raw
+
+
 async def aclose_default_clients() -> None:
     clients = list(_DEFAULT_CLIENTS.values())
     _DEFAULT_CLIENTS.clear()
@@ -172,12 +215,18 @@ async def default_fetch(
     timeout = effective_timeout_ms / 1000
     client = _shared_client(timeout)
     request = client.build_request(method, url, headers=headers, **_build_request_kwargs(json_body, body))
-    response = await client.send(request, stream=stream)
+    # Always keep the transport in streaming mode. For non-streaming SDK calls
+    # we consume it below with an incremental cap instead of allowing httpx to
+    # buffer an unbounded response before the SDK can inspect its size.
+    response = await client.send(request, stream=True)
     if stream:
         return StreamingResponse(response=response)
     try:
-        body_bytes = await response.aread()
-        _enforce_max_bytes(body_bytes, DEFAULT_MAX_BUFFERED_RESPONSE_BYTES, "response body")
+        body_bytes = await _read_limited_body(
+            response,
+            max_bytes=DEFAULT_MAX_BUFFERED_RESPONSE_BYTES,
+            label="response body",
+        )
         return BufferedResponse(
             status_code=response.status_code,
             body_bytes=body_bytes,
