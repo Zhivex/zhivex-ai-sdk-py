@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import sqlite3
@@ -293,9 +294,34 @@ def agent_run_state_to_json(state: AgentRunState) -> str:
     return _json_dumps(state)
 
 
+def _claim_pending_approval(
+    state: AgentRunState,
+    approval_id: str,
+    *,
+    claim_token: str,
+    claimed_at_ms: int,
+) -> bool:
+    if state.status != "suspended" or state.metadata.get("resume_claim") is not None:
+        return False
+    if not any(pending.id == approval_id for pending in state.pending_approvals):
+        return False
+    state.status = "running"
+    state.updated_at_ms = claimed_at_ms
+    state.metadata = {
+        **state.metadata,
+        "resume_claim": {
+            "approval_id": approval_id,
+            "claim_token": claim_token,
+            "claimed_at_ms": claimed_at_ms,
+        },
+    }
+    return True
+
+
 class InMemoryAgentRunStore:
     def __init__(self) -> None:
         self._states: dict[str, AgentRunState] = {}
+        self._resume_claim_lock = asyncio.Lock()
 
     async def load(self, run_id: str) -> AgentRunState | None:
         state = self._states.get(run_id)
@@ -316,6 +342,29 @@ class InMemoryAgentRunStore:
 
     async def save(self, state: AgentRunState) -> None:
         self._states[state.run_id] = agent_run_state_from_json(agent_run_state_to_json(state))
+
+    async def claim_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        claim_token: str,
+        claimed_at_ms: int,
+    ) -> AgentRunState | None:
+        async with self._resume_claim_lock:
+            state = self._states.get(run_id)
+            if state is None:
+                return None
+            claimed = agent_run_state_from_json(agent_run_state_to_json(state))
+            if not _claim_pending_approval(
+                claimed,
+                approval_id,
+                claim_token=claim_token,
+                claimed_at_ms=claimed_at_ms,
+            ):
+                return None
+            self._states[run_id] = agent_run_state_from_json(agent_run_state_to_json(claimed))
+            return claimed
 
 
 class SQLiteAgentRunStore:
@@ -400,6 +449,46 @@ class SQLiteAgentRunStore:
                 (self._namespace, state.run_id, state.idempotency_key, state.parent_run_id, payload, state.updated_at_ms or 0),
             )
             connection.commit()
+        finally:
+            connection.close()
+
+    async def claim_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        claim_token: str,
+        claimed_at_ms: int,
+    ) -> AgentRunState | None:
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND run_id = ?",
+                (self._namespace, run_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return None
+            state = agent_run_state_from_json(row[0])
+            if not _claim_pending_approval(
+                state,
+                approval_id,
+                claim_token=claim_token,
+                claimed_at_ms=claimed_at_ms,
+            ):
+                connection.rollback()
+                return None
+            connection.execute(
+                """
+                UPDATE zhivex_agent_runs
+                SET state_json = ?, updated_at_ms = ?
+                WHERE namespace = ? AND run_id = ?
+                """,
+                (agent_run_state_to_json(state), state.updated_at_ms or 0, self._namespace, run_id),
+            )
+            connection.commit()
+            return state
         finally:
             connection.close()
 
@@ -490,6 +579,42 @@ class PostgresAgentRunStore:
                 agent_run_state_to_json(state),
                 state.updated_at_ms or 0,
             )
+        finally:
+            await connection.close()
+
+    async def claim_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        claim_token: str,
+        claimed_at_ms: int,
+    ) -> AgentRunState | None:
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    f"SELECT state_json FROM {self._table} WHERE run_id = $1 FOR UPDATE",
+                    run_id,
+                )
+                if row is None:
+                    return None
+                payload = row["state_json"]
+                state = deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+                if not _claim_pending_approval(
+                    state,
+                    approval_id,
+                    claim_token=claim_token,
+                    claimed_at_ms=claimed_at_ms,
+                ):
+                    return None
+                await connection.execute(
+                    f"UPDATE {self._table} SET state_json = $1::jsonb, updated_at_ms = $2 WHERE run_id = $3",
+                    agent_run_state_to_json(state),
+                    state.updated_at_ms or 0,
+                    run_id,
+                )
+                return state
         finally:
             await connection.close()
 

@@ -30,7 +30,16 @@ Related documents:
 
 ### Fixed
 
-- None.
+- Raised known-vulnerable optional/development dependency floors and added a dependency-audit release gate.
+- Split package building from trusted publishing so only protected publish jobs receive PyPI OIDC permission, with GitHub Actions pinned to immutable commits.
+- Release evidence now records the source commit, working-tree state, tool versions, and SHA256 digests for built artifacts.
+- Required local-tool approvals now fail closed when no `approval_policy` is configured.
+- Approval resume now atomically claims pending work in the in-memory, SQLite, and Postgres run stores, preventing concurrent workers from executing the same approved tool twice.
+- Packaged-skill registry installs now require explicit remote-code trust, HTTPS/same-origin artifacts, bounded downloads and extraction, safe archive paths, and an installed-content checksum; generated agent tools also require approval for code execution, while skill permissions are documented as guardrails rather than an OS sandbox.
+- Provider-returned download URLs now reject legacy numeric/private hosts and Qwen audio downloads are constrained to the configured provider host or Alibaba Cloud domains.
+- HTTP response and UI-message request limits are enforced incrementally while data is read instead of after an unbounded buffer allocation.
+- The production FastAPI agent example now fails closed on authentication/tenant/model configuration and applies tenant-scoped storage, bounded inputs, sanitized gateway attempts, and rate limiting.
+- Hardened beta skill packages with explicit remote-code trust, HTTPS-only remote registries outside loopback, bounded downloads/extraction, archive and package-path validation, lockfile content verification, and entrypoint imports covered by the declared network policy.
 
 ### Deprecated
 

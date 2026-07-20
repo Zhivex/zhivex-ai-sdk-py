@@ -93,6 +93,14 @@ def _qwen_speech_url(base_url: str) -> str:
     )
 
 
+def _qwen_audio_allowed_suffixes(base_url: str) -> tuple[str, ...]:
+    host = (urlparse(base_url).hostname or "").strip(".").lower()
+    suffixes = ["aliyuncs.com"]
+    if host and host != "aliyuncs.com" and not host.endswith(".aliyuncs.com"):
+        suffixes.append(host)
+    return tuple(suffixes)
+
+
 def _infer_qwen_media_type(url: str | None) -> str:
     normalized = (url or "").lower()
     if normalized.endswith(".mp3"):
@@ -301,7 +309,12 @@ class QwenSpeechModel(SpeechModel):
         payload = await response.json()
         audio_info = ((payload.get("output") or {}).get("audio") or {})
         if isinstance(audio_info.get("url"), str) and audio_info.get("url"):
-            audio_url = validate_provider_url(str(audio_info["url"]), provider=self.provider, purpose="audio download")
+            audio_url = validate_provider_url(
+                str(audio_info["url"]),
+                provider=self.provider,
+                purpose="audio download",
+                allowed_suffixes=_qwen_audio_allowed_suffixes(self.base_url),
+            )
             audio_response = await with_retry(
                 lambda: self.fetch(
                     audio_url,

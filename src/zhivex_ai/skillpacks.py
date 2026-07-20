@@ -6,13 +6,14 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import tarfile
 from tempfile import TemporaryDirectory
-from typing import Any
-from urllib.parse import urljoin
 import time
+from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -30,6 +31,15 @@ from .skills import (
 from .types import ToolDefinition
 
 
+_MAX_REGISTRY_INDEX_BYTES = 2 * 1024 * 1024
+_MAX_SKILL_ARCHIVE_BYTES = 64 * 1024 * 1024
+_MAX_SKILL_ARCHIVE_MEMBERS = 1_024
+_MAX_SKILL_MEMBER_BYTES = 64 * 1024 * 1024
+_MAX_SKILL_EXTRACTED_BYTES = 256 * 1024 * 1024
+_PACKAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_PACKAGE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+
+
 def validate_skill(path: str | Path) -> SkillDefinition:
     return load_skill(path)
 
@@ -45,11 +55,13 @@ def install_skill(
     project_root: str | Path | None = None,
     lock: bool = True,
     registry_url: str | None = None,
+    trust_remote_code: bool = False,
 ) -> InstalledSkill:
     root = _project_root(project_root)
     source_path = Path(source).expanduser()
     if source_path.exists():
         definition = load_skill(source_path)
+        _validate_skill_definition(definition)
         checksum = _hash_skill_directory(_skill_dir_from_input(source_path))
         installed = _materialize_installed_skill(
             definition,
@@ -62,8 +74,20 @@ def install_skill(
         name, version = _parse_registry_ref(str(source))
         resolved_registry_url = registry_url or _read_project_registry(root) or os.environ.get("ZHIVEX_SKILLS_REGISTRY")
         if not resolved_registry_url:
-            raise ValidationError('Registry installs require "registry_url", a project skills.toml registry, or ZHIVEX_SKILLS_REGISTRY.')
-        installed = _install_from_registry(name=name, version=version, registry_url=resolved_registry_url, project_root=root)
+            raise ValidationError(
+                'Registry installs require "registry_url", a project skills.toml registry, or ZHIVEX_SKILLS_REGISTRY.'
+            )
+        if not trust_remote_code:
+            raise ValidationError(
+                "Registry skill packages contain executable Python code. Review the package and checksum, then pass "
+                "trust_remote_code=True only when you trust that registry and package."
+            )
+        installed = _install_from_registry(
+            name=name,
+            version=version,
+            registry_url=resolved_registry_url,
+            project_root=root,
+        )
         manifest_registry = resolved_registry_url
     _upsert_project_manifest(root, installed=installed, registry_url=manifest_registry)
     if lock:
@@ -94,15 +118,19 @@ async def run_skill(
 
 def publish_skill(path: str | Path, *, registry_dir: str | Path) -> SkillRegistryIndex:
     definition = load_skill_package(path)
+    _validate_skill_definition(definition)
+    _validate_package_component(definition.name, field="name")
+    _validate_package_component(str(definition.version or ""), field="version")
     registry_root = Path(registry_dir).expanduser().resolve()
     registry_root.mkdir(parents=True, exist_ok=True)
     artifacts_dir = registry_root / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     skill_root = _skill_dir_from_input(Path(path))
+    _validate_skill_tree(skill_root)
     tarball_name = f"{definition.name}-{definition.version}.tar.gz"
     tarball_path = artifacts_dir / tarball_name
     with tarfile.open(tarball_path, "w:gz") as archive:
-        archive.add(skill_root, arcname=definition.name)
+        archive.add(skill_root, arcname=definition.name, filter=_skill_tar_filter)
     checksum = _sha256_file(tarball_path)
     index_path = registry_root / "index.json"
     payload: dict[str, Any]
@@ -122,7 +150,9 @@ def publish_skill(path: str | Path, *, registry_dir: str | Path) -> SkillRegistr
     return SkillRegistryIndex(registry_url=str(index_path), skills=skills)
 
 
-def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | Path | None = None) -> dict[str, ToolDefinition]:
+def build_skill_entrypoint_tools(
+    skill: SkillDefinition, *, project_root: str | Path | None = None
+) -> dict[str, ToolDefinition]:
     tools: dict[str, ToolDefinition] = {}
     root = _project_root(project_root)
     permissions = _skill_tool_permissions(skill)
@@ -132,10 +162,9 @@ def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | 
         async def execute(
             input: Any,
             *,
-            _skill_name: str = skill.install_path
-            or (str(Path(skill.path).resolve().parent) if skill.path else None)
-            or skill.source
-            or skill.name,
+            _skill_name: str = skill.name
+            if skill.install_path
+            else ((str(Path(skill.path).resolve().parent) if skill.path else None) or skill.source or skill.name),
             _entrypoint: str = entrypoint.name,
             _root: Path = root,
         ) -> dict[str, Any]:
@@ -156,6 +185,7 @@ def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | 
             execute=execute,
             source="local",
             permissions=list(permissions),
+            requires_approval=True,
             metadata={
                 "skill_name": skill.name,
                 "skill_version": skill.version,
@@ -172,7 +202,7 @@ def build_skill_entrypoint_tools(skill: SkillDefinition, *, project_root: str | 
 
 
 def _skill_tool_permissions(skill: SkillDefinition) -> list[str]:
-    permissions: list[str] = []
+    permissions: list[str] = ["code-execution"]
     if skill.permissions.read_paths or skill.permissions.write_paths:
         permissions.append("filesystem")
     if skill.permissions.write_paths:
@@ -232,13 +262,13 @@ def _upsert_project_manifest(root: Path, *, installed: InstalledSkill, registry_
     )
     lines = []
     if registry_url:
-        lines.append(f'registry = "{registry_url}"')
+        lines.append(f"registry = {_toml_string(registry_url)}")
         lines.append("")
     for item in retained:
         lines.append("[[skills]]")
-        lines.append(f'name = "{item["name"]}"')
-        lines.append(f'version = "{item["version"]}"')
-        lines.append(f'source = "{item["source"]}"')
+        lines.append(f"name = {_toml_string(item['name'])}")
+        lines.append(f"version = {_toml_string(item['version'])}")
+        lines.append(f"source = {_toml_string(item['source'])}")
         lines.append("")
     manifest_path.write_text("\n".join(lines).rstrip() + "\n", "utf-8")
 
@@ -292,6 +322,7 @@ def _read_lockfile(path: Path) -> list[InstalledSkill]:
                 source=str(item.get("source") or ""),
                 checksum=str(item.get("checksum") or ""),
                 install_path=str(item.get("install_path") or ""),
+                content_checksum=str(item.get("content_checksum") or "") or None,
                 manifest_path=str(item.get("manifest_path") or "") or None,
                 locked_at=str(item.get("locked_at") or "") or None,
             )
@@ -307,15 +338,17 @@ def _upsert_lockfile(root: Path, installed: InstalledSkill) -> None:
     lines: list[str] = []
     for item in items:
         lines.append("[[skills]]")
-        lines.append(f'name = "{item.name}"')
-        lines.append(f'version = "{item.version}"')
-        lines.append(f'source = "{item.source}"')
-        lines.append(f'checksum = "{item.checksum}"')
-        lines.append(f'install_path = "{item.install_path}"')
+        lines.append(f"name = {_toml_string(item.name)}")
+        lines.append(f"version = {_toml_string(item.version)}")
+        lines.append(f"source = {_toml_string(item.source)}")
+        lines.append(f"checksum = {_toml_string(item.checksum)}")
+        if item.content_checksum:
+            lines.append(f"content_checksum = {_toml_string(item.content_checksum)}")
+        lines.append(f"install_path = {_toml_string(item.install_path)}")
         if item.manifest_path:
-            lines.append(f'manifest_path = "{item.manifest_path}"')
+            lines.append(f"manifest_path = {_toml_string(item.manifest_path)}")
         if item.locked_at:
-            lines.append(f'locked_at = "{item.locked_at}"')
+            lines.append(f"locked_at = {_toml_string(item.locked_at)}")
         lines.append("")
     lock_path.write_text("\n".join(lines).rstrip() + "\n", "utf-8")
 
@@ -328,27 +361,44 @@ def _materialize_installed_skill(
     project_root: Path,
 ) -> InstalledSkill:
     skill_root = _skill_dir_from_input(Path(definition.source or definition.path or source))
-    cache_dir = _installed_skills_cache_dir(project_root) / definition.name / str(definition.version or "0")
+    _validate_skill_definition(definition)
+    _validate_skill_tree(skill_root)
+    safe_name = _validate_package_component(definition.name, field="name")
+    safe_version = _validate_package_component(str(definition.version or "0"), field="version")
+    cache_root = _installed_skills_cache_dir(project_root).resolve()
+    cache_dir = (cache_root / safe_name / safe_version).resolve()
+    if not _is_relative_to(cache_dir, cache_root):
+        raise ValidationError("Resolved skill install path escaped the project skill cache.")
     cache_dir.parent.mkdir(parents=True, exist_ok=True)
     if cache_dir.exists():
         shutil.rmtree(cache_dir)
-    shutil.copytree(skill_root, cache_dir)
+    shutil.copytree(
+        skill_root,
+        cache_dir,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
     installed_definition = load_skill(cache_dir)
+    content_checksum = _hash_skill_directory(cache_dir)
     return InstalledSkill(
         name=installed_definition.name,
         version=str(installed_definition.version or "0"),
         source=source,
         checksum=checksum,
         install_path=str(cache_dir),
+        content_checksum=content_checksum,
         manifest_path=installed_definition.package_manifest_path,
         locked_at=str(int(time.time())),
     )
 
 
 def _install_from_registry(*, name: str, version: str, registry_url: str, project_root: Path) -> InstalledSkill:
-    response = httpx.get(registry_url, timeout=30.0)
-    response.raise_for_status()
-    payload = response.json()
+    registry_url = _validate_remote_url(registry_url, purpose="registry")
+    try:
+        payload = json.loads(_download_url(registry_url, timeout=30.0, max_bytes=_MAX_REGISTRY_INDEX_BYTES))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValidationError(f'Registry "{registry_url}" did not return valid UTF-8 JSON.') from error
+    if not isinstance(payload, dict):
+        raise ValidationError(f'Registry "{registry_url}" index must be a JSON object.')
     skills = dict(payload.get("skills") or {})
     versions = dict(skills.get(name) or {})
     metadata = dict(versions.get(version) or {})
@@ -358,11 +408,13 @@ def _install_from_registry(*, name: str, version: str, registry_url: str, projec
     checksum = str(metadata.get("checksum") or "")
     if not artifact_url or not checksum:
         raise ValidationError(f'Registry entry for "{name}@{version}" is missing "artifact_url" or "checksum".')
-    artifact_response = httpx.get(urljoin(registry_url, artifact_url), timeout=60.0)
-    artifact_response.raise_for_status()
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
+        raise ValidationError(f'Registry entry for "{name}@{version}" has an invalid SHA-256 checksum.')
+    checksum = checksum.lower()
+    resolved_artifact_url = _resolve_registry_artifact_url(registry_url, artifact_url)
     with TemporaryDirectory() as tmp:
         tarball_path = Path(tmp) / f"{name}-{version}.tar.gz"
-        tarball_path.write_bytes(artifact_response.content)
+        tarball_path.write_bytes(_download_url(resolved_artifact_url, timeout=60.0, max_bytes=_MAX_SKILL_ARCHIVE_BYTES))
         actual_checksum = _sha256_file(tarball_path)
         if actual_checksum != checksum:
             raise ValidationError(
@@ -371,18 +423,27 @@ def _install_from_registry(*, name: str, version: str, registry_url: str, projec
         extract_dir = Path(tmp) / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(tarball_path, "r:gz") as archive:
-            if "filter" in inspect.signature(archive.extractall).parameters:
-                archive.extractall(extract_dir, filter="data")
-            else:
-                _safe_extract_tar(archive, extract_dir)
+            _safe_extract_tar(archive, extract_dir)
         skill_dir = extract_dir / name
         if not skill_dir.exists():
             nested_dirs = [item for item in extract_dir.iterdir() if item.is_dir()]
             if len(nested_dirs) != 1:
-                raise ValidationError(f'Registry artifact for "{name}@{version}" did not unpack to a single skill directory.')
+                raise ValidationError(
+                    f'Registry artifact for "{name}@{version}" did not unpack to a single skill directory.'
+                )
             skill_dir = nested_dirs[0]
         definition = load_skill_package(skill_dir)
-        return _materialize_installed_skill(definition, checksum=checksum, source=f"{registry_url}#{name}@{version}", project_root=project_root)
+        if definition.name != name or str(definition.version) != version:
+            raise ValidationError(
+                f'Registry artifact identity mismatch: requested "{name}@{version}", '
+                f'got "{definition.name}@{definition.version}".'
+            )
+        return _materialize_installed_skill(
+            definition,
+            checksum=checksum,
+            source=f"{registry_url}#{name}@{version}",
+            project_root=project_root,
+        )
 
 
 def _parse_registry_ref(source: str) -> tuple[str, str]:
@@ -391,20 +452,35 @@ def _parse_registry_ref(source: str) -> tuple[str, str]:
     name, version = source.rsplit("@", 1)
     if not name or not version:
         raise ValidationError('Registry installs require "name@version".')
-    return name, version
+    return _validate_package_component(name, field="name"), _validate_package_component(version, field="version")
 
 
 def _safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
     destination = destination.resolve()
-    for member in archive.getmembers():
+    members: list[tarfile.TarInfo] = []
+    total_size = 0
+    for member_count, member in enumerate(archive, start=1):
+        if member_count > _MAX_SKILL_ARCHIVE_MEMBERS:
+            raise ValidationError(
+                f"Registry artifact contains more than {_MAX_SKILL_ARCHIVE_MEMBERS} filesystem entries."
+            )
         target = (destination / member.name).resolve()
         if not _is_relative_to(target, destination):
             raise ValidationError(f'Registry artifact contains unsafe path "{member.name}".')
         if member.islnk() or member.issym():
-            link_target = (target.parent / member.linkname).resolve()
-            if not _is_relative_to(link_target, destination):
-                raise ValidationError(f'Registry artifact contains unsafe link "{member.name}".')
-    archive.extractall(destination)
+            raise ValidationError(f'Registry artifact contains unsupported link "{member.name}".')
+        if member.isdev() or member.isfifo():
+            raise ValidationError(f'Registry artifact contains unsupported special file "{member.name}".')
+        if member.size > _MAX_SKILL_MEMBER_BYTES:
+            raise ValidationError(f'Registry artifact member "{member.name}" exceeds the per-file size limit.')
+        total_size += member.size
+        if total_size > _MAX_SKILL_EXTRACTED_BYTES:
+            raise ValidationError("Registry artifact exceeds the total extracted-size limit.")
+        members.append(member)
+    if "filter" in inspect.signature(archive.extractall).parameters:
+        archive.extractall(destination, members=members, filter="data")
+    else:
+        archive.extractall(destination, members=members)
 
 
 def _resolve_skill_for_run(name: str, root: Path) -> SkillDefinition:
@@ -413,7 +489,28 @@ def _resolve_skill_for_run(name: str, root: Path) -> SkillDefinition:
         return load_skill(candidate_path)
     for installed in _read_lockfile(_skills_lock_path(root)):
         if installed.name == name:
-            definition = load_skill(installed.install_path)
+            install_root = _installed_skills_cache_dir(root).resolve()
+            install_path = Path(installed.install_path).expanduser().resolve()
+            if not _is_relative_to(install_path, install_root):
+                raise ValidationError(
+                    f'Installed skill "{name}" path "{install_path}" is outside the project skill cache.'
+                )
+            _validate_skill_tree(install_path)
+            actual_checksum = _hash_skill_directory(install_path)
+            if installed.content_checksum:
+                expected_checksum = installed.content_checksum
+            elif _is_remote_skill_source(installed.source):
+                raise ValidationError(
+                    f'Installed registry skill "{name}" uses a legacy lock entry without a content checksum. '
+                    "Review and reinstall it with explicit remote-code trust before running."
+                )
+            else:
+                expected_checksum = installed.checksum
+            if not expected_checksum or actual_checksum != expected_checksum:
+                raise ValidationError(
+                    f'Installed skill "{name}" failed its lockfile checksum verification. Reinstall it before running.'
+                )
+            definition = load_skill(install_path)
             definition.source = installed.source
             definition.checksum = installed.checksum
             definition.install_path = installed.install_path
@@ -485,7 +582,7 @@ def _validate_skill_dependencies(definition: SkillDefinition) -> None:
             if importlib.util.find_spec(import_name) is None:
                 raise RuntimeError(
                     f'Skill "{definition.name}" requires Python package "{dependency.value}". '
-                    f'Install it first, for example with `pip install {dependency.value}`.'
+                    f"Install it first, for example with `pip install {dependency.value}`."
                 )
             continue
         if dependency.type == "binary":
@@ -494,14 +591,18 @@ def _validate_skill_dependencies(definition: SkillDefinition) -> None:
 
 
 def _validate_path_permissions(definition: SkillDefinition, payload: dict[str, Any], *, project_root: Path) -> None:
-    allowed_read_roots = {project_root}
-    if definition.source:
-        allowed_read_roots.add(Path(definition.source).expanduser().resolve())
+    skill_root = _definition_skill_root(definition)
+    allowed_read_roots = {skill_root}
+    for item in definition.permissions.read_paths:
+        allowed_read_roots.add(_resolve_permission_root(item, project_root=project_root, definition=definition))
     for item in definition.resources:
-        allowed_read_roots.add(Path(item).expanduser().resolve())
-    allowed_write_roots = {project_root}
+        resource = Path(item).expanduser().resolve()
+        if not _is_relative_to(resource, skill_root):
+            raise ValidationError(f'Skill "{definition.name}" resource "{resource}" is outside the skill root.')
+        allowed_read_roots.add(resource)
+    allowed_write_roots: set[Path] = set()
     for item in definition.permissions.write_paths:
-        allowed_write_roots.add((project_root / item).resolve())
+        allowed_write_roots.add(_resolve_permission_root(item, project_root=project_root, definition=definition))
     for key, value in payload.items():
         if not isinstance(value, str) or not key.endswith("_path"):
             continue
@@ -512,9 +613,13 @@ def _validate_path_permissions(definition: SkillDefinition, payload: dict[str, A
             resolved = resolved.resolve()
         if key.startswith("output") or key.endswith("output_path"):
             if not any(_is_relative_to(resolved, root) for root in allowed_write_roots):
-                raise ValidationError(f'Skill "{definition.name}" output path "{resolved}" is outside the allowed write roots.')
+                raise ValidationError(
+                    f'Skill "{definition.name}" output path "{resolved}" is outside the allowed write roots.'
+                )
         elif not any(_is_relative_to(resolved, root) for root in allowed_read_roots):
-            raise ValidationError(f'Skill "{definition.name}" input path "{resolved}" is outside the allowed read roots.')
+            raise ValidationError(
+                f'Skill "{definition.name}" input path "{resolved}" is outside the allowed read roots.'
+            )
 
 
 async def _execute_python_entrypoint(
@@ -524,18 +629,26 @@ async def _execute_python_entrypoint(
     *,
     project_root: Path,
 ) -> SkillRunResult:
-    script_path = Path(definition.source or Path(definition.path or "").parent).expanduser().resolve() / str(entrypoint.script)
-    if not script_path.exists():
-        raise ValidationError(f'Skill "{definition.name}" entrypoint "{entrypoint.name}" script "{script_path}" does not exist.')
-    runner = _load_python_entrypoint(script_path)
+    skill_root = _definition_skill_root(definition)
+    script_value = Path(str(entrypoint.script or ""))
+    if script_value.is_absolute():
+        raise ValidationError(f'Skill "{definition.name}" entrypoint script must be relative to the skill root.')
+    script_path = (skill_root / script_value).resolve()
+    if not _is_relative_to(script_path, skill_root):
+        raise ValidationError(f'Skill "{definition.name}" entrypoint script escapes the skill root.')
+    if not script_path.is_file():
+        raise ValidationError(
+            f'Skill "{definition.name}" entrypoint "{entrypoint.name}" script "{script_path}" does not exist.'
+        )
     context = {
         "skill_name": definition.name,
         "skill_version": definition.version,
         "entrypoint": entrypoint.name,
-        "skill_root": str(Path(definition.source or script_path.parent).resolve()),
+        "skill_root": str(skill_root),
         "project_root": str(project_root),
     }
     with _network_policy(definition.permissions.allow_network):
+        runner = _load_python_entrypoint(script_path)
         result = runner(payload, context)
         if inspect.isawaitable(result):
             result = await result
@@ -563,9 +676,16 @@ def _normalize_skill_run_result(
     project_root: Path,
 ) -> SkillRunResult:
     if isinstance(result, SkillRunResult):
+        artifacts = [
+            _artifact_from_payload(item, project_root=project_root, definition=definition) for item in result.artifacts
+        ]
+        result.artifacts = artifacts
         return result
     if isinstance(result, dict):
-        artifacts = [_artifact_from_payload(item, project_root=project_root) for item in list(result.get("artifacts") or [])]
+        artifacts = [
+            _artifact_from_payload(item, project_root=project_root, definition=definition)
+            for item in list(result.get("artifacts") or [])
+        ]
         return SkillRunResult(
             skill_name=definition.name,
             skill_version=definition.version,
@@ -621,9 +741,9 @@ def _artifact_to_payload(item: SkillArtifact) -> dict[str, Any]:
     }
 
 
-def _artifact_from_payload(payload: Any, *, project_root: Path) -> SkillArtifact:
+def _artifact_from_payload(payload: Any, *, project_root: Path, definition: SkillDefinition) -> SkillArtifact:
     if isinstance(payload, SkillArtifact):
-        return payload
+        payload = _artifact_to_payload(payload)
     if not isinstance(payload, dict):
         raise ValidationError("Skill artifacts must be mappings.")
     raw_path = str(payload.get("path") or "")
@@ -632,11 +752,22 @@ def _artifact_from_payload(payload: Any, *, project_root: Path) -> SkillArtifact
         resolved_path = (project_root / resolved_path).resolve()
     else:
         resolved_path = resolved_path.resolve()
+    allowed_write_roots = {
+        _resolve_permission_root(item, project_root=project_root, definition=definition)
+        for item in definition.permissions.write_paths
+    }
+    if not any(_is_relative_to(resolved_path, root) for root in allowed_write_roots):
+        raise ValidationError(
+            f'Skill "{definition.name}" artifact path "{resolved_path}" is outside the allowed write roots.'
+        )
+    role = str(payload.get("role") or "primary")
+    if role not in {"primary", "preview", "intermediate", "report"}:
+        raise ValidationError(f'Skill "{definition.name}" returned an artifact with invalid role "{role}".')
     return SkillArtifact(
         name=str(payload.get("name") or resolved_path.name),
         path=str(resolved_path),
         media_type=str(payload.get("media_type") or "") or None,
-        role=str(payload.get("role") or "primary"),  # type: ignore[arg-type]
+        role=role,  # type: ignore[arg-type]
         description=str(payload.get("description") or "") or None,
         metadata=dict(payload.get("metadata") or {}),
     )
@@ -652,8 +783,11 @@ def _skill_dir_from_input(path: Path) -> Path:
 
 
 def _hash_skill_directory(path: Path) -> str:
+    _validate_skill_tree(path)
     digest = hashlib.sha256()
-    for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
+    for file_path in sorted(
+        item for item in path.rglob("*") if item.is_file() and not _is_runtime_cache_path(item, root=path)
+    ):
         digest.update(str(file_path.relative_to(path)).encode("utf-8"))
         digest.update(file_path.read_bytes())
     return digest.hexdigest()
@@ -676,3 +810,165 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _validate_package_component(value: str, *, field: str) -> str:
+    pattern = _PACKAGE_NAME if field == "name" else _PACKAGE_VERSION
+    if not pattern.fullmatch(value):
+        raise ValidationError(f'Skill package {field} "{value}" contains unsafe characters.')
+    return value
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _definition_skill_root(definition: SkillDefinition) -> Path:
+    if definition.install_path:
+        return Path(definition.install_path).expanduser().resolve()
+    if definition.package_manifest_path:
+        return Path(definition.package_manifest_path).expanduser().resolve().parent
+    if definition.path:
+        return Path(definition.path).expanduser().resolve().parent
+    if definition.source:
+        return Path(definition.source).expanduser().resolve()
+    raise ValidationError(f'Skill "{definition.name}" does not have a resolvable package root.')
+
+
+def _validate_skill_definition(definition: SkillDefinition) -> None:
+    skill_root = _definition_skill_root(definition)
+    for entrypoint in definition.entrypoints:
+        script = Path(str(entrypoint.script or "")).expanduser()
+        if script.is_absolute() or ".." in script.parts:
+            raise ValidationError(
+                f'Skill "{definition.name}" entrypoint "{entrypoint.name}" script must remain inside the skill root.'
+            )
+        resolved_script = (skill_root / script).resolve()
+        if not _is_relative_to(resolved_script, skill_root) or not resolved_script.is_file():
+            raise ValidationError(
+                f'Skill "{definition.name}" entrypoint "{entrypoint.name}" script must be a file inside the skill root.'
+            )
+    for resource_value in definition.resources:
+        resource = Path(resource_value).expanduser().resolve()
+        if not _is_relative_to(resource, skill_root):
+            raise ValidationError(f'Skill "{definition.name}" resource "{resource}" is outside the skill root.')
+    for permission_path in [*definition.permissions.read_paths, *definition.permissions.write_paths]:
+        declared = Path(permission_path).expanduser()
+        if declared.is_absolute() or ".." in declared.parts:
+            raise ValidationError(
+                f'Skill "{definition.name}" permission path "{permission_path}" must remain inside the project root.'
+            )
+
+
+def _resolve_permission_root(value: str, *, project_root: Path, definition: SkillDefinition) -> Path:
+    declared = Path(value).expanduser()
+    if declared.is_absolute():
+        raise ValidationError(
+            f'Skill "{definition.name}" permission path "{value}" must be relative to the project root.'
+        )
+    resolved = (project_root / declared).resolve()
+    if not _is_relative_to(resolved, project_root):
+        raise ValidationError(f'Skill "{definition.name}" permission path "{value}" escapes the project root.')
+    return resolved
+
+
+def _validate_skill_tree(path: Path) -> None:
+    root = path.expanduser().resolve()
+    if not root.is_dir():
+        raise ValidationError(f'Skill package root "{root}" is not a directory.')
+    file_count = 0
+    total_size = 0
+    for item in root.rglob("*"):
+        if item.is_symlink():
+            raise ValidationError(f'Skill package contains unsupported symbolic link "{item}".')
+        resolved = item.resolve()
+        if not _is_relative_to(resolved, root):
+            raise ValidationError(f'Skill package path "{item}" escapes its package root.')
+        if not item.is_file():
+            continue
+        if _is_runtime_cache_path(item, root=root):
+            continue
+        file_count += 1
+        if file_count > _MAX_SKILL_ARCHIVE_MEMBERS:
+            raise ValidationError(f"Skill package contains more than {_MAX_SKILL_ARCHIVE_MEMBERS} files.")
+        size = item.stat().st_size
+        if size > _MAX_SKILL_MEMBER_BYTES:
+            raise ValidationError(f'Skill package file "{item}" exceeds the per-file size limit.')
+        total_size += size
+        if total_size > _MAX_SKILL_EXTRACTED_BYTES:
+            raise ValidationError("Skill package exceeds the total uncompressed-size limit.")
+
+
+def _validate_remote_url(value: str, *, purpose: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        parsed_port = parsed.port
+    except ValueError as error:
+        raise ValidationError(f"Skill {purpose} URL is malformed.") from error
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ValidationError(f"Skill {purpose} URL must not contain credentials or a fragment.")
+    host = (parsed.hostname or "").lower()
+    is_loopback = host in {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and is_loopback):
+        raise ValidationError(f"Skill {purpose} URL must use HTTPS (HTTP is only allowed for loopback development).")
+    if not host:
+        raise ValidationError(f"Skill {purpose} URL must include a hostname.")
+    if parsed_port is not None and not 1 <= parsed_port <= 65_535:
+        raise ValidationError(f"Skill {purpose} URL has an invalid port.")
+    return value
+
+
+def _resolve_registry_artifact_url(registry_url: str, artifact_url: str) -> str:
+    resolved = _validate_remote_url(urljoin(registry_url, artifact_url), purpose="artifact")
+    if _url_origin(resolved) != _url_origin(registry_url):
+        raise ValidationError("Skill artifact URL must use the same origin as its registry index.")
+    return resolved
+
+
+def _url_origin(value: str) -> tuple[str, str, int]:
+    parsed = urlsplit(value)
+    scheme = parsed.scheme.lower()
+    default_port = 443 if scheme == "https" else 80
+    return scheme, (parsed.hostname or "").lower(), parsed.port or default_port
+
+
+def _is_remote_skill_source(value: str) -> bool:
+    return urlsplit(value.split("#", 1)[0]).scheme.lower() in {"http", "https"}
+
+
+def _download_url(url: str, *, timeout: float, max_bytes: int) -> bytes:
+    body = bytearray()
+    try:
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=False) as response:
+            if 300 <= response.status_code < 400:
+                raise ValidationError(f'Skill download from "{url}" refused an HTTP redirect.')
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                except ValueError as error:
+                    raise ValidationError(f'Skill download from "{url}" returned an invalid Content-Length.') from error
+                if declared_size > max_bytes:
+                    raise ValidationError(f'Skill download from "{url}" exceeds the {max_bytes}-byte limit.')
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                if len(body) > max_bytes:
+                    raise ValidationError(f'Skill download from "{url}" exceeds the {max_bytes}-byte limit.')
+    except ValidationError:
+        raise
+    except httpx.HTTPError as error:
+        raise ValidationError(f'Skill download from "{url}" failed: {error.__class__.__name__}.') from error
+    return bytes(body)
+
+
+def _is_runtime_cache_path(path: Path, *, root: Path) -> bool:
+    relative = path.relative_to(root)
+    return "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}
+
+
+def _skill_tar_filter(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    parts = Path(member.name).parts
+    if "__pycache__" in parts or Path(member.name).suffix in {".pyc", ".pyo"}:
+        return None
+    return member

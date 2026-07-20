@@ -35,7 +35,7 @@ For multi-agent work, use `handoff_to(...)` from a tool result or `create_subage
 
 ## Human Approval
 
-Local tools can set `requires_approval=True` and optional `permissions=[...]`. Attach an `approval_policy` to the agent, such as `permission_allowlist_approval_policy(...)`, or provide an app-owned async policy. Return `ApprovalDecision.require_human(...)` to persist `AgentRunState(status="suspended")` with a `PendingApproval`; call `get_pending_agent_approvals(...)` and `resume_agent_run(...)` when the user responds.
+Local tools can set `requires_approval=True` and optional `permissions=[...]`. Attach an `approval_policy` to the agent, such as `permission_allowlist_approval_policy(...)`, or provide an app-owned async policy. Required approvals fail closed when no policy is configured. Return `ApprovalDecision.require_human(...)` to persist `AgentRunState(status="suspended")` with a `PendingApproval`; call `get_pending_agent_approvals(...)` and `resume_agent_run(...)` when the user responds. Built-in run stores atomically claim a pending approval before resume, so concurrent workers cannot execute the same approved tool twice.
 
 Provider-managed approvals are beta and currently integrated for OpenAI and Azure OpenAI remote MCP approval flows. The runtime emits `AgentToolApprovalEvent`, appends the provider-specific approval response, and continues the loop.
 

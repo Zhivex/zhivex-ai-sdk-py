@@ -450,7 +450,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                     "output": {
                         "finish_reason": "stop",
                         "audio": {
-                            "url": "https://files.example.com/audio.wav",
+                            "url": "https://dashscope-result.oss-cn-beijing.aliyuncs.com/audio.wav",
                         },
                     }
                 },
@@ -470,7 +470,10 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["json"]["input"]["language_type"], "English")
         self.assertEqual(requests[0]["json"]["input"]["instructions"], "Speak clearly.")
         self.assertEqual(requests[1]["method"], "GET")
-        self.assertEqual(requests[1]["url"], "https://files.example.com/audio.wav")
+        self.assertEqual(
+            requests[1]["url"],
+            "https://dashscope-result.oss-cn-beijing.aliyuncs.com/audio.wav",
+        )
 
     async def test_qwen_speech_rejects_untrusted_audio_url(self) -> None:
         async def fetch(
@@ -491,6 +494,33 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                     "output": {
                         "finish_reason": "stop",
                         "audio": {"url": "http://127.0.0.1:8000/admin"},
+                    }
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        with self.assertRaises(ValidationError):
+            await generate_speech(model=provider.native.speech_model("qwen-tts"), input="hello")
+
+    async def test_qwen_speech_rejects_noncanonical_loopback_audio_url(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            if method == "GET":
+                raise AssertionError("Unsafe audio URL should not be fetched.")
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "output": {
+                        "finish_reason": "stop",
+                        "audio": {"url": "https://2130706433/admin"},
                     }
                 },
             )

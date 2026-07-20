@@ -43,6 +43,12 @@ class FakeStreamingHTTPResponse:
     async def aread(self) -> bytes:
         return self.text.encode("utf-8")
 
+    async def aiter_bytes(self):
+        raw = self.text.encode("utf-8")
+        midpoint = len(raw) // 2
+        yield raw[:midpoint]
+        yield raw[midpoint:]
+
     async def aclose(self) -> None:
         self.closed = True
 
@@ -58,7 +64,12 @@ class FakeBufferedHTTPResponse(FakeStreamingHTTPResponse):
 
 class FakeLargeBufferedHTTPResponse(FakeBufferedHTTPResponse):
     async def aread(self) -> bytes:
-        return b"x" * 20
+        raise AssertionError("The bounded path must not call aread().")
+
+    async def aiter_bytes(self):
+        yield b"x" * 6
+        yield b"x" * 6
+        raise AssertionError("Reading must stop as soon as the limit is crossed.")
 
 
 class FakeAsyncClient:
@@ -136,7 +147,7 @@ class HttpTests(IsolatedAsyncioTestCase):
             body_text = await response.text()
             client = FakeBufferedAsyncClient.last_instance
             assert client is not None
-            self.assertFalse(client.sent_stream)
+            self.assertTrue(client.sent_stream)
             self.assertEqual(body_text, 'data: {"chunk":1}\n\ndata: {"chunk":2}\n')
             self.assertTrue(client.response.closed)
             self.assertFalse(client.closed)
@@ -175,6 +186,22 @@ class HttpTests(IsolatedAsyncioTestCase):
         self.assertEqual(lines, ['data: {"chunk":1}', "", 'data: {"chunk":2}', ""])
         self.assertTrue(raw.closed)
         self.assertEqual(await response.read(), b"")
+
+    async def test_streaming_response_read_enforces_limit_incrementally(self) -> None:
+        raw = FakeLargeBufferedHTTPResponse()
+        response = http_module.StreamingResponse(response=raw, max_body_bytes=10)
+
+        with self.assertRaises(http_module.ResponseTooLargeError):
+            await response.read()
+
+        self.assertTrue(raw.closed)
+
+    async def test_limited_reader_rejects_oversized_content_length_before_reading(self) -> None:
+        raw = FakeLargeBufferedHTTPResponse()
+        raw.headers = {"content-length": "20"}
+
+        with self.assertRaises(http_module.ResponseTooLargeError):
+            await http_module._read_limited_body(raw, max_bytes=10, label="response body")
 
     async def test_default_fetch_reuses_clients_for_matching_timeouts(self) -> None:
         original_client = http_module.httpx.AsyncClient

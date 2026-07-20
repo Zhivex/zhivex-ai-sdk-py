@@ -192,6 +192,10 @@ FastAPI production boundary:
 
 ```bash
 DATABASE_URL=postgres://user:pass@localhost:5432/app \
+ZHIVEX_AGENT_API_TOKEN='replace-with-a-secret' \
+ZHIVEX_TENANT_ID='tenant-a' \
+ZHIVEX_AGENT_TABLE_PREFIX='tenant_a_zhivex_agent' \
+ZHIVEX_AGENT_MODEL='gpt-5.4-mini' \
 uvicorn examples.production.fastapi_agent_api:app --reload
 ```
 
@@ -217,7 +221,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 | `integrations/fastapi_streaming_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_streaming_api:app --reload` | manual streaming smoke |
 | `integrations/fastapi_gateway_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_gateway_api:app --reload` | manual HTTP smoke |
 | `production/worker_resume.py` | offline | dev env | `.venv/bin/python examples/production/worker_resume.py` | `make test-examples` |
-| `production/fastapi_agent_api.py` | live optional | `zhivex-ai-sdk[api,otel,postgres]`, `DATABASE_URL`, and provider env | `uvicorn examples.production.fastapi_agent_api:app --reload` | parse check plus manual HTTP smoke |
+| `production/fastapi_agent_api.py` | live optional | `zhivex-ai-sdk[api,otel,postgres]`, `DATABASE_URL`, auth/tenant env, and provider env | `uvicorn examples.production.fastapi_agent_api:app --reload` | auth/body-limit tests plus manual HTTP smoke |
 | `agents/mcp_tools.py` | optional extra | `zhivex-ai-sdk[mcp]` and MCP server | `.venv/bin/python examples/agents/mcp_tools.py` | manual MCP smoke |
 | `integrations/observability.py` | live optional | provider env, optional `zhivex-ai-sdk[otel]` | `.venv/bin/python examples/integrations/observability.py` | manual log review |
 | `integrations/operations_hardening.py` | offline | dev env | `.venv/bin/python examples/integrations/operations_hardening.py` | `make test-examples` |
@@ -240,7 +244,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - `kimi_official_tools.py` loads Moonshot official Formulas tools through `provider.formulas().toolset(...)` and runs them inside the normal local tool loop.
 - The realtime API is experimental. OpenAI, Azure OpenAI, Gemini, Vertex, Bedrock, and vLLM now expose `provider.realtime_model(...)`.
 - The FastAPI examples are the recommended reference starting point for production-style API wiring in this repository.
-- `production/fastapi_agent_api.py` is the recommended starting point for backend agent APIs that need request IDs, idempotency keys, durable run storage, pending approval endpoints, sanitized errors, and fail-fast gateway adapter configuration.
+- `production/fastapi_agent_api.py` is the recommended starting point for backend agent APIs that need fail-closed bearer authentication, fixed tenant storage, bounded bodies and fields, rate limiting, request IDs, idempotency keys, durable run storage, pending approval endpoints, sanitized errors, and fail-fast gateway adapter configuration. Its limiter is process-local; use a shared gateway/Redis limiter across replicas.
 - `production/worker_resume.py` is the recommended offline worker pattern for queue idempotency, checkpoint resume, and replay evidence.
 - `observability.py` is the recommended starting point for request IDs, telemetry middleware, and gateway attempt logging.
 - Realtime examples need the runtime dependencies installed in the environment you use to run them. If you see a missing `websockets` error, run `make dev` or `pip install -e .` first.

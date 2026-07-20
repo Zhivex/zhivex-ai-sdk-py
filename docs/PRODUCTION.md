@@ -14,6 +14,8 @@ Create one application request id per inbound request and carry it through:
 
 Use `idempotency_key` with `run_agent(...)` or `stream_agent(...)` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
 
+Authenticate and authorize before constructing an agent or gateway request. Bind each credential to a server-owned tenant partition and provider/model policy; do not treat `X-Tenant-ID`, model IDs, tool names, or run IDs supplied by a client as authorization. Enforce request-body and field-size limits while the body is read, plus distributed rate/concurrency limits before provider work begins. The production FastAPI example demonstrates a fail-closed single-tenant bearer boundary and an in-process limiter; replace the limiter with a shared gateway or datastore implementation across replicas.
+
 ## Storage Defaults
 
 Use Postgres for production memory and checkpoint persistence:
@@ -36,7 +38,7 @@ The SDK emits approval requests, applies `approval_policy`, and can persist susp
 - audit records
 - escalation and timeout policy
 
-For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. For asynchronous HITL systems, return `ApprovalDecision.require_human(...)`, load the pending approval with `get_pending_agent_approvals(...)`, and call `resume_agent_run(...)` when the user responds.
+For synchronous policies, return an `ApprovalDecision` or bool from `approval_policy`. A tool marked `requires_approval=True` is denied when no policy is configured. For asynchronous HITL systems, return `ApprovalDecision.require_human(...)`, load the pending approval with `get_pending_agent_approvals(...)`, and call `resume_agent_run(...)` when the user responds. Built-in run stores claim that pending approval atomically before any tool execution; duplicate workers are rejected instead of repeating a side effect. Custom stores used for approval resume must implement the same atomic claim contract.
 
 ## Timeouts And Retries
 

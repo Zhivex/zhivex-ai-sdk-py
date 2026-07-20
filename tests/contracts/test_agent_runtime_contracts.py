@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 from collections.abc import AsyncIterable, Callable
@@ -53,6 +54,7 @@ from zhivex_ai.types import (  # noqa: E402
     ToolCallPart,
     TokenUsage,
 )
+from zhivex_ai.errors import ValidationError  # noqa: E402
 
 
 BASE_CAPABILITIES = ModelCapabilities(
@@ -231,6 +233,35 @@ async def test_tool_approval_allow_and_deny_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_required_local_tool_approval_fails_closed_without_policy() -> None:
+    executions = 0
+
+    async def execute(input: dict[str, str]) -> dict[str, str]:
+        nonlocal executions
+        executions += 1
+        return input
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=execute,
+                requires_approval=True,
+            )
+        },
+    )
+
+    result = await run_agent(agent=agent, prompt="lookup")
+
+    assert executions == 0
+    assert result.tool_results[0].is_error
+    assert "approval_policy" in (result.tool_results[0].error.message if result.tool_results[0].error else "")
+
+
+@pytest.mark.asyncio
 async def test_tool_approval_can_suspend_and_resume_from_run_store() -> None:
     store = create_in_memory_agent_run_store()
 
@@ -276,6 +307,67 @@ async def test_tool_approval_can_suspend_and_resume_from_run_store() -> None:
     assert final_state.pending_approvals == []
     assert final_state.child_runs[0].run_id == resumed.run_id
     assert final_state.metadata["resolved_approval"]["approved"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "factory"), _run_store_factories(), ids=[name for name, _factory in _run_store_factories()])
+async def test_concurrent_approval_resume_executes_tool_once(
+    name: str,
+    factory: Callable[[], tuple[AgentRunStore, Any]],
+) -> None:
+    del name
+    store, cleanup = factory()
+    execution_started = asyncio.Event()
+    release_execution = asyncio.Event()
+    executions = 0
+
+    async def suspend_policy(request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("manager approval required", approval_id="approval_lookup")
+
+    async def execute(input: dict[str, str]) -> dict[str, str]:
+        nonlocal executions
+        executions += 1
+        execution_started.set()
+        await release_execution.wait()
+        return {"item": input["item"], "status": "approved"}
+
+    try:
+        agent = Agent(
+            name="assistant",
+            model=ToolModel(),
+            run_store=store,
+            approval_policy=suspend_policy,
+            tools={
+                "lookup": tool(
+                    name="lookup",
+                    schema=dict[str, str],
+                    execute=execute,
+                    requires_approval=True,
+                )
+            },
+        )
+        suspended = await run_agent(agent=agent, prompt="lookup")
+        first = asyncio.create_task(
+            resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+        )
+        await asyncio.wait_for(execution_started.wait(), timeout=1)
+        second = asyncio.create_task(
+            resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+        )
+        await asyncio.sleep(0)
+        release_execution.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+
+        assert executions == 1
+        assert sum(not isinstance(item, BaseException) for item in results) == 1
+        errors = [item for item in results if isinstance(item, BaseException)]
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValidationError)
+        assert "not suspended" in str(errors[0]) or "already being resumed" in str(errors[0])
+    finally:
+        release_execution.set()
+        if cleanup is not None:
+            cleanup.cleanup()
 
 
 @pytest.mark.asyncio

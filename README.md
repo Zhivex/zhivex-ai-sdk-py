@@ -201,6 +201,8 @@ The beta skill-package layer also exposes a CLI:
 ```bash
 zhivex-skills validate path/to/skill
 zhivex-skills install path/to/skill
+# Remote packages contain executable Python and require explicit trust:
+zhivex-skills install writer@1.0.0 --registry-url https://skills.example.com/index.json --trust-remote-code
 ```
 
 ## Quick Start
@@ -1412,7 +1414,7 @@ result = await run_agent(agent=agent, prompt="Draft a reply", idempotency_key="r
 state = await store.load(result.run_id)
 ```
 
-Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call.
+Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. A tool with `requires_approval=True` fails closed if the agent has no approval policy. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call. Built-in run stores atomically claim the approval before executing it, so concurrent resume attempts cannot invoke the same tool twice.
 
 Safety policies compose approval, redaction, and budget defaults without mutating the original agent:
 
@@ -1443,7 +1445,7 @@ Agent skills are also available across the agent runtime. These are provider-agn
 
 Runtime skills follow the Codex-style `SKILL.md` layout: frontmatter with `name` and `description`, instruction body, and optional `agents/openai.yaml` metadata for display text, implicit-invocation policy, and MCP tool dependencies.
 
-The SDK now also includes a beta skill-package layer for Anthropic-style packaged skills. This adds `skill.yaml`, installable skill packages, a static HTTP registry flow, direct `run_skill(...)`, artifacts, and the `zhivex-skills` CLI. The packaged-skill APIs are:
+The SDK now also includes a beta skill-package layer for Anthropic-style packaged skills. This adds `skill.yaml`, installable skill packages, a static HTTPS registry flow, direct `run_skill(...)`, artifacts, and the `zhivex-skills` CLI. The packaged-skill APIs are:
 
 - `load_skill_package(...)`
 - `validate_skill(...)`
@@ -1458,6 +1460,8 @@ Packaged skills can declare:
 - local Python or binary dependencies
 - produced artifacts
 - explicit read/write/network permissions
+
+Skill entrypoints are executable Python loaded into your application process. Agent tools generated from package entrypoints carry `code-execution` permission and require an approval policy; direct `run_skill(...)` is an explicit trusted-code call. Permission declarations validate declared path inputs and the network policy provides a runtime guard, but neither is an OS sandbox. Registry installs therefore fail closed until `trust_remote_code=True` (or CLI `--trust-remote-code`) is supplied. Use that opt-in only after reviewing and trusting the registry/package, and isolate untrusted code in an app-owned container or VM. Registry transport, same-origin artifact URLs, checksums, archive paths/links, download and extraction sizes, and installed content hashes are validated before execution. Legacy remote-package locks without `content_checksum` must be reviewed and reinstalled; legacy local-package locks remain compatible.
 
 The first official packaged skill is the beta `docx` skill under `zhivex_ai/official_skills/docx`, designed around `python-docx`.
 

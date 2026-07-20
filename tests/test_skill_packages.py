@@ -4,6 +4,7 @@ from collections.abc import AsyncIterable
 from contextlib import redirect_stdout
 import importlib.util
 import io
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -32,9 +33,16 @@ from zhivex_ai import (  # noqa: E402
     publish_skill,
     run_skill,
 )
-from zhivex_ai.skillpacks import build_skill_entrypoint_tools
+from zhivex_ai.skillpacks import _download_url, build_skill_entrypoint_tools
 from zhivex_ai.skill_cli import main as skill_cli_main  # noqa: E402
-from zhivex_ai.types import GenerateResult, ModelCapabilities, ModelGenerateInput, ModelMessage, ToolCall, ToolCallPart  # noqa: E402
+from zhivex_ai.types import (
+    GenerateResult,
+    ModelCapabilities,
+    ModelGenerateInput,
+    ModelMessage,
+    ToolCall,
+    ToolCallPart,
+)  # noqa: E402
 
 
 BASE_CAPABILITIES = ModelCapabilities(
@@ -147,7 +155,10 @@ class PackageToolModel:
                                 tool_call=ToolCall(
                                     id="call_1",
                                     name="writer_create",
-                                    input={"output_path": self.output_path, "content": "hello"},
+                                    input={
+                                        "output_path": self.output_path,
+                                        "content": "hello",
+                                    },
                                 )
                             )
                         ],
@@ -177,7 +188,11 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             project_root.mkdir()
             skill_dir = _write_skill_package(Path(tmp))
 
-            result = await run_skill(str(skill_dir), input={"output_path": "out/note.txt", "content": "hello"}, project_root=project_root)
+            result = await run_skill(
+                str(skill_dir),
+                input={"output_path": "out/note.txt", "content": "hello"},
+                project_root=project_root,
+            )
 
             self.assertEqual(result.skill_name, "writer")
             self.assertEqual(result.entrypoint, "create")
@@ -191,9 +206,15 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             project_root.mkdir()
             skill_dir = _write_skill_package(Path(tmp))
             with self.assertRaisesRegex(ValidationError, "outside the allowed write roots"):
-                await run_skill(str(skill_dir), input={"output_path": "../escape.txt", "content": "hello"}, project_root=project_root)
+                await run_skill(
+                    str(skill_dir),
+                    input={"output_path": "../escape.txt", "content": "hello"},
+                    project_root=project_root,
+                )
 
-    async def test_package_entrypoint_tool_rejects_absolute_output_outside_project_root(self) -> None:
+    async def test_package_entrypoint_tool_rejects_absolute_output_outside_project_root(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             project_root = root / "project"
@@ -237,20 +258,220 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
 
             registry_url = "https://skills.example.test/index.json"
 
-            def fake_get(url: str, timeout: float):
+            def fake_download(url: str, *, timeout: float, max_bytes: int) -> bytes:
                 if url == registry_url:
-                    return httpx.Response(200, json={"skills": index.skills}, request=httpx.Request("GET", url))
+                    return json.dumps({"skills": index.skills}).encode("utf-8")
                 if url == "https://skills.example.test/artifacts/writer-1.0.0.tar.gz":
-                    return httpx.Response(200, content=artifact_path.read_bytes(), request=httpx.Request("GET", url))
+                    return artifact_path.read_bytes()
                 raise AssertionError(f"Unexpected URL {url}")
 
-            with patch("zhivex_ai.skillpacks.httpx.get", side_effect=fake_get):
-                installed = install_skill("writer@1.0.0", project_root=project_root, registry_url=registry_url)
+            with patch("zhivex_ai.skillpacks._download_url", side_effect=fake_download):
+                installed = install_skill(
+                    "writer@1.0.0",
+                    project_root=project_root,
+                    registry_url=registry_url,
+                    trust_remote_code=True,
+                )
 
             self.assertEqual(installed.name, "writer")
             self.assertTrue(Path(installed.install_path).exists())
+            result = await run_skill(
+                "writer",
+                input={"output_path": "registry-note.txt", "content": "trusted"},
+                project_root=project_root,
+            )
+            self.assertEqual(result.output["content"], "trusted")
+            repeated = await run_skill(
+                "writer",
+                input={
+                    "output_path": "registry-note-2.txt",
+                    "content": "still-trusted",
+                },
+                project_root=project_root,
+            )
+            self.assertEqual(repeated.output["content"], "still-trusted")
 
-    async def test_agent_runtime_exposes_package_skill_tools_and_artifacts(self) -> None:
+            lock_path = project_root / ".agents" / "skills.lock.toml"
+            legacy_lock = "\n".join(
+                line for line in lock_path.read_text("utf-8").splitlines() if not line.startswith("content_checksum =")
+            )
+            lock_path.write_text(legacy_lock + "\n", "utf-8")
+            with self.assertRaisesRegex(ValidationError, "legacy lock entry"):
+                await run_skill(
+                    "writer",
+                    input={"output_path": "legacy.txt", "content": "blocked"},
+                    project_root=project_root,
+                )
+
+    async def test_registry_install_requires_explicit_remote_code_trust(self) -> None:
+        with TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            with self.assertRaisesRegex(ValidationError, "trust_remote_code=True"):
+                install_skill(
+                    "writer@1.0.0",
+                    project_root=project_root,
+                    registry_url="https://skills.example.test/index.json",
+                )
+
+    async def test_registry_install_rejects_insecure_remote_transport(self) -> None:
+        with TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValidationError, "must use HTTPS"):
+                install_skill(
+                    "writer@1.0.0",
+                    project_root=Path(tmp),
+                    registry_url="http://skills.example.test/index.json",
+                    trust_remote_code=True,
+                )
+
+    async def test_registry_artifact_must_keep_registry_origin(self) -> None:
+        registry_url = "https://skills.example.test/index.json"
+        index = {
+            "skills": {
+                "writer": {
+                    "1.0.0": {
+                        "artifact_url": "https://internal.example.test/writer.tar.gz",
+                        "checksum": "0" * 64,
+                    }
+                }
+            }
+        }
+
+        with TemporaryDirectory() as tmp:
+            with patch("zhivex_ai.skillpacks._download_url", return_value=json.dumps(index).encode("utf-8")):
+                with self.assertRaisesRegex(ValidationError, "same origin"):
+                    install_skill(
+                        "writer@1.0.0",
+                        project_root=Path(tmp),
+                        registry_url=registry_url,
+                        trust_remote_code=True,
+                    )
+
+    async def test_download_url_enforces_incremental_limit(self) -> None:
+        url = "https://skills.example.test/artifact.tar.gz"
+        response = httpx.Response(
+            200,
+            content=b"x" * 17,
+            headers={"content-length": "17"},
+            request=httpx.Request("GET", url),
+        )
+
+        class StreamContext:
+            def __enter__(self):
+                return response
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+        with patch("zhivex_ai.skillpacks.httpx.stream", return_value=StreamContext()):
+            with self.assertRaisesRegex(ValidationError, "16-byte limit"):
+                _download_url(url, timeout=1.0, max_bytes=16)
+
+    async def test_entrypoint_import_runs_under_network_policy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            (skill_dir / "scripts" / "create.py").write_text(
+                "import socket\nsocket.socket()\n\ndef run(payload, context):\n    return {}\n",
+                "utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Network access is disabled"):
+                await run_skill(
+                    str(skill_dir),
+                    input={"output_path": "note.txt", "content": "hello"},
+                    project_root=project_root,
+                )
+
+    async def test_entrypoint_script_cannot_escape_skill_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            manifest = (skill_dir / "skill.yaml").read_text("utf-8")
+            (skill_dir / "skill.yaml").write_text(
+                manifest.replace("script: scripts/create.py", "script: ../outside.py"),
+                "utf-8",
+            )
+            (root / "outside.py").write_text("def run(payload, context): return {}\n", "utf-8")
+
+            with self.assertRaisesRegex(ValidationError, "escapes the skill root"):
+                await run_skill(
+                    str(skill_dir),
+                    input={"output_path": "note.txt", "content": "hello"},
+                    project_root=project_root,
+                )
+
+    async def test_local_install_rejects_symlinks_in_package_tree(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            (root / "outside.txt").write_text("secret", "utf-8")
+            (skill_dir / "resources" / "link.txt").symlink_to(root / "outside.txt")
+
+            with self.assertRaisesRegex(ValidationError, "symbolic link"):
+                install_skill(skill_dir, project_root=project_root)
+
+    async def test_local_install_rejects_permission_path_escape(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            manifest_path = skill_dir / "skill.yaml"
+            manifest_path.write_text(
+                manifest_path.read_text("utf-8").replace("  write_paths:\n    - .", "  write_paths:\n    - ../outside"),
+                "utf-8",
+            )
+
+            with self.assertRaisesRegex(ValidationError, "inside the project root"):
+                install_skill(skill_dir, project_root=project_root)
+
+    async def test_installed_skill_checksum_is_verified_before_run(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            installed = install_skill(skill_dir, project_root=project_root)
+            Path(installed.install_path, "scripts", "create.py").write_text(
+                "def run(payload, context): return {}\n", "utf-8"
+            )
+
+            with self.assertRaisesRegex(ValidationError, "checksum verification"):
+                await run_skill(
+                    "writer",
+                    input={"output_path": "note.txt", "content": "hello"},
+                    project_root=project_root,
+                )
+
+    async def test_legacy_local_lock_checksum_remains_compatible(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(root)
+            install_skill(skill_dir, project_root=project_root)
+            lock_path = project_root / ".agents" / "skills.lock.toml"
+            legacy_lock = "\n".join(
+                line for line in lock_path.read_text("utf-8").splitlines() if not line.startswith("content_checksum =")
+            )
+            lock_path.write_text(legacy_lock + "\n", "utf-8")
+
+            result = await run_skill(
+                "writer",
+                input={"output_path": "legacy-local.txt", "content": "compatible"},
+                project_root=project_root,
+            )
+            self.assertEqual(result.output["content"], "compatible")
+
+    async def test_agent_runtime_exposes_package_skill_tools_and_artifacts(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             project_root = Path(tmp) / "project"
             project_root.mkdir()
@@ -262,7 +483,12 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             async def collect(event: object) -> None:
                 events.append(event)
 
-            agent = Agent(name="assistant", model=PackageToolModel("note.txt"), skills={"writer": definition})
+            agent = Agent(
+                name="assistant",
+                model=PackageToolModel("note.txt"),
+                skills={"writer": definition},
+                approval_policy=lambda request: True,
+            )
             with patch("zhivex_ai.skillpacks.Path.cwd", return_value=project_root):
                 result = await runtime.run(agent=agent, prompt="$writer create a file", emit=collect)
 
@@ -274,7 +500,29 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             self.assertTrue(any(isinstance(event, AgentSkillExecutionFinishEvent) for event in events))
             self.assertTrue(any(isinstance(event, AgentSkillArtifactCreatedEvent) for event in events))
 
-    async def test_package_skill_permissions_are_passed_to_approval_policy(self) -> None:
+    async def test_agent_package_skill_fails_closed_without_approval_policy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            project_root = Path(tmp) / "project"
+            project_root.mkdir()
+            skill_dir = _write_skill_package(Path(tmp))
+            definition = load_skill(skill_dir)
+            agent = Agent(
+                name="assistant",
+                model=PackageToolModel("blocked.txt"),
+                skills={"writer": definition},
+            )
+
+            with patch("zhivex_ai.skillpacks.Path.cwd", return_value=project_root):
+                result = await AgentRuntime().run(agent=agent, prompt="$writer create a file")
+
+            self.assertFalse((project_root / "blocked.txt").exists())
+            self.assertEqual(len(result.artifacts), 0)
+            self.assertTrue(result.tool_results[0].is_error)
+            self.assertIn("approval_policy", result.tool_results[0].error.message)
+
+    async def test_package_skill_permissions_are_passed_to_approval_policy(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             project_root = Path(tmp) / "project"
             project_root.mkdir()
@@ -301,6 +549,7 @@ class SkillPackageTests(IsolatedAsyncioTestCase):
             self.assertEqual(getattr(request, "tool_name"), "writer_create")
             self.assertIn("filesystem", getattr(request, "tool_permissions"))
             self.assertIn("write", getattr(request, "tool_permissions"))
+            self.assertIn("code-execution", getattr(request, "tool_permissions"))
             self.assertTrue(getattr(request, "tool_metadata")["skill_package"])
 
 
@@ -343,7 +592,12 @@ class DocxSkillTests(IsolatedAsyncioTestCase):
 
         with patch("zhivex_ai.skillpacks.importlib.util.find_spec", side_effect=fake_find_spec):
             with self.assertRaisesRegex(RuntimeError, "python-docx"):
-                await run_skill("docx", entrypoint="create", input={"output_path": "demo.docx"}, project_root=ROOT)
+                await run_skill(
+                    "docx",
+                    entrypoint="create",
+                    input={"output_path": "demo.docx"},
+                    project_root=ROOT,
+                )
 
     @skipUnless(importlib.util.find_spec("docx") is not None, "python-docx is not installed")
     async def test_docx_skill_create_edit_and_analyze(self) -> None:
@@ -357,8 +611,19 @@ class DocxSkillTests(IsolatedAsyncioTestCase):
                     "title": "Quarterly Review",
                     "subtitle": "Q1 FY26",
                     "paragraphs": ["Opening paragraph."],
-                    "sections": [{"heading": "Summary", "body": "All systems nominal.", "bullet_list": ["Alpha", "Beta"]}],
-                    "tables": [{"title": "Status Table", "rows": [["Name", "Value"], ["Status", "OK"]]}],
+                    "sections": [
+                        {
+                            "heading": "Summary",
+                            "body": "All systems nominal.",
+                            "bullet_list": ["Alpha", "Beta"],
+                        }
+                    ],
+                    "tables": [
+                        {
+                            "title": "Status Table",
+                            "rows": [["Name", "Value"], ["Status", "OK"]],
+                        }
+                    ],
                     "properties": {"author": "Zhivex", "subject": "Review"},
                 },
                 project_root=project_root,

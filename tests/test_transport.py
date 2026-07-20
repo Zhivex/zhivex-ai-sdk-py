@@ -105,6 +105,20 @@ class _FakeReadRequest:
         return self._body
 
 
+class _FakeStreamingRequest:
+    def __init__(self, chunks: list[bytes], content_type: str, *, content_length: str | None = None) -> None:
+        self._chunks = chunks
+        self.chunks_read = 0
+        self.headers = {"content-type": content_type}
+        if content_length is not None:
+            self.headers["Content-Length"] = content_length
+
+    async def stream(self):
+        for chunk in self._chunks:
+            self.chunks_read += 1
+            yield chunk
+
+
 class _FakeResponse:
     def __init__(self, *, status_code: int, lines: list[str], text: str = "") -> None:
         self.status_code = status_code
@@ -164,6 +178,29 @@ class TransportTests(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(Exception, "maximum size"):
             await parse_ui_message_request(request, max_body_bytes=10)
+
+    async def test_parse_ui_message_request_stops_streaming_at_body_limit(self) -> None:
+        request = _FakeStreamingRequest(
+            [b"x" * 6, b"x" * 6, b"must-not-be-read"],
+            "application/x-ndjson",
+        )
+
+        with self.assertRaisesRegex(Exception, "maximum size"):
+            await parse_ui_message_request(request, max_body_bytes=10)
+
+        self.assertEqual(request.chunks_read, 2)
+
+    async def test_parse_ui_message_request_rejects_declared_oversized_body_before_streaming(self) -> None:
+        request = _FakeStreamingRequest(
+            [b"must-not-be-read"],
+            "application/json",
+            content_length="20",
+        )
+
+        with self.assertRaisesRegex(Exception, "maximum size"):
+            await parse_ui_message_request(request, max_body_bytes=10)
+
+        self.assertEqual(request.chunks_read, 0)
 
     async def test_create_ui_responses_set_content_types(self) -> None:
         messages = to_ui_messages([create_text_message("user", "hello")])

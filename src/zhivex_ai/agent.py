@@ -3426,6 +3426,10 @@ class AgentRuntime:
                 if _definition.requires_approval or (
                     _definition.requires_approval is None and agent.approval_policy is not None
                 ):
+                    if _definition.requires_approval and agent.approval_policy is None:
+                        raise RuntimeError(
+                            f'Local tool "{_tool_name}" requires an approval_policy on the agent.'
+                        )
                     trace.approval_count += 1
                     if agent.approval_policy is not None:
                         decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
@@ -3949,85 +3953,128 @@ def resume_agent_run(
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
 
     async def runner() -> AgentRunResult:
-        if agent.run_store is None:
+        run_store = agent.run_store
+        if run_store is None:
             raise ValidationError("resume_agent_run(...) requires agent.run_store.")
-        suspended_state = await agent.run_store.load(run_id)
-        if suspended_state is None:
+        loaded_state = await run_store.load(run_id)
+        if loaded_state is None:
             raise ValidationError(f'Agent run "{run_id}" was not found.')
-        if suspended_state.status != "suspended":
+        if loaded_state.status != "suspended":
             raise ValidationError(f'Agent run "{run_id}" is not suspended.')
-        if not suspended_state.pending_approvals:
+        if not loaded_state.pending_approvals:
             raise ValidationError(f'Agent run "{run_id}" has no pending approvals.')
-        pending = (
-            next((item for item in suspended_state.pending_approvals if item.id == approval_id), None)
+        selected_pending = (
+            next((item for item in loaded_state.pending_approvals if item.id == approval_id), None)
             if approval_id is not None
-            else suspended_state.pending_approvals[0]
+            else loaded_state.pending_approvals[0]
+        )
+        if selected_pending is None:
+            raise ValidationError(f'Pending approval "{approval_id}" was not found on run "{run_id}".')
+        claim_pending_approval = getattr(run_store, "claim_pending_approval", None)
+        if not callable(claim_pending_approval):
+            raise ValidationError(
+                "resume_agent_run(...) requires a run store with atomic pending-approval claims. "
+                "Use a built-in run store or implement claim_pending_approval(...)."
+            )
+        claim_token = str(uuid4())
+        suspended_state = await claim_pending_approval(
+            run_id,
+            selected_pending.id,
+            claim_token=claim_token,
+            claimed_at_ms=_now_ms(),
+        )
+        if suspended_state is None:
+            raise ValidationError(
+                f'Pending approval "{selected_pending.id}" on run "{run_id}" is already being resumed or is no longer pending.'
+            )
+        pending = next(
+            (item for item in suspended_state.pending_approvals if item.id == selected_pending.id),
+            None,
         )
         if pending is None:
-            raise ValidationError(f'Pending approval "{approval_id}" was not found on run "{run_id}".')
-        approval_result = await _execute_resolved_approval_tool(
-            agent=agent,
-            state=suspended_state,
-            pending=pending,
-            approved=approved,
-            reason=reason,
-            tools=tools,
-        )
-        resume_messages = _resume_messages_from_state(suspended_state)
-        resume_messages.append(ModelMessage(role="tool", parts=[tool_result_part(approval_result)]))
-        session = create_agent_session(
-            id=suspended_state.session_id,
-            messages=[],
-            summary="",
-            metadata={
-                "resumed_from_run_id": run_id,
-                "resolved_approval_id": pending.id,
-            },
-        )
-        result = await resolved_runtime.run(
-            agent=agent,
-            session=session,
-            messages=resume_messages,
-            tools=tools,
-            skills=skills,
-            tool_choice=tool_choice,
-            tool_execution=tool_execution,
-            max_steps=max_steps,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            reasoning=reasoning,
-            provider_options=provider_options,
-            timeout_ms=timeout_ms,
-            max_retries=max_retries,
-            retry_backoff_ms=retry_backoff_ms,
-            stop_on_handoff=stop_on_handoff,
-            parent_run_id=run_id,
-            idempotency_key=idempotency_key or f"{run_id}:{pending.id}:resume",
-        )
-        resumed_at_ms = result.state.updated_at_ms if result.state is not None else _now_ms()
-        suspended_state.pending_approvals = [item for item in suspended_state.pending_approvals if item.id != pending.id]
-        suspended_state.status = result.state.status if result.state is not None else "completed"
-        suspended_state.updated_at_ms = resumed_at_ms
-        suspended_state.finished_at_ms = result.state.finished_at_ms if result.state is not None else resumed_at_ms
-        suspended_state.output_text = result.text
-        suspended_state.finish_reason = result.finish_reason
-        suspended_state.tool_results = [*suspended_state.tool_results, approval_result, *result.tool_results]
-        if result.state is not None:
-            suspended_state.child_runs.append(agent_child_run_from_state(result.state))
-        suspended_state.metadata = {
-            **suspended_state.metadata,
-            "resumed_by_run_id": result.run_id,
-            "resolved_approval": {
-                "id": pending.id,
-                "approved": approved,
-                "reason": reason,
-                "tool_name": pending.name,
-                "resumed_at_ms": resumed_at_ms,
-            },
-        }
-        await agent.run_store.save(suspended_state)
-        result.resumed_from_checkpoint = result.resumed_from_checkpoint
-        return result
+            raise ValidationError(f'Pending approval "{selected_pending.id}" was not found on run "{run_id}" after claiming it.')
+
+        async def resume_claimed_run() -> AgentRunResult:
+            approval_result = await _execute_resolved_approval_tool(
+                agent=agent,
+                state=suspended_state,
+                pending=pending,
+                approved=approved,
+                reason=reason,
+                tools=tools,
+            )
+            resume_messages = _resume_messages_from_state(suspended_state)
+            resume_messages.append(ModelMessage(role="tool", parts=[tool_result_part(approval_result)]))
+            session = create_agent_session(
+                id=suspended_state.session_id,
+                messages=[],
+                summary="",
+                metadata={
+                    "resumed_from_run_id": run_id,
+                    "resolved_approval_id": pending.id,
+                },
+            )
+            result = await resolved_runtime.run(
+                agent=agent,
+                session=session,
+                messages=resume_messages,
+                tools=tools,
+                skills=skills,
+                tool_choice=tool_choice,
+                tool_execution=tool_execution,
+                max_steps=max_steps,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                provider_options=provider_options,
+                timeout_ms=timeout_ms,
+                max_retries=max_retries,
+                retry_backoff_ms=retry_backoff_ms,
+                stop_on_handoff=stop_on_handoff,
+                parent_run_id=run_id,
+                idempotency_key=idempotency_key or f"{run_id}:{pending.id}:resume",
+            )
+            resumed_at_ms = result.state.updated_at_ms if result.state is not None else _now_ms()
+            suspended_state.pending_approvals = [item for item in suspended_state.pending_approvals if item.id != pending.id]
+            suspended_state.status = result.state.status if result.state is not None else "completed"
+            suspended_state.updated_at_ms = resumed_at_ms
+            suspended_state.finished_at_ms = result.state.finished_at_ms if result.state is not None else resumed_at_ms
+            suspended_state.output_text = result.text
+            suspended_state.finish_reason = result.finish_reason
+            suspended_state.tool_results = [*suspended_state.tool_results, approval_result, *result.tool_results]
+            if result.state is not None:
+                suspended_state.child_runs.append(agent_child_run_from_state(result.state))
+            resolved_metadata = dict(suspended_state.metadata)
+            resolved_metadata.pop("resume_claim", None)
+            suspended_state.metadata = {
+                **resolved_metadata,
+                "resumed_by_run_id": result.run_id,
+                "resolved_approval": {
+                    "id": pending.id,
+                    "approved": approved,
+                    "reason": reason,
+                    "tool_name": pending.name,
+                    "resumed_at_ms": resumed_at_ms,
+                },
+            }
+            await run_store.save(suspended_state)
+            result.resumed_from_checkpoint = result.resumed_from_checkpoint
+            return result
+
+        try:
+            return await resume_claimed_run()
+        except BaseException as error:
+            failed_at_ms = _now_ms()
+            suspended_state.status = "failed"
+            suspended_state.updated_at_ms = failed_at_ms
+            suspended_state.finished_at_ms = failed_at_ms
+            suspended_state.error = str(error) or type(error).__name__
+            suspended_state.metadata = {
+                **suspended_state.metadata,
+                "resume_claim_failed_at_ms": failed_at_ms,
+            }
+            await run_store.save(suspended_state)
+            raise
 
     return runner()
 

@@ -86,6 +86,7 @@ class InstalledSkill:
     source: str
     checksum: str
     install_path: str
+    content_checksum: str | None = None
     manifest_path: str | None = None
     locked_at: str | None = None
 
@@ -725,6 +726,7 @@ def _load_installed_skills_from_lockfile(path: Path) -> list[InstalledSkill]:
                 version=str(item.get("version") or ""),
                 source=str(item.get("source") or ""),
                 checksum=str(item.get("checksum") or ""),
+                content_checksum=_optional_text(item.get("content_checksum")),
                 install_path=str(item.get("install_path") or ""),
                 manifest_path=_optional_text(item.get("manifest_path")),
                 locked_at=_optional_text(item.get("locked_at")),

@@ -243,6 +243,7 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
                 name="assistant",
                 instructions="Use tools.",
                 model=StreamingToolAgentModel(),
+                approval_policy=lambda request: True,
                 tools={
                     "lookup": tool(
                         name="lookup",
@@ -271,6 +272,7 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
                 instructions="Use tools.",
                 model=StreamingToolAgentModel(),
                 output_guardrails=[allow_output],
+                approval_policy=lambda request: True,
                 tools={
                     "lookup": tool(
                         name="lookup",
@@ -783,6 +785,73 @@ class PostgresStoreTests(IsolatedAsyncioTestCase):
                     create_postgres_checkpoint_store("postgres://example", table_prefix=prefix)
                 with self.assertRaises(ValidationError):
                     create_postgres_agent_run_store("postgres://example", table_prefix=prefix)
+
+    async def test_postgres_run_store_claims_pending_approval_with_row_lock(self) -> None:
+        from zhivex_ai import AgentRunState, PendingApproval, PostgresAgentRunStore
+        from zhivex_ai.agent_state import agent_run_state_to_json
+
+        state = AgentRunState(
+            run_id="run-1",
+            agent_name="assistant",
+            provider="test",
+            model_id="tool",
+            status="suspended",
+            pending_approvals=[PendingApproval(id="approval-1", name="lookup")],
+        )
+
+        class FakeTransaction:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.state_json = agent_run_state_to_json(state)
+                self.select_sql: list[str] = []
+
+            def transaction(self):
+                return FakeTransaction()
+
+            async def fetchrow(self, sql: str, *args):
+                self.select_sql.append(sql)
+                return {"state_json": self.state_json}
+
+            async def execute(self, sql: str, *args):
+                if sql.lstrip().upper().startswith("UPDATE"):
+                    self.state_json = args[0]
+                return "OK"
+
+            async def close(self):
+                return None
+
+        connection = FakeConnection()
+
+        class TestStore(PostgresAgentRunStore):
+            async def _connect(self):
+                return connection
+
+        store = TestStore("postgres://example")
+
+        claimed = await store.claim_pending_approval(
+            "run-1",
+            "approval-1",
+            claim_token="claim-1",
+            claimed_at_ms=123,
+        )
+        duplicate = await store.claim_pending_approval(
+            "run-1",
+            "approval-1",
+            claim_token="claim-2",
+            claimed_at_ms=124,
+        )
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.status, "running")
+        self.assertEqual(claimed.metadata["resume_claim"]["claim_token"], "claim-1")
+        self.assertIsNone(duplicate)
+        self.assertTrue(all("FOR UPDATE" in sql for sql in connection.select_sql))
 
     async def test_postgres_stores_work_with_asyncpg_driver(self) -> None:
         FakeAsyncPGConnection.store = {"memory": {}, "checkpoints": []}
