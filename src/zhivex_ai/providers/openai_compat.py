@@ -123,6 +123,7 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
             hosted_file_search=True,
             remote_mcp=True,
             computer_use=True,
+            code_execution=provider_name == "openai",
         )
     if provider_name == "openrouter":
         return AgentCapabilities(
@@ -399,6 +400,9 @@ def _serialize_provider_data_input(message: ModelMessage, provider_name: str) ->
         data = getattr(part, "data", None)
         if provider not in accepted_providers:
             continue
+        if isinstance(data, dict) and data.get("type") in {"program", "program_output"}:
+            items.append(deepcopy(data))
+            continue
         parsed = _parse_provider_data_value(data, provider_name)
         if parsed is None:
             continue
@@ -510,13 +514,15 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
         if message.role == "tool":
             for part in message.parts:
                 if isinstance(part, ToolResultPart):
-                    items.append(
-                        {
+                    payload = {
                             "type": "function_call_output",
                             "call_id": part.tool_result.tool_call_id,
                             "output": _serialize_tool_output(part.tool_result),
                         }
-                    )
+                    caller = part.tool_result.provider_metadata.get("caller")
+                    if isinstance(caller, dict):
+                        payload["caller"] = deepcopy(caller)
+                    items.append(payload)
             items.extend(_serialize_provider_data_input(message, provider_name))
             continue
 
@@ -531,17 +537,24 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
             )
 
         if message.role == "assistant":
+            # Preserve provider-owned response items before the function calls
+            # they initiated. Programmatic Tool Calling relies on this order
+            # when output items are replayed with store=False.
+            items.extend(_serialize_provider_data_input(message, provider_name))
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
-                    items.append(
-                        {
+                    payload = {
                             "type": "function_call",
                             "call_id": part.tool_call.id,
                             "name": part.tool_call.name,
                             "arguments": json.dumps(part.tool_call.input),
                         }
-                    )
-        items.extend(_serialize_provider_data_input(message, provider_name))
+                    caller = part.tool_call.provider_metadata.get("caller")
+                    if isinstance(caller, dict):
+                        payload["caller"] = deepcopy(caller)
+                    items.append(payload)
+        else:
+            items.extend(_serialize_provider_data_input(message, provider_name))
     return items
 
 
@@ -615,13 +628,20 @@ def _map_tools(tools: dict[str, Any] | None, *, provider_name: str) -> list[dict
             parameters = _normalize_openai_strict_tool_schema(parameters)
         _validate_openai_strict_tool_schema(tool.name, parameters)
         mapped.append(
-            {
+            drop_none(
+                {
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
                 "strict": True,
                 "parameters": parameters,
-            }
+                    "output_schema": create_schema_adapter(tool.output_schema).json_schema()
+                    if tool.output_schema is not None
+                    else None,
+                    "allowed_callers": list(tool.allowed_callers) if tool.allowed_callers else None,
+                    "defer_loading": tool.defer_loading,
+                }
+            )
         )
     return mapped
 
@@ -818,7 +838,7 @@ def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
         raise UnsupportedFeatureError('Provider "qwen" does not support "reasoning.budgetTokens" through the Responses API.')
     if input.reasoning.effort is None:
         return {}
-    return {"enable_thinking": input.reasoning.effort != "none"}
+    return {"reasoning": {"effort": input.reasoning.effort}}
 
 
 def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
@@ -875,6 +895,8 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
                 parts.extend(_parse_output_content_part(content))
     elif item_type == "reasoning":
         parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
+    elif item_type in {"program", "program_output"}:
+        parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
     elif item_type == "function_call":
         parts.append(
             ToolCallPart(
@@ -882,6 +904,13 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
                     id=item.get("call_id") or item.get("id", ""),
                     name=item.get("name", ""),
                     input=_normalize_tool_call_input(item.get("arguments")),
+                    provider_metadata=drop_none(
+                        {
+                            "provider": provider_name,
+                            "response_item_id": item.get("id"),
+                            "caller": deepcopy(item.get("caller")) if isinstance(item.get("caller"), dict) else None,
+                        }
+                    ),
                 )
             )
         )
@@ -2911,8 +2940,19 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                                 id=item.get("call_id") or item.get("id", ""),
                                 name=item.get("name", ""),
                                 input=_normalize_tool_call_input(item.get("arguments")),
+                                provider_metadata=drop_none(
+                                    {
+                                        "provider": self.provider,
+                                        "response_item_id": item.get("id"),
+                                        "caller": deepcopy(item.get("caller"))
+                                        if isinstance(item.get("caller"), dict)
+                                        else None,
+                                    }
+                                ),
                             )
                         )
+                    elif item.get("type") in {"program", "program_output"}:
+                        yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(item))
                     elif isinstance(item, dict) and _is_provider_managed_output_item(item):
                         yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
                     continue

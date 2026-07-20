@@ -45,11 +45,11 @@ These APIs are supported and documented, but they may still change between minor
 - Middleware helpers
 - Model catalog helpers
 - Provider agent capability metadata: `AgentCapabilities`, `AgentSupportTier`, `get_agent_capabilities`, `get_agent_support_tier`
-- First-class hosted tool model: `HostedToolDefinition`, `HostedToolClass`, `AnyToolDefinition`, `hosted_tool`, `is_hosted_tool_definition`, `is_callable_tool_definition`, `get_hosted_tool_class`, `is_hosted_tool_class`
+- First-class hosted tool model: `HostedToolDefinition`, `HostedToolClass`, `AnyToolDefinition`, `hosted_tool`, `is_hosted_tool_definition`, `is_callable_tool_definition`, `get_hosted_tool_class`, `is_hosted_tool_class`; provider-native helpers such as `anthropic_web_fetch_tool()` remain beta
 - Provider-data content parts and hosted-tool control payloads: `ProviderDataPart`, `provider_data_part`, `get_provider_data_parts`, `get_last_provider_data_part`, `openai_mcp_approval_response`, `azure_openai_mcp_approval_response`
 - Typed OpenAI/Azure provider-data payloads and parsers: `OpenAIResponseReference`, `OpenAIMcpApprovalRequest`, `OpenAIMcpApprovalResponse`, `OpenAIMcpCall`, `OpenAIMcpListTools`, `OpenAIProviderData`, `AzureOpenAIResponseReference`, `AzureOpenAIMcpApprovalRequest`, `AzureOpenAIMcpApprovalResponse`, `AzureOpenAIMcpCall`, `AzureOpenAIMcpListTools`, `AzureOpenAIProviderData`, `parse_openai_provider_data_part`, `parse_azure_openai_provider_data_part`
 - Response-reference helpers: `openai_response_reference`, `get_openai_response_reference`, `get_openai_response_id`, `azure_openai_response_reference`, `get_azure_openai_response_reference`, `get_azure_openai_response_id`
-- Hosted-tool and approval streaming transport: `StreamProviderDataEvent`, `UIMessageProviderDataChunk`, `UIMessageToolApprovalChunk`
+- Hosted-tool and approval streaming transport: `StreamProviderDataEvent`, `UIMessageProviderDataChunk`, `UIMessageToolApprovalChunk`; OpenAI Programmatic Tool Calling is beta through `openai_programmatic_tool_calling_tool()` and provider-data replay of `program` / `program_output` items
 - Packaged skill APIs and installers: `load_skill_package`, `validate_skill`, `install_skill`, `list_installed_skills`, `run_skill`, `publish_skill`
 - Packaged skill types and artifacts: `SkillArtifact`, `SkillEntrypoint`, `SkillPermissions`, `SkillPackageManifest`, `InstalledSkill`, `SkillRegistryIndex`, `SkillRunResult`
 - Packaged skill runtime events: `AgentSkillResolvedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillArtifactCreatedEvent`
@@ -95,13 +95,13 @@ The current tier-1 provider story for the stable surface is:
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
 
-Anthropic is included in the tier-1 set for text-generation API paths. Embeddings, transcription, and speech remain outside the current Anthropic provider surface in this SDK.
+Anthropic is included in the tier-1 set for text-generation API paths. Current adaptive-thinking, mid-conversation system-message, web search/fetch, and code-execution behavior is provider-native and model/version dependent. Embeddings, transcription, and speech remain outside the current Anthropic provider surface.
 
 Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai(...)` supports either API key authentication or Microsoft Entra ID token/provider authentication. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
 
 Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. Its hosted tools, raw Responses settings, Files, Batch, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
 
-Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. Files, Batch, token estimation, Formulas, and K2 thinking controls remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
+Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. K3 `reasoning_effort`, K2 thinking controls, Files, Batch, token estimation, and Formulas remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
 
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 

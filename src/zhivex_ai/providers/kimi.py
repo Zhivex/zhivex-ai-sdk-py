@@ -80,6 +80,11 @@ KIMI_CHAT_CAPABILITIES = ModelCapabilities(
     agent_capabilities=KIMI_AGENT_CAPABILITIES,
 )
 
+_KIMI_K3_REASONING_EFFORTS = frozenset({"low", "high", "max"})
+_KIMI_FIXED_SAMPLING_FIELDS = frozenset(
+    {"temperature", "top_p", "n", "presence_penalty", "frequency_penalty"}
+)
+
 
 def _headers(api_key: str, *, json_content: bool = True) -> dict[str, str]:
     headers = {"authorization": f"Bearer {api_key}"}
@@ -90,7 +95,11 @@ def _headers(api_key: str, *, json_content: bool = True) -> dict[str, str]:
 
 def _is_kimi_multimodal_model(model_id: str) -> bool:
     normalized = model_id.strip().lower()
-    return normalized in {"kimi-k2.6", "kimi-k2.5"}
+    return normalized in {"kimi-k3", "kimi-k2.6", "kimi-k2.5"}
+
+
+def _is_kimi_k3_model(model_id: str) -> bool:
+    return model_id.strip().lower() == "kimi-k3"
 
 
 def _is_image_media(media_type: str | None) -> bool:
@@ -158,10 +167,15 @@ def _tool_result_content(part: ToolResultPart) -> str:
 
 
 def _provider_data(message: ModelMessage, key: str) -> Any:
+    values: list[Any] = []
     for part in message.parts:
         if isinstance(part, ProviderDataPart) and part.provider == "kimi" and isinstance(part.data, dict) and key in part.data:
-            return deepcopy(part.data[key])
-    return None
+            values.append(part.data[key])
+    if not values:
+        return None
+    if all(isinstance(value, str) for value in values):
+        return "".join(values)
+    return deepcopy(values[0])
 
 
 def _to_chat_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
@@ -257,22 +271,73 @@ def _thinking_enabled(input: ModelGenerateInput, model_id: str, provider_options
     return input.reasoning.effort != "none"
 
 
-def _kimi_reasoning_options(input: ModelGenerateInput, provider_options: dict[str, Any]) -> dict[str, Any]:
+def _kimi_reasoning_options(model_id: str, input: ModelGenerateInput, provider_options: dict[str, Any]) -> dict[str, Any]:
     if input.reasoning is None:
         return {}
     if input.reasoning.budget_tokens is not None:
         raise UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".')
+    if _is_kimi_k3_model(model_id):
+        if "reasoning_effort" in provider_options:
+            raise ValidationError('Pass either reasoning=... or provider_options={"reasoning_effort": ...}, not both.')
+        effort = input.reasoning.effort
+        if effort is None:
+            return {}
+        if effort not in _KIMI_K3_REASONING_EFFORTS:
+            supported = ", ".join(sorted(_KIMI_K3_REASONING_EFFORTS))
+            raise UnsupportedFeatureError(
+                f'Kimi K3 supports reasoning efforts {supported}; received "{effort}". Thinking cannot be disabled.'
+            )
+        return {"reasoning_effort": effort}
     if "thinking" in provider_options:
         raise ValidationError('Pass either reasoning=... or provider_options={"thinking": ...}, not both.')
     return {"thinking": {"type": "disabled" if input.reasoning.effort == "none" else "enabled"}}
 
 
+def _validate_kimi_k3_vision(input: ModelGenerateInput) -> None:
+    for message in input.messages:
+        for part in message.parts:
+            if isinstance(part, ImagePart) and not part.image.startswith(("data:", "ms://")):
+                raise UnsupportedFeatureError(
+                    'Kimi K3 vision input does not accept public image URLs. Use a data URL or an "ms://<file-id>" reference.'
+                )
+
+
 def _validate_kimi_request(model_id: str, input: ModelGenerateInput, provider_options: dict[str, Any]) -> None:
-    if _is_kimi_multimodal_model(model_id):
-        blocked = {"temperature", "top_p", "n", "presence_penalty", "frequency_penalty"}
+    if _is_kimi_k3_model(model_id):
+        if "thinking" in provider_options:
+            raise ValidationError(
+                'Kimi K3 always reasons and does not accept the K2.x provider_options={"thinking": ...} field.'
+            )
+        configured_effort = provider_options.get("reasoning_effort")
+        if configured_effort is not None and (
+            not isinstance(configured_effort, str) or configured_effort not in _KIMI_K3_REASONING_EFFORTS
+        ):
+            supported = ", ".join(sorted(_KIMI_K3_REASONING_EFFORTS))
+            raise UnsupportedFeatureError(
+                f'Kimi K3 provider option "reasoning_effort" supports {supported}; received "{configured_effort}".'
+            )
         if input.temperature is not None:
             raise UnsupportedFeatureError(f'Provider "kimi" does not allow overriding "temperature" for model "{model_id}".')
-        configured = sorted(blocked.intersection(provider_options))
+        configured = sorted(_KIMI_FIXED_SAMPLING_FIELDS.intersection(provider_options))
+        if configured:
+            joined = ", ".join(configured)
+            raise UnsupportedFeatureError(f'Provider "kimi" does not allow overriding {joined} for model "{model_id}".')
+        if input.tool_choice is not None and "tool_choice" in provider_options:
+            raise ValidationError('Pass either tool_choice=... or provider_options={"tool_choice": ...}, not both.')
+        tool_choice = input.tool_choice if input.tool_choice is not None else provider_options.get("tool_choice")
+        if isinstance(tool_choice, (ToolChoiceName, dict)):
+            raise UnsupportedFeatureError(
+                "Kimi K3 cannot force a specific tool while thinking is enabled; use auto, none, or required."
+            )
+        if tool_choice is not None and (not isinstance(tool_choice, str) or tool_choice not in {"auto", "none", "required"}):
+            raise UnsupportedFeatureError('Kimi K3 only supports tool_choice="auto", "none", or "required".')
+        _validate_kimi_k3_vision(input)
+        return
+
+    if _is_kimi_multimodal_model(model_id):
+        if input.temperature is not None:
+            raise UnsupportedFeatureError(f'Provider "kimi" does not allow overriding "temperature" for model "{model_id}".')
+        configured = sorted(_KIMI_FIXED_SAMPLING_FIELDS.intersection(provider_options))
         if configured:
             joined = ", ".join(configured)
             raise UnsupportedFeatureError(f'Provider "kimi" does not allow overriding {joined} for model "{model_id}".')
@@ -282,9 +347,18 @@ def _validate_kimi_request(model_id: str, input: ModelGenerateInput, provider_op
             raise UnsupportedFeatureError('Kimi thinking mode only supports tool_choice="auto" or tool_choice="none".')
 
 
-def _response_format(input: ModelGenerateInput) -> dict[str, Any] | None:
+def _response_format(model_id: str, input: ModelGenerateInput) -> dict[str, Any] | None:
     if input.structured_output is None or input.structured_output.mode != "native":
         return None
+    if _is_kimi_k3_model(model_id):
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": input.structured_output.name or "response",
+                "strict": True,
+                "schema": create_schema_adapter(input.structured_output.schema).json_schema(),
+            },
+        }
     return {"type": "json_object"}
 
 
@@ -298,9 +372,9 @@ def _chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -> dic
         "tools": tools,
         "tool_choice": _map_tool_choice(input.tool_choice),
         "max_completion_tokens": input.max_tokens,
-        "response_format": _response_format(input),
+        "response_format": _response_format(model_id, input),
         **provider_options,
-        **_kimi_reasoning_options(input, provider_options),
+        **_kimi_reasoning_options(model_id, input, provider_options),
         "stream": True if stream else None,
     }
     return {key: value for key, value in body.items() if value is not None}
@@ -593,7 +667,8 @@ class KimiFormulaClient:
         result: dict[str, ToolDefinition] = {}
         for formula_uri in formula_uris:
             for definition in await self.list_tools(formula_uri, options=options):
-                function = definition.get("function") if isinstance(definition.get("function"), dict) else {}
+                function_value = definition.get("function")
+                function: dict[str, Any] = function_value if isinstance(function_value, dict) else {}
                 name = str(function.get("name") or "")
                 if not name:
                     continue

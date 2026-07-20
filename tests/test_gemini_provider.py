@@ -285,13 +285,19 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         interaction = await provider.interactions().create(
             {"input": "Research TPUs", "agent": "deep-research-pro-preview-12-2025"}
         )
+        omni = await provider.interactions().create(
+            {"model": "gemini-omni-flash-preview", "input": "Create a short video from this scene"}
+        )
         waited = await provider.interactions().wait("int-1", poll_interval_ms=1, timeout_ms=100)
 
         self.assertEqual(batch["name"], "batches/embed-1")
         self.assertEqual(interaction["id"], "int-1")
+        self.assertEqual(omni["id"], "int-1")
         self.assertEqual(waited["status"], "completed")
         self.assertTrue(requests[1]["json"]["background"])
         self.assertTrue(requests[1]["json"]["store"])
+        self.assertEqual(requests[2]["json"]["model"], "gemini-omni-flash-preview")
+        self.assertNotIn("background", requests[2]["json"])
 
     async def test_gemini_cached_contents_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -393,13 +399,13 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
 
         provider = create_vertex(access_token="token", project_id="proj", fetch=fetch)
         image = await provider.images().generate(prompt="draw", model="gemini-3.1-flash-image")
-        video = await provider.videos().generate(model="veo-3.1-lite-generate-preview", prompt="video")
+        video = await provider.videos().generate(model="veo-3.1-fast-generate-preview", prompt="video")
 
         self.assertEqual(image.images[0].b64_json, "vertex-img")
         self.assertEqual(video.name, "operations/vertex-video")
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer token")
         self.assertIn("/publishers/google/models/gemini-3.1-flash-image:generateContent", requests[0]["url"])
-        self.assertIn("/publishers/google/models/veo-3.1-lite-generate-preview:predictLongRunning", requests[1]["url"])
+        self.assertIn("/publishers/google/models/veo-3.1-fast-generate-preview:predictLongRunning", requests[1]["url"])
 
     async def test_gemini_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []

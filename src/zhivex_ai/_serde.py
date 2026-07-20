@@ -87,6 +87,7 @@ def serialize_tool_execution_result(result: ToolExecutionResult) -> dict[str, An
         "output": _json_compatible(result.output),
         "error": {"message": result.error.message} if result.error is not None else None,
         "is_error": result.is_error,
+        "provider_metadata": _json_compatible(result.provider_metadata),
     }
 
 
@@ -98,6 +99,7 @@ def deserialize_tool_execution_result(payload: dict[str, Any]) -> ToolExecutionR
         output=payload.get("output"),
         error=ToolExecutionError(message=str(error_payload.get("message", ""))) if isinstance(error_payload, dict) else None,
         is_error=bool(payload.get("is_error", False)),
+        provider_metadata=dict(payload.get("provider_metadata") or {}),
     )
 
 
@@ -334,6 +336,9 @@ def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
         "defer_loading": callable_definition.defer_loading,
         "eager_input_streaming": callable_definition.eager_input_streaming,
         "allowed_callers": list(callable_definition.allowed_callers),
+        "output_schema": _serialize_schema(callable_definition.output_schema)
+        if callable_definition.output_schema is not None
+        else None,
         "cache_control": _json_compatible(callable_definition.cache_control),
         "tags": list(callable_definition.tags),
         "requires_approval": callable_definition.requires_approval,
@@ -361,6 +366,10 @@ def deserialize_tool_definition(payload: dict[str, Any]) -> AnyToolDefinition:
     schema: Any = {}
     if isinstance(schema_payload, dict):
         schema = schema_payload.get("json_schema") or schema_payload.get("repr") or {}
+    output_schema_payload = payload.get("output_schema")
+    output_schema: Any = None
+    if isinstance(output_schema_payload, dict):
+        output_schema = output_schema_payload.get("json_schema") or output_schema_payload.get("repr") or {}
     return ToolDefinition(
         name=str(payload.get("name", "")),
         description=payload.get("description"),
@@ -371,6 +380,7 @@ def deserialize_tool_definition(payload: dict[str, Any]) -> AnyToolDefinition:
         defer_loading=payload.get("defer_loading"),
         eager_input_streaming=payload.get("eager_input_streaming"),
         allowed_callers=[str(item) for item in payload.get("allowed_callers") or []],
+        output_schema=output_schema,
         cache_control=payload.get("cache_control"),
         tags=[str(item) for item in payload.get("tags") or []],
         requires_approval=payload.get("requires_approval"),

@@ -18,7 +18,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Remember prior turns.",
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         memory=create_sqlite_agent_memory_store(db_path),
         checkpoint_store=create_sqlite_checkpoint_store(db_path),
     )

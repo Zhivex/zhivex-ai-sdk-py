@@ -316,7 +316,8 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
             requests[0]["json"]["tool_choice"],
             {"type": "allowed_tools", "mode": "required", "tools": [{"type": "function", "name": "weather"}]},
         )
-        self.assertTrue(requests[0]["json"]["enable_thinking"])
+        self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "high"})
+        self.assertNotIn("enable_thinking", requests[0]["json"])
         provider_parts = [part for part in result.steps[0].response.messages[0].parts if getattr(part, "type", None) == "provider-data"]
         self.assertEqual(provider_parts[0].provider, "qwen")
 
@@ -423,6 +424,40 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                 prompt="hello",
                 reasoning=ReasoningConfig(budget_tokens=50),
             )
+
+    async def test_qwen_preserves_all_responses_reasoning_effort_levels(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append(json_body or {})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        for effort in efforts:
+            await generate_text(
+                model=provider.native.language_model("qwen3.7-plus"),
+                prompt="hello",
+                reasoning=ReasoningConfig(effort=effort),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual([request["reasoning"]["effort"] for request in requests], efforts)
+        self.assertTrue(all("enable_thinking" not in request for request in requests))
 
     async def test_qwen_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []

@@ -24,8 +24,8 @@ app = FastAPI(title="Zhivex AI SDK FastAPI Gateway Example")
 
 class GatewayRequest(BaseModel):
     prompt: str = Field(min_length=1)
-    primary_model: str = "gpt-5.4-mini"
-    fallback_model: str = "claude-sonnet-4-20250514"
+    primary_model: str = "gpt-5.6-terra"
+    fallback_model: str = "claude-sonnet-5"
     timeout_ms: int = Field(default=30_000, gt=0)
     routing_mode: str = "balanced"
     task_intent: str = "chat"

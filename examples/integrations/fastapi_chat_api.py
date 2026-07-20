@@ -21,7 +21,7 @@ app = FastAPI(title="Zhivex AI SDK FastAPI Chat Example")
 class ChatRequest(BaseModel):
     prompt: str = Field(min_length=1)
     system: str | None = None
-    model: str = "gpt-5.4-mini"
+    model: str = "gpt-5.6-terra"
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
     timeout_ms: int = Field(default=30_000, gt=0)

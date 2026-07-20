@@ -178,21 +178,21 @@ def _contract_cases() -> list[ProviderContractCase]:
     return [
         ProviderContractCase(
             provider_name="openai",
-            model_id="gpt-4o-mini",
+            model_id="gpt-5.6-terra",
             create_provider=lambda fetch: create_openai(api_key="test", fetch=fetch),
             response_family="openai",
             expected_request_marker="/responses",
         ),
         ProviderContractCase(
             provider_name="anthropic",
-            model_id="claude-sonnet-4-20250514",
+            model_id="claude-sonnet-5",
             create_provider=lambda fetch: create_anthropic(api_key="test", fetch=fetch),
             response_family="anthropic",
             expected_request_marker="/messages",
         ),
         ProviderContractCase(
             provider_name="azure-openai",
-            model_id="gpt-4o-mini",
+            model_id="gpt-5.6-terra",
             create_provider=lambda fetch: create_azure_openai(
                 api_key="test",
                 endpoint="https://example.openai.azure.com",
@@ -203,27 +203,31 @@ def _contract_cases() -> list[ProviderContractCase]:
         ),
         ProviderContractCase(
             provider_name="gemini",
-            model_id="gemini-2.5-flash",
+            model_id="gemini-3.5-flash",
             create_provider=lambda fetch: create_gemini(api_key="test", fetch=fetch),
             response_family="gemini",
             expected_request_marker=":generateContent",
         ),
         ProviderContractCase(
             provider_name="vertex",
-            model_id="gemini-2.5-flash",
+            model_id="gemini-3.5-flash",
             create_provider=lambda fetch: create_vertex(access_token="test", project_id="project", fetch=fetch),
             response_family="gemini",
             expected_request_marker=":generateContent",
         ),
         ProviderContractCase(
             provider_name="qwen",
-            model_id="qwen3.5-plus",
+            model_id="qwen3.7-plus",
             create_provider=lambda fetch: create_qwen(api_key="test", fetch=fetch),
             response_family="openai",
             expected_request_marker="/responses",
         ),
         ProviderContractCase(
             provider_name="kimi",
+            # K3 is the current catalog reference, but its always-on reasoning
+            # contract cannot force a named tool. Keep the compatibility K2
+            # fixture for the portable named-tool-choice contract and test K3
+            # separately in the provider suite.
             model_id="kimi-k2",
             create_provider=lambda fetch: create_kimi(api_key="test", fetch=fetch),
             response_family="chat",

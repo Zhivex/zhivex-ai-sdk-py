@@ -262,7 +262,7 @@ class HostedToolRuntimeTests(IsolatedAsyncioTestCase):
         result = await generate_text(
             model=model,
             prompt="hello",
-            tools={"search": hosted_tool(name="search", provider="anthropic", type="web_search_20250305")},
+            tools={"search": hosted_tool(name="search", provider="anthropic", type="web_search_20260318")},
             tool_choice=ToolChoiceName("search"),
         )
 

@@ -21,8 +21,8 @@ from zhivex_ai import GatewayConfig, GatewayMessage, GatewayModelTarget, create_
 gateway = create_gateway(GatewayConfig(adapters={"openai": openai, "anthropic": anthropic}))
 result = await gateway.generate(
     messages=[GatewayMessage(role="user", content="Summarize this.")],
-    primary=GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini"),
-    fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-4-20250514")],
+    primary=GatewayModelTarget(provider="openai", model_id="gpt-5.6-terra"),
+    fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-5")],
 )
 ```
 

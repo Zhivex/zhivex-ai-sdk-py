@@ -7,7 +7,7 @@ async def main() -> None:
     provider = create_openai()
 
     result = await generate_text(
-        model=provider("gpt-5.4-mini"),
+        model=provider("gpt-5.6-terra"),
         messages=[user("What is the weather in Madrid? Use the tool.")],
         max_steps=2,
         tools={

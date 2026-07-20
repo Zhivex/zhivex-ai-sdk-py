@@ -35,7 +35,7 @@ ProviderConfig = tuple[str, Any, str, Any, Callable[[Any], str | None]]
 
 def _resolve_provider() -> ProviderConfig:
     provider_name = os.getenv("PROVIDER", "openai").strip().lower()
-    model_name = os.getenv("MODEL", "gpt-5.4-mini")
+    model_name = os.getenv("MODEL", "gpt-5.6-terra")
     server_url = os.getenv("MCP_SERVER_URL")
     server_label = os.getenv("MCP_SERVER_LABEL", "Docs")
     allowed_tools = [name.strip() for name in os.getenv("MCP_ALLOWED_TOOLS", "").split(",") if name.strip()]

@@ -145,7 +145,7 @@ These providers back the stable surface for production API work in this SDK toda
 | gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 | kimi | tier-b | Yes | No | No | No | No | No | No | Yes |
 | ollama | tier-c | No | No | No | No | No | No | No | No |
-| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
+| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
 | qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |
 | vertex | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
@@ -162,22 +162,22 @@ Tool support now follows the same rule everywhere:
 - Hosted tools now fail fast in the shared foundation layer when they target the wrong provider, request an unsupported hosted-tool class, or use hosted-only combinations such as unsupported `tool_choice="none"` / `ToolChoiceName(...)`.
 - The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
-- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Fable 5 is available as `claude-fable-5`, Claude Sonnet 5 is available as `claude-sonnet-5`, and Claude Opus 4.8 remains available as `claude-opus-4-8`. Use `ReasoningConfig(effort="medium" | "high" | "xhigh" | "max")` to send `output_config.effort`, with adaptive thinking automatically selected for Fable 5, Sonnet 5, and Opus 4.7/4.8. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
-- Claude Opus 4.8 accepts mid-conversation `ModelMessage(role="system", ...)` entries on the Anthropic native path when they follow Anthropic's placement rules. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}`.
+- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8 are cataloged. Use `ReasoningConfig(effort="medium" | "high" | "xhigh" | "max")` to send `output_config.effort`; the adapter selects adaptive thinking for current compatible families. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
+- Claude Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` entries on the Anthropic native path when they follow Anthropic's placement rules. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}`.
 - Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason`. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`.
-- Anthropic hosted-tool defaults remain backward-compatible: `anthropic_web_search_tool()` emits `web_search_20250305`, `anthropic_code_execution_tool()` emits `code_execution_20250825`, and `anthropic_mcp_server()` uses `mcp-client-2025-04-04`. Current Anthropic MCP can be opted into with `anthropic_mcp_server(..., version="current")` or `provider_options={"anthropic_mcp_beta": "mcp-client-2025-11-20"}`. Current web search can be opted into with `anthropic_web_search_tool(tool_type="web_search_20260209")`; newer code-execution tool versions are model-dependent and should be passed explicitly when needed.
+- Anthropic hosted-tool helpers now default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. `anthropic_mcp_server()` keeps its compatibility default; opt into current MCP with `version="current"` when the target account/model supports it.
 - OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM now participate in the tier-1 portable text-generation contract.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
-- OpenAI catalog guidance tracks GPT-5.5 as the current generally available flagship, keeps GPT-5.4 mini/nano for lower-latency and lower-cost paths, and updates Realtime guidance to `gpt-realtime-2.1`. GPT-5.6 is not a default catalog entry yet because current OpenAI documentation lists it as limited preview availability.
-- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle now mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog also tracks Azure `gpt-chat-latest` for the continuously updated preview chat deployment and `gpt-realtime-2.1` where the deployment is available.
-- Gemini and Vertex are portable for the core contract, with `gemini-3.5-flash` as the current stable Flash reference and `gemini-3.1-flash-lite` as the stable low-latency Flash-Lite reference. Gemini built-in tools such as `google_search`, `google_maps`, `url_context`, `code_execution`, `file_search`, and `computer_use` are native-only entrypoints.
+- OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
+- Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
+- Gemini and Vertex are portable for the core contract, with `gemini-3.5-flash` as the current stable Flash reference and `gemini-3.1-flash-lite` as the stable low-latency Flash-Lite reference. Gemini Developer API guidance also tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Gemini built-in tools remain native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
-- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `create_qwen()` accepts either `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`, and the catalog tracks Qwen3.7 Max/Plus alongside the Qwen3.6/3.5 families.
+- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through Responses, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. `ReasoningConfig` now maps all seven supported effort levels to `reasoning.effort` instead of the deprecated boolean `enable_thinking`; the catalog distinguishes the multimodal `qwen3.7-max-2026-06-08` snapshot.
 - Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client.
 - Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
-- Kimi native support includes Moonshot Files, Batch, token estimation, K2.6/K2.5 `thinking`, image/video chat inputs, and the beta `provider.formulas()` client for official tools such as `moonshot/web-search:latest`; embeddings, speech, and transcription are not claimed for Kimi.
+- Kimi native support includes K3 (`kimi-k3`) with always-on reasoning, `reasoning_effort` values `low`/`high`/`max`, native vision, callable tools and strict structured output. K2.6/K2.5 retain their separate `thinking` contract. Moonshot Files, Batch, token estimation and the beta `provider.formulas()` client remain available; embeddings, speech, and transcription are not claimed.
 - Ollama defaults to `base_url="http://localhost:11434/v1"` and `api_key="ollama"` for local compatibility setups. Use `provider.native.*` for Ollama examples and override `OLLAMA_API_KEY` only when you front it with a proxy or remote gateway that requires auth.
 
 ## Installation
@@ -218,7 +218,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="Be concise and remember prior turns.",
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         memory=create_in_memory_agent_memory_store(),
     )
 
@@ -245,7 +245,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_text(
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         system="Be concise and technical.",
         prompt="What is a provider adapter?",
     )
@@ -275,7 +275,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_object(
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         prompt="Return a compact JSON recipe summary.",
         schema=Recipe,
     )
@@ -297,7 +297,7 @@ from zhivex_ai import create_openai, stream_text
 async def main() -> None:
     openai = create_openai()
     result = stream_text(
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         prompt="Reply in two short sentences.",
     )
 
@@ -329,7 +329,7 @@ class Recipe(BaseModel):
 async def main() -> None:
     openai = create_openai()
     result = stream_object(
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         prompt="Return a compact JSON recipe.",
         schema=Recipe,
     )
@@ -356,7 +356,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_grounded_text(
-        model=openai.grounded_language_model("gpt-5.4-mini"),
+        model=openai.grounded_language_model("gpt-5.6-terra"),
         prompt="Find one recent fact about AI infrastructure.",
     )
 
@@ -380,7 +380,7 @@ async def main() -> None:
     anthropic = create_anthropic()
 
     result = await generate_grounded_text(
-        model=anthropic.grounded_language_model("claude-sonnet-4-20250514"),
+        model=anthropic.grounded_language_model("claude-sonnet-5"),
         prompt="Find one recent fact about AI infrastructure.",
     )
 
@@ -431,7 +431,7 @@ from zhivex_ai import FilePart, ModelMessage, TextPart, create_openai, generate_
 async def main() -> None:
     openai = create_openai()
     result = await generate_text(
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         messages=[
             ModelMessage(
                 role="user",
@@ -464,7 +464,7 @@ from zhivex_ai import FilePart, ModelMessage, create_anthropic, generate_text
 async def main() -> None:
     anthropic = create_anthropic()
     result = await generate_text(
-        model=anthropic.native.language_model("claude-sonnet-4-20250514"),
+        model=anthropic.native.language_model("claude-sonnet-5"),
         messages=[
             ModelMessage(
                 role="user",
@@ -838,12 +838,12 @@ async def main() -> None:
     researcher = Agent(
         name="researcher",
         instructions="Answer delegated research questions directly.",
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
     )
     triage = Agent(
         name="triage",
         instructions="Delegate research work to the researcher agent.",
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         tools={
             "delegate": tool(
                 name="delegate",
@@ -910,7 +910,7 @@ async def main() -> None:
     openai = create_openai()
 
     result = await generate_text(
-        model=openai.native.language_model("gpt-5.4-mini"),
+        model=openai.native.language_model("gpt-5.6-terra"),
         prompt="Compare today's weather in Buenos Aires with what is happening in the news.",
         tools={
             "weather": tool(
@@ -926,6 +926,42 @@ async def main() -> None:
 
 
 asyncio.run(main())
+```
+
+OpenAI Programmatic Tool Calling is available as a beta native path for bounded, read-only tool workflows. Eligible functions declare `allowed_callers=["programmatic"]` and an optional `output_schema`; the SDK preserves `program`, nested `caller`, function results, and `program_output` items across multi-step and `store=False` replay:
+
+```python
+from pydantic import BaseModel, ConfigDict
+
+from zhivex_ai import create_openai, generate_text, openai_programmatic_tool_calling_tool, tool
+
+
+class WeatherInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: str
+
+
+class WeatherOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    temperature_c: float
+
+
+openai = create_openai()
+result = await generate_text(
+    model=openai.native.language_model("gpt-5.6-sol"),
+    prompt="Reduce the weather records to one compact result.",
+    tools={
+        "programmatic": openai_programmatic_tool_calling_tool(),
+        "weather": tool(
+            name="weather",
+            schema=WeatherInput,
+            output_schema=WeatherOutput,
+            allowed_callers=["programmatic"],
+            execute=lambda input: {"temperature_c": 21},
+        ),
+    },
+    max_steps=4,
+)
 ```
 
 Remote MCP approval responses also round-trip through assistant messages with a `provider-data` part:
@@ -972,7 +1008,7 @@ from zhivex_ai import (
 )
 
 first = await generate_text(
-    model=openai.native.language_model("gpt-5.4-mini"),
+    model=openai.native.language_model("gpt-5.6-terra"),
     prompt="Start a multi-turn responses workflow.",
 )
 
@@ -1013,8 +1049,8 @@ async def main() -> None:
 
     result = await gateway.generate(
         messages=[GatewayMessage(role="user", content="Say hello in one sentence.")],
-        primary=GatewayModelTarget(provider="openai", model_id="gpt-5.4-mini"),
-        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-4-20250514")],
+        primary=GatewayModelTarget(provider="openai", model_id="gpt-5.6-terra"),
+        fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-5")],
     )
 
     print(result.text)
@@ -1142,7 +1178,7 @@ async def main() -> None:
     kimi = create_kimi()  # MOONSHOT_API_KEY, then KIMI_API_KEY
 
     result = await generate_text(
-        model=kimi.native.language_model("kimi-k2.6"),
+        model=kimi.native.language_model("kimi-k3"),
         messages=[
             user(
                 [
@@ -1150,7 +1186,7 @@ async def main() -> None:
                 ]
             )
         ],
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="high"),
     )
     print(result.text)
 
@@ -1164,7 +1200,7 @@ Kimi files, batch jobs, token estimation, and official tools are native-only:
 kimi = create_kimi()
 
 uploaded = await kimi.files().upload(
-    data=b'{"custom_id":"1","method":"POST","url":"/v1/chat/completions","body":{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}}\n',
+    data=b'{"custom_id":"1","method":"POST","url":"/v1/chat/completions","body":{"model":"kimi-k3","messages":[{"role":"user","content":"hi"}]}}\n',
     filename="batch.jsonl",
     media_type="application/jsonl",
     purpose="batch",
@@ -1178,7 +1214,7 @@ batch = await kimi.batches().create(
     }
 )
 
-tokens = await kimi.tokens().count(model_id="kimi-k2.6", prompt="hello")
+tokens = await kimi.tokens().count(model_id="kimi-k3", prompt="hello")
 tools = await kimi.formulas().toolset(["moonshot/web-search:latest"])
 ```
 
@@ -1241,7 +1277,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI GPT-5.5/GPT-5.4 plus GPT Image 2 and GPT Realtime 2, Azure OpenAI GPT-5.5/realtime/image/embedding IDs, Claude Fable 5/Opus 4.8/Sonnet 4.6/Haiku 4.5, Gemini 3.5 Flash/Live Translate and Gemini 3.1 media/live IDs, Vertex Gemini, Bedrock Claude 4.x/Nova, Qwen 3.7/3.6 plus Qwen embedding/rerank/audio IDs, and Kimi. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, Qwen 3.7 including its multimodal June snapshot, and Kimi K3. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 
@@ -1256,18 +1292,18 @@ Notes:
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `create_anthropic().tokens()` exposes Anthropic message token counting.
-- `anthropic_web_search_tool(...)`, `anthropic_mcp_server(...)`, and `anthropic_code_execution_tool(...)` build the current hosted-tool payloads for Claude-native runs.
+- `anthropic_web_search_tool(...)`, `anthropic_web_fetch_tool(...)`, `anthropic_mcp_server(...)`, and `anthropic_code_execution_tool(...)` build the current hosted-tool payloads for Claude-native runs.
 - `create_gemini().tokens()` and `create_vertex().tokens()` expose token counting clients.
 - `create_gemini().caches()` exposes Gemini explicit context caching through `cachedContents`; pass the returned cache name with `provider_options={"cached_content": cache.name}` or `provider_options={"cachedContent": cache.name}`.
 - `create_gemini().file_search_stores()` exposes Gemini File Search store management.
 - `embed_content(...)` and `embed_content_many(...)` accept text plus `TextPart`, `ImagePart`, and `FilePart` values for Gemini Embedding 2 style multimodal embeddings; `embed(...)` and `embed_many(...)` remain text-compatible.
-- `create_gemini().images()` covers Gemini/Nano Banana image models such as `gemini-3.1-flash-image` and `gemini-3-pro-image` through `generateContent`, plus Imagen 4 models through `predict`.
+- `create_gemini().images()` covers current Gemini/Nano Banana image models such as `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, and `gemini-3-pro-image` through `generateContent`. The legacy Imagen `predict` transport remains implemented for compatibility, but Imagen 4 is deprecated and no longer catalog guidance.
 - `create_vertex().images()` mirrors Google image routes through Vertex publisher model endpoints.
 - `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers, including the current `veo-3.1-*` model IDs where available.
 - `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it, including `lyria-3-pro-preview` and `lyria-3-clip-preview`.
 - `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model. The catalog also tracks stable `gemini-3.5-flash` and stable `gemini-3.1-flash-lite` for regular generation paths.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
-- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client. Deep Research payloads default to background storage.
+- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client, including `gemini-omni-flash-preview` payloads on the Gemini Developer API. Deep Research payloads default to background storage; Omni is not claimed for Vertex.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
 - `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint and works with either API key or Entra ID authentication.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
@@ -1498,7 +1534,7 @@ async def main() -> None:
     agent = Agent(
         name="assistant",
         instructions="You are a careful SDK assistant.",
-        model=openai("gpt-5.4-mini"),
+        model=openai("gpt-5.6-terra"),
         skills={"release-notes": release_notes},
     )
     session = create_agent_session()
@@ -1534,7 +1570,7 @@ async def main() -> None:
         agent = Agent(
             name="assistant",
             instructions="Use the filesystem MCP tools when needed.",
-            model=openai("gpt-5.4-mini"),
+            model=openai("gpt-5.6-terra"),
             tools=tools,
         )
 

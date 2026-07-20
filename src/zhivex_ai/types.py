@@ -1738,6 +1738,7 @@ class ToolDefinition:
     supports_streaming: bool = False
     remote_config: RemoteHTTPToolConfig | None = None
     mcp_config: MCPToolConfig | None = None
+    output_schema: Any = None
 
 
 @dataclass(slots=True)

@@ -273,6 +273,7 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             tool_name=call.name,
             output=serialize_json_value(output),
             is_error=False,
+            provider_metadata=dict(call.provider_metadata),
         )
     except ToolExecutionSuspended:
         raise
@@ -282,6 +283,7 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             tool_name=call.name,
             error=ToolExecutionError(message=str(error) or "Tool execution failed."),
             is_error=True,
+            provider_metadata=dict(call.provider_metadata),
         )
 
 
