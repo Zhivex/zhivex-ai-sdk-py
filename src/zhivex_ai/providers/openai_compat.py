@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import builtins
 from copy import deepcopy
 import json
 import os
@@ -34,6 +35,7 @@ from ..types import (
     ContainersClient,
     ConversationsClient,
     EmbedResult,
+    EmbeddingContent,
     EmbeddingModel,
     FileSearchBatch,
     FileSearchDocument,
@@ -45,6 +47,7 @@ from ..types import (
     FileSearchStoresClient,
     FilePart,
     FilesClient,
+    FinishReason,
     GenerateResult,
     GeneratedCodePart,
     GroundedGenerateResult,
@@ -514,7 +517,7 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
         if message.role == "tool":
             for part in message.parts:
                 if isinstance(part, ToolResultPart):
-                    payload = {
+                    payload: dict[str, Any] = {
                             "type": "function_call_output",
                             "call_id": part.tool_result.tool_call_id,
                             "output": _serialize_tool_output(part.tool_result),
@@ -852,7 +855,7 @@ def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
     )
 
 
-def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[FinishReason | None, str | None]:
     status = payload.get("status")
     if status == "completed":
         return "stop", status
@@ -1884,7 +1887,7 @@ class OpenAICompatibleContainersClient(ContainersClient):
         after: str | None = None,
         limit: int | None = None,
         options: RetryOptions | None = None,
-    ) -> list[ProviderFile]:
+    ) -> builtins.list[ProviderFile]:
         response = await with_retry(
             lambda: self.fetch(
                 _request_url(self.base_url, f"/containers/{container_id}/files", {"after": after, "limit": limit}),
@@ -2306,7 +2309,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         filename: str,
         media_type: str | None = None,
         display_name: str | None = None,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         uploaded = await self._files_client().upload(
@@ -2327,7 +2330,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         *,
         file_search_store_name: str,
         file_name: str,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         response = await self.fetch(
@@ -2420,7 +2423,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         name: str,
         *,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchDocument:
         store_id, file_id = _parse_openai_vector_store_file_name(name)
@@ -2443,7 +2446,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        query: str | list[str],
+        query: str | builtins.list[str],
         filters: dict[str, Any] | None = None,
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
@@ -2472,8 +2475,8 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        file_names: list[str],
-        custom_metadata: list[dict[str, Any]] | None = None,
+        file_names: builtins.list[str],
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchBatch:
         response = await self.fetch(
@@ -2975,7 +2978,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 class OpenAICompatibleEmbeddingModel(_BaseOpenAICompatible, EmbeddingModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
-    async def embed(self, values: list[str], options: RetryOptions | None = None) -> EmbedResult:
+    async def embed(self, values: list[EmbeddingContent], options: RetryOptions | None = None) -> EmbedResult:
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/embeddings",
@@ -3649,8 +3652,9 @@ class OpenAICompatibleRealtimeModel(_BaseOpenAICompatible, RealtimeModel):
         if isinstance(secret, dict):
             value = str(secret.get("value") or "")
             expires_at_ms = secret.get("expires_at_ms")
-            if expires_at_ms is None and secret.get("expires_at") is not None:
-                expires_at_ms = int(secret.get("expires_at")) * 1000
+            expires_at = secret.get("expires_at")
+            if expires_at_ms is None and expires_at is not None:
+                expires_at_ms = int(expires_at) * 1000
         else:
             value = str(payload.get("token") or payload.get("value") or "")
             expires_at_ms = payload.get("expires_at_ms")

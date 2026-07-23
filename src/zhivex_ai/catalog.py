@@ -4,7 +4,18 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 CatalogProviderId = str
-RecommendedUse = Literal["chat", "reasoning", "speed", "vision", "tools", "embedding", "retrieval", "audio"]
+RecommendedUse = Literal[
+    "chat",
+    "reasoning",
+    "speed",
+    "vision",
+    "tools",
+    "embedding",
+    "retrieval",
+    "audio",
+    "translation",
+    "realtime",
+]
 
 
 @dataclass(slots=True)

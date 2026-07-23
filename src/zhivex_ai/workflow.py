@@ -14,7 +14,7 @@ from .types import JsonValue
 
 WorkflowState = dict[str, JsonValue]
 WorkflowErrorPolicy = Literal["fail_fast", "continue", "capture"]
-WorkflowRunStatus = Literal["completed", "failed"]
+WorkflowRunStatus = Literal["completed", "failed", "suspended"]
 WorkflowStopCondition = Callable[["WorkflowRunResult"], bool | Awaitable[bool]]
 
 
@@ -132,7 +132,11 @@ def _validate_parallel_output_keys(steps: Sequence[WorkflowStep]) -> None:
 
 
 def _failure_status(step_results: list[WorkflowStepResult]) -> WorkflowRunStatus:
-    return "failed" if any(result.status == "failed" for result in step_results) else "completed"
+    if any(result.status == "failed" for result in step_results):
+        return "failed"
+    if any(result.status == "suspended" for result in step_results):
+        return "suspended"
+    return "completed"
 
 
 def _state_snapshot(
@@ -152,7 +156,7 @@ def _state_snapshot(
         status=status,
         parent_run_id=parent_run_id,
         current_step=len(step_results),
-        output_text=step_results[-1].output.text if step_results and step_results[-1].output is not None else "",
+        output_text=next((result.output.text for result in reversed(step_results) if result.output is not None), ""),
         steps=[
             AgentRunStep(
                 index=index,
@@ -166,7 +170,7 @@ def _state_snapshot(
                 run_id=result.output.run_id,
                 agent_name=result.output.agent_name,
                 parent_run_id=run_id,
-                status="completed" if result.status == "completed" else "failed",
+                status=result.output.state.status if result.output.state is not None else result.status,
                 output_text=result.output.text,
                 tool_name=result.name,
                 error=str(result.error) if result.error is not None else None,
@@ -184,6 +188,7 @@ def _state_snapshot(
             "workflow_steps": [result.name for result in step_results],
             "workflow_step_runs": [result.output.run_id for result in step_results if result.output is not None],
             "failed_steps": [result.name for result in step_results if result.status == "failed"],
+            "suspended_steps": [result.name for result in step_results if result.status == "suspended"],
             "state": dict(state),
         },
     )
@@ -212,9 +217,12 @@ class _BaseWorkflow:
                 timeout_ms=step.timeout_ms,
                 max_retries=step.max_retries,
             )
-            if step.output_key is not None:
+            status: WorkflowRunStatus = (
+                "suspended" if output.state is not None and output.state.status == "suspended" else "completed"
+            )
+            if status == "completed" and step.output_key is not None:
                 session.state[step.output_key] = output.text
-            result = WorkflowStepResult(name=step.name, status="completed", output=output, iteration=iteration)
+            result = WorkflowStepResult(name=step.name, status=status, output=output, iteration=iteration)
             if step.metadata_key is not None:
                 session.state[step.metadata_key] = _step_metadata(result)
             return result
@@ -308,6 +316,8 @@ class SequentialAgent(_BaseWorkflow):
                 return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
             results.append(result)
             trace.append(WorkflowTraceEvent("workflow-step-finish", self.name, step.name, result.status, run_id=run_id, error=str(result.error) if result.error else None))
+            if result.status == "suspended":
+                return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
         return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
 
 
@@ -329,7 +339,7 @@ class ParallelAgent(_BaseWorkflow):
         trace = [WorkflowTraceEvent("workflow-start", self.name, status="running", run_id=run_id)]
         base_state = dict(resolved_session.state)
 
-        async def run_isolated(step: WorkflowStep) -> WorkflowStepResult:
+        async def run_isolated(step: WorkflowStep) -> tuple[WorkflowStepResult, WorkflowState]:
             isolated_session = create_agent_session(
                 id=resolved_session.id,
                 messages=list(resolved_session.messages),
@@ -337,25 +347,57 @@ class ParallelAgent(_BaseWorkflow):
                 state=dict(base_state),
                 metadata=dict(resolved_session.metadata),
             )
-            return await self._run_step(step, session=isolated_session, fallback_prompt=prompt, parent_run_id=run_id)
+            result = await self._run_step(step, session=isolated_session, fallback_prompt=prompt, parent_run_id=run_id)
+            return result, dict(isolated_session.state)
 
         trace.extend(WorkflowTraceEvent("workflow-step-start", self.name, step.name, "running", run_id=run_id) for step in self.steps)
-        raw_results = await asyncio.gather(*(run_isolated(step) for step in self.steps), return_exceptions=True)
+        tasks = [asyncio.create_task(run_isolated(step)) for step in self.steps]
+        task_indexes = {task: index for index, task in enumerate(tasks)}
+        resolved: dict[int, tuple[WorkflowStepResult, WorkflowState]] = {}
+        pending = set(tasks)
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                fail_fast_triggered = False
+                for task in done:
+                    index = task_indexes[task]
+                    step = self.steps[index]
+                    try:
+                        resolved[index] = task.result()
+                    except Exception as error:
+                        resolved[index] = (WorkflowStepResult(name=step.name, status="failed", error=error), base_state)
+                        fail_fast_triggered = fail_fast_triggered or step.error_policy == "fail_fast"
+                if not fail_fast_triggered:
+                    continue
+                cancelled_indexes = [task_indexes[task] for task in pending]
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                for index in cancelled_indexes:
+                    step = self.steps[index]
+                    resolved[index] = (
+                        WorkflowStepResult(
+                            name=step.name,
+                            status="failed",
+                            error=RuntimeError("Cancelled because another parallel step failed fast."),
+                        ),
+                        base_state,
+                    )
+                pending.clear()
+        finally:
+            unfinished = [task for task in tasks if not task.done()]
+            for task in unfinished:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
         results: list[WorkflowStepResult] = []
-        for step, raw in zip(self.steps, raw_results, strict=True):
-            if isinstance(raw, Exception):
-                if step.error_policy == "fail_fast":
-                    result = WorkflowStepResult(name=step.name, status="failed", error=raw)
-                else:
-                    result = WorkflowStepResult(name=step.name, status="failed", error=raw)
-            elif isinstance(raw, WorkflowStepResult):
-                result = raw
-                if result.output is not None and step.output_key is not None:
-                    resolved_session.state[step.output_key] = result.output.text
-                if step.metadata_key is not None:
-                    resolved_session.state[step.metadata_key] = _step_metadata(result)
-            else:
-                result = WorkflowStepResult(name=step.name, status="failed", error=RuntimeError(str(raw)))
+        for index, step in enumerate(self.steps):
+            result, isolated_state = resolved[index]
+            if step.output_key is not None and step.output_key in isolated_state:
+                resolved_session.state[step.output_key] = isolated_state[step.output_key]
+            if step.metadata_key is not None and step.metadata_key in isolated_state:
+                resolved_session.state[step.metadata_key] = isolated_state[step.metadata_key]
             results.append(result)
             trace.append(WorkflowTraceEvent("workflow-step-finish", self.name, step.name, result.status, run_id=run_id, error=str(result.error) if result.error else None))
         return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
@@ -407,6 +449,8 @@ class LoopAgent(_BaseWorkflow):
                     return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
                 results.append(result)
                 trace.append(WorkflowTraceEvent("workflow-step-finish", self.name, step.name, result.status, iteration, run_id, str(result.error) if result.error else None))
+                if result.status == "suspended":
+                    return await self._finish(run_id=run_id, session=resolved_session, step_results=results, trace=trace, parent_run_id=parent_run_id)
             partial = self._result(run_id=run_id, session=resolved_session, step_results=list(results), trace=list(trace), parent_run_id=parent_run_id)
             if self.stop_condition is not None:
                 decision = self.stop_condition(partial)

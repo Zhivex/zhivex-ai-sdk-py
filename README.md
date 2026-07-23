@@ -31,6 +31,8 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Declarative workflows, native subagent tools such as `create_subagent_tool(...)`, evaluation/trace artifacts, safety-policy helpers, and local run stores remain beta.
+
 See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
 ## Start Here
@@ -1368,6 +1370,8 @@ For production-style FastAPI integration patterns, see [PRODUCTION_APIS.md](./PR
 
 The Python SDK now exposes an agent-first runtime on top of the core model contract:
 
+The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, declarative workflows, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
+
 - `Agent(...)`
 - `AgentRuntime(...)`
 - `AgentRegistry(...)`
@@ -1449,6 +1453,8 @@ agent = Agent(name="assistant", model=model, run_store=store)
 result = await run_agent(agent=agent, prompt="Draft a reply", idempotency_key="reply-1")
 state = await store.load(result.run_id)
 ```
+
+Built-in stores use optimistic revisions and atomic idempotency/cancellation claims. If an operator cancellation wins while a worker is still active, the durable state remains `cancelled` and the worker raises `AgentRunCancelled` instead of publishing or persisting a late success.
 
 Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. A tool with `requires_approval=True` fails closed if the agent has no approval policy. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call. Built-in run stores atomically claim the approval before executing it, so concurrent resume attempts cannot invoke the same tool twice.
 
@@ -1554,16 +1560,47 @@ For new MCP integrations, prefer the higher-level helpers:
 
 ```python
 import asyncio
+from pathlib import Path
 
-from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, mcp_stdio_server, run_agent
+from zhivex_ai import (
+    Agent,
+    ApprovalDecision,
+    ToolApprovalRequest,
+    create_mcp_tool_registry,
+    create_openai,
+    mcp_stdio_server,
+    run_agent,
+)
+
+
+READ_ONLY_FILESYSTEM_TOOLS = {
+    "directory_tree",
+    "get_file_info",
+    "list_allowed_directories",
+    "list_directory",
+    "list_directory_with_sizes",
+    "read_file",
+    "read_media_file",
+    "read_multiple_files",
+    "read_text_file",
+    "search_files",
+}
+
+
+async def approve_read_only_filesystem(request: ToolApprovalRequest) -> ApprovalDecision:
+    remote_name = str(request.tool_metadata.get("mcp_tool_name") or "")
+    if request.tool_source == "mcp" and remote_name in READ_ONLY_FILESYSTEM_TOOLS:
+        return ApprovalDecision(approved=True)
+    return ApprovalDecision(approved=False, reason="Only read-only filesystem MCP tools are allowed.")
 
 
 async def main() -> None:
+    allowed_root = (Path.cwd() / "examples").resolve()
     async with await create_mcp_tool_registry(
         mcp_stdio_server(
             name="fs",
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+            command="bunx",
+            args=["@modelcontextprotocol/server-filesystem@2026.7.10", str(allowed_root)],
         )
     ) as tools:
         openai = create_openai()
@@ -1572,16 +1609,17 @@ async def main() -> None:
             instructions="Use the filesystem MCP tools when needed.",
             model=openai("gpt-5.6-terra"),
             tools=tools,
+            approval_policy=approve_read_only_filesystem,
         )
 
-        result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
+        result = await run_agent(agent=agent, prompt="List the Python files in the allowed examples directory.")
         print(result.text)
 
 
 asyncio.run(main())
 ```
 
-`discover_mcp_tools(...)` is still available when you want raw tool definitions or full control over prefixes and registry composition. `ToolRegistry` also supports `async with` so MCP-backed runtimes can be closed cleanly after use.
+The example pins the MCP server package, limits its filesystem root, and denies every tool outside an explicit read-only allowlist. Review and pin MCP servers before use; broader filesystem, network, write, or delete capabilities require an application-owned sandbox and approval policy. `discover_mcp_tools(...)` remains available when you want raw tool definitions or full control over prefixes and registry composition. `ToolRegistry` supports `async with` so MCP-backed runtimes can be closed cleanly after use.
 
 ## Examples
 
@@ -1613,7 +1651,7 @@ export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: it requires a real `run_agent(...)` loop to call a local nonce-validation tool exactly once, consume its result, and finish successfully. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider smoke runs from the exact verified wheel before the Trusted Publisher job can start. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

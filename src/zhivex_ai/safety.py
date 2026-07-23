@@ -16,8 +16,16 @@ from .agent import (
     RunLimits,
     ToolApprovalRequest,
 )
-from .agent_state import AgentRunState
-from .types import JsonValue, ModelMessage, TextPart, ToolExecutionOptions
+from .agent_state import AgentRunState, AgentRunStep
+from .types import (
+    ContentPart,
+    JsonValue,
+    ModelMessage,
+    TextPart,
+    ToolCallPart,
+    ToolExecutionOptions,
+    ToolResultPart,
+)
 
 SafetyPolicyPreset = Literal["permissive", "review_sensitive", "locked_down"]
 ApprovalPolicyPreset = SafetyPolicyPreset
@@ -50,15 +58,34 @@ class RedactionPolicy:
         return value
 
     def redact_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
-        from .messages import create_text_message
-
         redacted: list[ModelMessage] = []
         for message in messages:
-            parts = [part for part in message.parts if isinstance(part, TextPart)]
-            if len(parts) == len(message.parts):
-                redacted.append(create_text_message(message.role, self.redact_text("".join(part.text for part in parts))))
-            else:
-                redacted.append(message)
+            parts: list[ContentPart] = []
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    parts.append(replace(part, text=self.redact_text(part.text)))
+                elif isinstance(part, ToolCallPart):
+                    parts.append(
+                        replace(
+                            part,
+                            tool_call=replace(part.tool_call, input=self.redact_json(part.tool_call.input)),
+                        )
+                    )
+                elif isinstance(part, ToolResultPart):
+                    error = part.tool_result.error
+                    parts.append(
+                        replace(
+                            part,
+                            tool_result=replace(
+                                part.tool_result,
+                                output=self.redact_json(part.tool_result.output),
+                                error=replace(error, message=self.redact_text(error.message)) if error else None,
+                            ),
+                        )
+                    )
+                else:
+                    parts.append(part)
+            redacted.append(ModelMessage(role=message.role, parts=parts))
         return redacted
 
     async def input_guardrail(self, request: InputGuardrailRequest) -> GuardrailResult:
@@ -115,7 +142,41 @@ class BudgetGuard:
         return GuardrailResult()
 
     async def output_guardrail(self, request: OutputGuardrailRequest) -> GuardrailResult:
-        return GuardrailResult()
+        if request.result is None:
+            return GuardrailResult()
+        steps: list[AgentRunStep] = []
+        for index, step in enumerate(request.result.steps, start=1):
+            response_messages = step.response.messages or ([step.response.message] if step.response.message else [])
+            tool_calls = [
+                part.tool_call
+                for message in response_messages
+                for part in message.parts
+                if isinstance(part, ToolCallPart)
+            ]
+            steps.append(
+                AgentRunStep(
+                    index=index,
+                    status="completed",
+                    tool_calls=tool_calls,
+                    usage=step.response.usage,
+                    messages=list(response_messages),
+                )
+            )
+        state = AgentRunState(
+            run_id=request.run_id,
+            agent_name=request.agent_name,
+            provider="",
+            model_id="",
+            status="completed",
+            session_id=request.session_id,
+            current_step=len(steps),
+            steps=steps,
+            tool_results=list(request.result.tool_results),
+            usage=request.result.usage,
+            output_text=request.text,
+            finish_reason=request.result.finish_reason,
+        )
+        return self.evaluate_state(state)
 
 
 @dataclass(slots=True)
@@ -261,6 +322,14 @@ def create_safety_policy(
     if budget_guard is not None:
         policy_input_guardrails.append(budget_guard.input_guardrail)
         policy_output_guardrails.append(budget_guard.output_guardrail)
+    run_limits = None
+    if budget_guard is not None and (budget_guard.max_steps is not None or budget_guard.max_tool_calls is not None):
+        run_limits = RunLimits(
+            max_steps=budget_guard.max_steps,
+            max_tool_calls=budget_guard.max_tool_calls,
+            max_wall_time_ms=None,
+            max_handoffs=None,
+        )
     return SafetyPolicy(
         preset=preset,
         approval_policy=approval_policy,
@@ -269,7 +338,16 @@ def create_safety_policy(
         tool_execution=tool_execution,
         redaction=redaction_policy,
         budget=budget_guard,
+        run_limits=run_limits,
     )
+
+
+def _tightest_limit(current: int | None, policy: int | None) -> int | None:
+    if current is None:
+        return policy
+    if policy is None:
+        return current
+    return min(current, policy)
 
 
 def apply_safety_policy_to_agent(agent: Agent, policy: SafetyPolicy) -> Agent:
@@ -277,10 +355,24 @@ def apply_safety_policy_to_agent(agent: Agent, policy: SafetyPolicy) -> Agent:
     input_guardrails = [*agent.input_guardrails, *policy.input_guardrails]
     output_guardrails = [*agent.output_guardrails, *policy.output_guardrails]
     metadata: dict[str, Any] = {**agent.metadata, "safety_policy": policy.preset}
+    policy_limits = policy.run_limits or RunLimits(
+        max_steps=None,
+        max_tool_calls=None,
+        max_wall_time_ms=None,
+        max_handoffs=None,
+    )
+    run_limits = RunLimits(
+        max_steps=_tightest_limit(agent.run_limits.max_steps, policy_limits.max_steps),
+        max_tool_calls=_tightest_limit(agent.run_limits.max_tool_calls, policy_limits.max_tool_calls),
+        max_wall_time_ms=_tightest_limit(agent.run_limits.max_wall_time_ms, policy_limits.max_wall_time_ms),
+        max_handoffs=_tightest_limit(agent.run_limits.max_handoffs, policy_limits.max_handoffs),
+    )
     return replace(
         agent,
         approval_policy=approval_policy,
         input_guardrails=input_guardrails,
         output_guardrails=output_guardrails,
+        tool_execution=policy.tool_execution if policy.tool_execution is not None else agent.tool_execution,
+        run_limits=run_limits,
         metadata=metadata,
     )

@@ -60,6 +60,55 @@ class ToolExecutionSuspended(ZhivexAIError):
         self.tool_results = list(tool_results or [])
 
 
+class ToolExecutionOutcomeUnknown(ZhivexAIError):
+    """Raised when a timed-out tool may still have produced an external side effect."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        timeout_ms: int,
+        idempotency_key: str,
+    ) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+        self.tool_call_id = tool_call_id
+        self.timeout_ms = timeout_ms
+        self.idempotency_key = idempotency_key
+        self.outcome_unknown = True
+
+
+class AgentRunCancelled(ZhivexAIError):
+    """Raised when an atomic cancellation wins against an active agent worker."""
+
+    def __init__(self, run_id: str, *, reason: str | None = None) -> None:
+        message = f'Agent run "{run_id}" was cancelled'
+        if reason:
+            message = f"{message}: {reason}"
+        super().__init__(message)
+        self.run_id = run_id
+        self.reason = reason
+
+
+class AgentEventDeliveryError(ZhivexAIError):
+    """Raised when an application event callback fails during an agent run."""
+
+    def __init__(
+        self,
+        run_id: str,
+        *,
+        event_type: str,
+        durable_state_committed: bool,
+    ) -> None:
+        suffix = " after the durable terminal state was committed" if durable_state_committed else ""
+        super().__init__(f'Agent event callback failed for "{event_type}" on run "{run_id}"{suffix}.')
+        self.run_id = run_id
+        self.event_type = event_type
+        self.durable_state_committed = durable_state_committed
+
+
 class ProviderHTTPError(ZhivexAIError):
     def __init__(
         self,

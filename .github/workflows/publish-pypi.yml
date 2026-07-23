@@ -10,15 +10,32 @@ permissions: {}
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zhivex
+          POSTGRES_USER: zhivex
+          POSTGRES_PASSWORD: zhivex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zhivex -d zhivex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ZHIVEX_TEST_POSTGRES_DSN: postgres://zhivex:zhivex@127.0.0.1:5432/zhivex
 
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -30,17 +47,14 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python scripts/verify_release_tag.py --tag "$RELEASE_TAG"
 
-      - name: Install build tools
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine
+      - name: Verify tagged commit belongs to main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
 
-      - name: Build package
-        run: python -m build
+      - name: Install release dependencies and project
+        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev,postgres,mcp,api,otel,docx]"
 
-      - name: Check distributions
-        run: python -m twine check dist/*
-
-      - name: Verify release artifacts
-        run: python scripts/verify_release_artifacts.py --dist-dir dist
+      - name: Run release gates
+        run: PYTHON=python make release-check
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -50,8 +64,63 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
+  live-agent-smoke:
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-smoke
+    permissions:
+      contents: read
+    env:
+      ZHIVEX_SMOKE_USE_INSTALLED: "1"
+      ZHIVEX_SMOKE_STRICT: "1"
+      ZHIVEX_SMOKE_AGENTS: "1"
+      ZHIVEX_SMOKE_PROVIDERS: ${{ vars.ZHIVEX_RELEASE_SMOKE_PROVIDERS }}
+      ZHIVEX_SMOKE_OPENAI_MODEL: ${{ vars.ZHIVEX_SMOKE_OPENAI_MODEL }}
+      ZHIVEX_SMOKE_ANTHROPIC_MODEL: ${{ vars.ZHIVEX_SMOKE_ANTHROPIC_MODEL }}
+      ZHIVEX_SMOKE_AZURE_OPENAI_MODEL: ${{ vars.ZHIVEX_SMOKE_AZURE_OPENAI_MODEL }}
+      ZHIVEX_SMOKE_GEMINI_MODEL: ${{ vars.ZHIVEX_SMOKE_GEMINI_MODEL }}
+      ZHIVEX_SMOKE_VERTEX_MODEL: ${{ vars.ZHIVEX_SMOKE_VERTEX_MODEL }}
+      ZHIVEX_SMOKE_QWEN_MODEL: ${{ vars.ZHIVEX_SMOKE_QWEN_MODEL }}
+      ZHIVEX_SMOKE_KIMI_MODEL: ${{ vars.ZHIVEX_SMOKE_KIMI_MODEL }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+      GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+      VERTEX_LOCATION: ${{ vars.VERTEX_LOCATION }}
+      OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ZHIVEX_RELEASE_ANTHROPIC_API_KEY }}
+      AZURE_OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_AZURE_OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_GEMINI_API_KEY }}
+      VERTEX_ACCESS_TOKEN: ${{ secrets.ZHIVEX_RELEASE_VERTEX_ACCESS_TOKEN }}
+      QWEN_API_KEY: ${{ secrets.ZHIVEX_RELEASE_QWEN_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.ZHIVEX_RELEASE_KIMI_API_KEY }}
+
+    steps:
+      - name: Check out the exact release commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Download verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Install the verified wheel
+        run: python -m pip install --disable-pip-version-check dist/*.whl
+
+      - name: Run protected agent-first provider smoke
+        run: |
+          test -n "$ZHIVEX_SMOKE_PROVIDERS"
+          python scripts/run_live_smoke.py
+
+  publish:
+    needs: [build, live-agent-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

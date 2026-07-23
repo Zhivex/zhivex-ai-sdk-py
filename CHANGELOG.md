@@ -47,6 +47,13 @@ Related documents:
 - Added beta `openai_programmatic_tool_calling_tool()` plus callable-tool `output_schema` and `allowed_callers` mapping, including replay-safe `program`, nested `caller`, function-output, and `program_output` handling.
 - Added beta `anthropic_web_fetch_tool()` with the current Anthropic web-fetch contract.
 - Added a `0.12.0` release plan focused on current provider contracts and model guidance.
+- Added a production-oriented agent onboarding guide, explicit stable exports for agent results/streams, tools, handoffs, Qwen, and Kimi, plus strict live-smoke and install-from-artifact release gates.
+- Added an opt-in strict agent-first live smoke that executes `run_agent(...)`, validates a real local tool call/result loop, and redacts configured secrets from failure output.
+- Added isolated Postgres integration coverage for complete agent persistence plus concurrent idempotency and approval claims.
+- Added versioned, revisioned `AgentRunState` persistence and explicit stale approval-resume claim reconciliation with `fail_agent_run_resume_claim(...)`.
+- Added `AgentRunCancelled`, raised when an operator cancellation atomically wins against an active worker.
+- Added `AgentEventDeliveryError`, which identifies the run/event and whether durable terminal state was already committed when an application callback failed.
+- Added `ToolExecutionOutcomeUnknown` and idempotency/deadline fields on `ToolExecutionContext` so timed-out external operations are explicit and reconcilable.
 
 ### Changed
 
@@ -55,11 +62,29 @@ Related documents:
 - Updated Anthropic hosted-tool defaults to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`; expanded adaptive-thinking and mid-conversation system-message rules for current model families.
 - Updated Kimi K3 to its distinct always-on reasoning contract with `reasoning_effort=low|high|max`, multimodal inputs, strict structured output, sampling validation, and reasoning-content continuation.
 - Updated recommended OpenAI examples to GPT-5.6 Terra while keeping older catalog entries available for compatibility.
+- Agent safety policies now apply configured redaction, execution options, and step/tool budgets to the actual runtime instead of acting only as descriptive helpers.
+- Remote HTTP and MCP tools now require approval by default; only an explicit HTTP opt-out or an exact MCP `trusted_tools` allowlist entry grants trust.
+- Tool timeouts now stop agent execution instead of allowing the model to continue after a side effect whose outcome is uncertain.
+- Workflow suspension is represented explicitly and `fail_fast` cancels cooperative sibling tasks instead of letting pending branches continue.
+- Built-in run stores now enforce compare-and-swap updates, atomic cancellation, terminal-state immutability, and unique non-null idempotency keys.
 
 ### Fixed
 
 - Corrected current Gemini/Veo, Qwen snapshot, retired Anthropic Sonnet, and deprecated Imagen catalog guidance.
 - Preserved provider metadata on tool execution results so nested programmatic calls keep their `caller` linkage through serialization and replay.
+- Made idempotency-key acquisition atomic in built-in run stores and restored the original persisted session/run identity when a key is reused.
+- Bound durable approvals to a fingerprint of the complete tool definition and executor state, and reject legacy or changed tools before side effects run.
+- Prevented a late worker completion from overwriting a run that an operator already cancelled.
+- Prevented event callback failures from rewriting an already committed terminal run, and persist an explicit failed run when delivery fails before the terminal commit.
+- Preflighted approval-claim recovery capabilities before executing resumed tools and reconciled a parent claim when its resumed child is cancelled.
+- Kept the base custom `AgentRunStore` protocol source-compatible; atomic idempotency, cancellation, approval, and reconciliation methods are capability contracts required only when those features are used.
+- Preserved completed tool results when a later call in the same model response suspends for approval; approval-capable batches execute sequentially so later side effects cannot race ahead.
+- Redacted remote/MCP credentials, sensitive URLs, provider options, and raw responses from persisted checkpoints and checkpoint events.
+- Accumulated usage, steps, tool results, artifacts, provider/model identity, and wall-clock limits across direct handoffs.
+- Propagated MCP `isError` results as tool failures, moved blocking synchronous tools off the event loop, and made absent approval-policy decisions fail closed.
+- Hardened release workflows to verify exact-version wheel/sdist metadata, tag ancestry, optional extras, Postgres dependencies, strict smoke execution, Twine checks, and PyPI/TestPyPI pre-publish gates.
+- Blocked PyPI/TestPyPI Trusted Publisher jobs on a protected, installed-wheel agent tool smoke against at least one configured real provider.
+- Raised optional API/MCP and development `click` floors to exclude the affected 8.3.2 release reported by the release security gate.
 
 ### Deprecated
 

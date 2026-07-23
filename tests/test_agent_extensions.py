@@ -40,11 +40,13 @@ from zhivex_ai.types import (  # noqa: E402
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    RemoteHTTPToolConfig,
     StreamFinishEvent,
     StreamToolCallEvent,
     TokenUsage,
     ToolCall,
     ToolCallPart,
+    ToolDefinition,
 )
 
 
@@ -350,6 +352,9 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
             headers={"x-api-key": "secret"},
             timeout_ms=321,
         )
+        self.assertTrue(definition.requires_approval)
+        self.assertEqual(definition.permissions, ["network", "external-side-effect"])
+        self.assertEqual(definition.metadata["remote_trust"], "approval-required")
         result = await runtime.execute(
             definition,
             {"item": "apollo"},
@@ -370,19 +375,72 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await runtime.execute(definition, {"item": "apollo"}, ToolExecutionContext(tool_name="lookup"))
 
+    def test_http_remote_tool_allows_explicit_application_trust(self) -> None:
+        definition = remote_tool(
+            name="lookup",
+            url="https://example.com/tools/lookup",
+            schema=dict[str, str],
+            requires_approval=False,
+        )
+
+        self.assertFalse(definition.requires_approval)
+        self.assertEqual(definition.metadata["remote_trust"], "application")
+
+    async def test_legacy_remote_definition_fails_closed_at_agent_boundary(self) -> None:
+        class RemoteToolModel(ToolLoopModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                result = await super().generate(input)
+                if any(
+                    isinstance(part, ToolCallPart)
+                    for message in result.messages
+                    for part in message.parts
+                ):
+                    result.finish_reason = "tool-calls"
+                return result
+
+        definition = ToolDefinition(
+            name="lookup",
+            description="legacy remote definition",
+            schema=dict[str, str],
+            source="remote",
+            requires_approval=None,
+            remote_config=RemoteHTTPToolConfig(url="https://example.com/tools/lookup"),
+        )
+        agent = Agent(name="assistant", model=RemoteToolModel(), tools={"lookup": definition})
+
+        result = await run_agent(agent=agent, prompt="lookup", max_steps=2)
+
+        self.assertEqual(len(result.tool_results), 1)
+        self.assertTrue(result.tool_results[0].is_error)
+        self.assertIn("requires an approval_policy", result.tool_results[0].error.message)  # type: ignore[union-attr]
+
+    def test_generic_remote_tool_factory_also_fails_closed(self) -> None:
+        definition = tool(
+            name="lookup",
+            schema=dict[str, str],
+            source="remote",
+            remote_config=RemoteHTTPToolConfig(url="https://example.com/tools/lookup"),
+        )
+
+        self.assertTrue(definition.requires_approval)
+        self.assertEqual(definition.permissions, ["network", "external-side-effect"])
+
     async def test_discover_mcp_tools_and_runtime_execution(self) -> None:
         stdio_calls: dict[str, int] = {"closed": 0}
 
         class FakeTool:
-            def __init__(self, name: str, description: str) -> None:
+            def __init__(self, name: str, description: str, annotations=None) -> None:
                 self.name = name
                 self.description = description
                 self.inputSchema = {"type": "object", "properties": {"item": {"type": "string"}}}
+                self.annotations = annotations
 
         class FakeResult:
-            def __init__(self, tools=None, structured=None) -> None:
+            def __init__(self, tools=None, structured=None, content=None, is_error=False) -> None:
                 self.tools = tools or []
                 self.structuredContent = structured
+                self.content = content
+                self.isError = is_error
 
         class FakeClientSession:
             def __init__(self, read_stream, write_stream) -> None:
@@ -399,9 +457,23 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
                 return None
 
             async def list_tools(self):
-                return FakeResult(tools=[FakeTool("lookup", "Lookup an item")])
+                return FakeResult(
+                    tools=[
+                        FakeTool("lookup", "Lookup an item"),
+                        FakeTool(
+                            "read_only",
+                            "Read an item",
+                            {"readOnlyHint": True, "destructiveHint": False},
+                        ),
+                    ]
+                )
 
             async def call_tool(self, name: str, arguments: dict[str, str]):
+                if arguments.get("item") == "fail":
+                    return FakeResult(
+                        content=[{"type": "text", "text": "remote failure"}],
+                        is_error=True,
+                    )
                 return FakeResult(structured={"tool": name, "arguments": arguments})
 
         class FakeTransportContext:
@@ -441,6 +513,18 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
             self.assertIn("mcp_lookup", tools)
             self.assertEqual(tools["mcp_lookup"].metadata["mcp_server"], "demo")
             self.assertEqual(tools["mcp_lookup"].metadata["mcp_tool_name"], "lookup")
+            self.assertTrue(tools["mcp_lookup"].requires_approval)
+            self.assertTrue(tools["mcp_read_only"].requires_approval)
+            self.assertEqual(tools["mcp_read_only"].permissions, ["read", "network"])
+            self.assertEqual(tools["mcp_read_only"].metadata["mcp_trust"], "approval-required")
+            trusted_tools = await discover_mcp_tools(
+                server,
+                prefix="trusted_",
+                trusted_tools={"read_only"},
+            )
+            self.assertTrue(trusted_tools["trusted_lookup"].requires_approval)
+            self.assertFalse(trusted_tools["trusted_read_only"].requires_approval)
+            self.assertEqual(trusted_tools["trusted_read_only"].metadata["mcp_trust"], "application")
             runtime = MCPToolRuntime()
             result = await runtime.execute(
                 tools["mcp_lookup"],
@@ -449,6 +533,12 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
             )
             self.assertEqual(result["tool"], "lookup")
             self.assertEqual(result["arguments"]["item"], "apollo")
+            with self.assertRaisesRegex(RuntimeError, "remote failure"):
+                await runtime.execute(
+                    tools["mcp_lookup"],
+                    {"item": "fail"},
+                    ToolExecutionContext(tool_name="mcp_lookup"),
+                )
             await runtime.aclose()
             self.assertGreaterEqual(stdio_calls["closed"], 1)
         finally:
@@ -821,6 +911,7 @@ class PostgresStoreTests(IsolatedAsyncioTestCase):
             async def execute(self, sql: str, *args):
                 if sql.lstrip().upper().startswith("UPDATE"):
                     self.state_json = args[0]
+                    return "UPDATE 1"
                 return "OK"
 
             async def close(self):

@@ -54,9 +54,13 @@ Use `SequentialAgent` when every step depends on the previous state. Steps run i
 
 Missing template keys fail the step with `ValidationError`. With the default `fail_fast` policy the workflow stops and returns a failed result. With `continue`, later steps still run. With `capture`, the error is stored under `output_key` as an application-readable error object.
 
+If an agent step suspends for human approval, the step and workflow return `status="suspended"`; the step is not marked complete and later sequential/loop steps do not start. `output_key` is written only after completion, while `metadata_key` retains the suspended run id for the application-owned resume flow.
+
 ## Parallel Workflows
 
 Use `ParallelAgent` for fan-out work such as independent research, policy review, or risk analysis. Each step starts from the same base session state. Only explicit `output_key` and `metadata_key` values are merged back into the shared session.
+
+With `fail_fast`, a failed branch cooperatively cancels sibling tasks that have not completed. This prevents further cancel-aware work but cannot undo a side effect already started by a tool or stop synchronous code that ignores cancellation. `capture` preserves each isolated branch result before merging its declared keys.
 
 Parallel `output_key` values must be unique. Duplicate output keys raise `ValidationError` during workflow construction.
 

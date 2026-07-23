@@ -1,6 +1,12 @@
 import asyncio
 
-from zhivex_ai import Agent, create_openai, remote_tool, run_agent
+from zhivex_ai import Agent, ApprovalDecision, ToolApprovalRequest, create_openai, remote_tool, run_agent
+
+
+async def approve_project_status(request: ToolApprovalRequest) -> ApprovalDecision:
+    if request.tool_source == "remote" and request.tool_name == "project_status":
+        return ApprovalDecision(approved=True)
+    return ApprovalDecision(approved=False, reason="Only the reviewed project-status endpoint is allowed.")
 
 
 async def main() -> None:
@@ -19,6 +25,7 @@ async def main() -> None:
                 timeout_ms=5_000,
             )
         },
+        approval_policy=approve_project_status,
     )
 
     result = await run_agent(agent=agent, prompt="Check the status for project Apollo.")

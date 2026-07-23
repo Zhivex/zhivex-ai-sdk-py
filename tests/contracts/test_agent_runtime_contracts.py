@@ -4,6 +4,7 @@ import asyncio
 import sys
 import tempfile
 from collections.abc import AsyncIterable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +17,19 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    AgentEventDeliveryError,
+    AgentErrorEvent,
+    AgentFinishEvent,
+    AgentRunCancelled,
+    AgentRunStartEvent,
+    AgentRuntime,
     ApprovalDecision,
     AgentRunState,
     AgentRunStore,
     GuardrailResult,
+    PendingApproval,
     ToolApprovalRequest,
+    cancel_agent_run,
     cancel_agent_run_tree,
     create_agent_run_snapshot,
     create_agent_session,
@@ -31,6 +40,7 @@ from zhivex_ai import (  # noqa: E402
     create_sqlite_checkpoint_store,
     create_text_message,
     deny_all_approval_policy,
+    fail_agent_run_resume_claim,
     get_pending_agent_approvals,
     handoff_to,
     permission_allowlist_approval_policy,
@@ -55,6 +65,7 @@ from zhivex_ai.types import (  # noqa: E402
     TokenUsage,
 )
 from zhivex_ai.errors import ValidationError  # noqa: E402
+from zhivex_ai.agent_state import deserialize_agent_run_state  # noqa: E402
 
 
 BASE_CAPABILITIES = ModelCapabilities(
@@ -114,6 +125,35 @@ class ToolModel:
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
         async def generator() -> AsyncIterable[object]:
             yield StreamTextDeltaEvent(text_delta="tool done")
+            yield StreamFinishEvent(finish_reason="stop")
+
+        return generator()
+
+
+class MultiToolModel:
+    provider = "contract"
+    model_id = "multi-tool"
+    capabilities = replace(BASE_CAPABILITIES, parallel_tool_calls=True)
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        result_count = sum(message.role == "tool" for message in input.messages)
+        if result_count < 2:
+            return GenerateResult(
+                messages=[
+                    ModelMessage(
+                        role="assistant",
+                        parts=[
+                            ToolCallPart(tool_call=ToolCall(id="call_safe", name="safe", input={})),
+                            ToolCallPart(tool_call=ToolCall(id="call_write", name="write", input={})),
+                        ],
+                    )
+                ],
+                finish_reason="tool-calls",
+            )
+        return GenerateResult(messages=[create_text_message("assistant", "both done")], text="both done")
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[object]:
+        async def generator() -> AsyncIterable[object]:
             yield StreamFinishEvent(finish_reason="stop")
 
         return generator()
@@ -371,6 +411,98 @@ async def test_concurrent_approval_resume_executes_tool_once(
 
 
 @pytest.mark.asyncio
+async def test_suspension_preserves_completed_calls_and_defers_later_side_effects() -> None:
+    store = create_in_memory_agent_run_store()
+    executions: list[str] = []
+
+    async def suspend_write(request: ToolApprovalRequest) -> ApprovalDecision:
+        if request.tool_name == "write":
+            return ApprovalDecision.require_human("review write", approval_id="approval_write")
+        return ApprovalDecision(True)
+
+    agent = Agent(
+        name="assistant",
+        model=MultiToolModel(),
+        run_store=store,
+        approval_policy=suspend_write,
+        tools={
+            "safe": tool(
+                name="safe",
+                schema=dict,
+                execute=lambda _input: executions.append("safe") or {"ok": True},
+                requires_approval=False,
+            ),
+            "write": tool(
+                name="write",
+                schema=dict,
+                execute=lambda _input: executions.append("write") or {"ok": True},
+                requires_approval=True,
+            ),
+        },
+    )
+
+    suspended = await run_agent(agent=agent, prompt="run both")
+
+    assert executions == ["safe"]
+    assert [result.tool_name for result in suspended.tool_results] == ["safe"]
+    resumed = await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_write")
+    assert executions == ["safe", "write"]
+    assert resumed.text == "both done"
+
+
+@pytest.mark.asyncio
+async def test_approval_resume_rejects_changed_closure_state() -> None:
+    store = create_in_memory_agent_run_store()
+    config = {"destination": "original"}
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    def execute(_input: dict[str, str]) -> dict[str, str]:
+        return {"destination": config["destination"]}
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={"lookup": tool(name="lookup", schema=dict[str, str], execute=execute, requires_approval=True)},
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+    config["destination"] = "changed"
+
+    with pytest.raises(ValidationError, match="no longer matches"):
+        await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_claimed_atomically() -> None:
+    store = create_in_memory_agent_run_store()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    class BlockingModel(EchoModel):
+        async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return await super().generate(input)
+
+    agent = Agent(name="assistant", model=BlockingModel(), run_store=store)
+    first_task = asyncio.create_task(run_agent(agent=agent, prompt="first", idempotency_key="same"))
+    await started.wait()
+    second = await run_agent(agent=agent, prompt="second", idempotency_key="same")
+    release.set()
+    first = await first_task
+
+    assert calls == 1
+    assert first.run_id == second.run_id
+    assert first.session.id == second.session.id
+
+
+@pytest.mark.asyncio
 async def test_tool_approval_can_suspend_and_resume_with_denial() -> None:
     store = create_in_memory_agent_run_store()
 
@@ -532,6 +664,419 @@ async def test_run_store_idempotency_cancel_and_replay_contract(name: str, facto
     finally:
         if cleanup is not None:
             cleanup.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "factory"), _run_store_factories(), ids=[name for name, _factory in _run_store_factories()])
+async def test_cancelled_run_cannot_be_overwritten_by_stale_worker(
+    name: str,
+    factory: Callable[[], tuple[AgentRunStore, Any]],
+) -> None:
+    del name
+    store, cleanup = factory()
+    try:
+        state = AgentRunState(run_id="run", agent_name="assistant", provider="mock", model_id="model")
+        await store.save(state)
+        stale_worker_state = await store.load("run")
+        assert stale_worker_state is not None
+
+        cancelled = await cancel_agent_run(store, "run", reason="operator-stop", now_ms=123)
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        assert cancelled.revision == 1
+
+        stale_worker_state.status = "completed"
+        stale_worker_state.output_text = "late result"
+        with pytest.raises(ValidationError, match="revision conflict"):
+            await store.save(stale_worker_state)
+
+        persisted = await store.load("run")
+        assert persisted is not None
+        assert persisted.status == "cancelled"
+        assert persisted.cancellation_reason == "operator-stop"
+        assert persisted.output_text == ""
+        assert persisted.revision == 1
+    finally:
+        if cleanup is not None:
+            cleanup.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "factory"), _run_store_factories(), ids=[name for name, _factory in _run_store_factories()])
+async def test_agent_worker_completion_cannot_resurrect_cancelled_run(
+    name: str,
+    factory: Callable[[], tuple[AgentRunStore, Any]],
+) -> None:
+    del name
+    store, cleanup = factory()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingModel(EchoModel):
+        async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+            started.set()
+            await release.wait()
+            return await super().generate(input)
+
+    try:
+        agent = Agent(name="assistant", model=BlockingModel(), run_store=store)
+        events: list[Any] = []
+
+        async def capture(event: Any) -> None:
+            events.append(event)
+
+        worker = asyncio.create_task(
+            AgentRuntime().run(
+                agent=agent,
+                prompt="hello",
+                idempotency_key="cancel-race",
+                emit=capture,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        running = await store.find_by_idempotency_key("cancel-race")
+        assert running is not None
+
+        cancelled = await cancel_agent_run(store, running.run_id, reason="operator-stop", now_ms=123)
+        assert cancelled is not None
+        release.set()
+        with pytest.raises(AgentRunCancelled, match="operator-stop") as cancelled_error:
+            await worker
+        assert cancelled_error.value.run_id == running.run_id
+        assert cancelled_error.value.reason == "operator-stop"
+
+        persisted = await store.load(running.run_id)
+        assert persisted is not None
+        assert persisted.status == "cancelled"
+        assert persisted.revision == 1
+        assert not any(isinstance(event, AgentFinishEvent) for event in events)
+        assert isinstance(events[-1], AgentErrorEvent)
+        assert isinstance(events[-1].error, AgentRunCancelled)
+    finally:
+        release.set()
+        if cleanup is not None:
+            cleanup.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_finish_event_delivery_failure_does_not_rewrite_completed_state() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def fail_finish(event: Any) -> None:
+        if isinstance(event, AgentFinishEvent):
+            raise RuntimeError("event sink unavailable")
+
+    agent = Agent(name="assistant", model=EchoModel(), run_store=store)
+    with pytest.raises(AgentEventDeliveryError) as delivery_error:
+        await AgentRuntime().run(
+            agent=agent,
+            prompt="hello",
+            idempotency_key="finish-event-failure",
+            emit=fail_finish,
+        )
+
+    assert delivery_error.value.event_type == "finish"
+    assert delivery_error.value.durable_state_committed is True
+    state = await store.find_by_idempotency_key("finish-event-failure")
+    assert state is not None
+    assert state.status == "completed"
+    assert state.output_text == "echo:hello"
+
+
+@pytest.mark.asyncio
+async def test_run_start_event_delivery_failure_persists_failed_state() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def fail_start(event: Any) -> None:
+        if isinstance(event, AgentRunStartEvent):
+            raise RuntimeError("event sink unavailable")
+
+    agent = Agent(name="assistant", model=EchoModel(), run_store=store)
+    with pytest.raises(AgentEventDeliveryError) as delivery_error:
+        await AgentRuntime().run(
+            agent=agent,
+            prompt="hello",
+            idempotency_key="start-event-failure",
+            emit=fail_start,
+        )
+
+    assert delivery_error.value.event_type == "run-start"
+    assert delivery_error.value.durable_state_committed is False
+    state = await store.find_by_idempotency_key("start-event-failure")
+    assert state is not None
+    assert state.status == "failed"
+    assert state.finish_reason == "error"
+
+
+@pytest.mark.asyncio
+async def test_resume_reconciles_parent_when_resumed_child_is_cancelled() -> None:
+    store = create_in_memory_agent_run_store()
+    resume_started = asyncio.Event()
+    release_resume = asyncio.Event()
+
+    class BlockingResumeModel(ToolModel):
+        async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+            if any(message.role == "tool" for message in input.messages):
+                resume_started.set()
+                await release_resume.wait()
+            return await super().generate(input)
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    agent = Agent(
+        name="assistant",
+        model=BlockingResumeModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda input: {"item": input["item"]},
+                requires_approval=True,
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+    resume_task = asyncio.create_task(
+        resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+    )
+    await asyncio.wait_for(resume_started.wait(), timeout=1)
+    children = await store.find_by_parent_run_id(suspended.run_id)
+    assert len(children) == 1
+    cancelled_child = await cancel_agent_run(store, children[0].run_id, reason="stop-child")
+    assert cancelled_child is not None
+    release_resume.set()
+
+    with pytest.raises(AgentRunCancelled) as cancelled_error:
+        await resume_task
+    assert cancelled_error.value.run_id == children[0].run_id
+
+    parent = await store.load(suspended.run_id)
+    assert parent is not None
+    assert parent.status == "failed"
+    assert parent.metadata["resume_claim_failure"]["claim_token"]  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_resume_preflights_reconciliation_capability_before_tool_execution() -> None:
+    backing = create_in_memory_agent_run_store()
+    executions = 0
+
+    class MissingReconciliationStore:
+        async def load(self, run_id: str) -> AgentRunState | None:
+            return await backing.load(run_id)
+
+        async def find_by_idempotency_key(self, key: str) -> AgentRunState | None:
+            return await backing.find_by_idempotency_key(key)
+
+        async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
+            return await backing.find_by_parent_run_id(parent_run_id)
+
+        async def save(self, state: AgentRunState) -> AgentRunState:
+            return await backing.save(state)
+
+        async def claim_pending_approval(self, *args: Any, **kwargs: Any) -> AgentRunState | None:
+            return await backing.claim_pending_approval(*args, **kwargs)
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    def execute(input: dict[str, str]) -> dict[str, str]:
+        nonlocal executions
+        executions += 1
+        return input
+
+    store = MissingReconciliationStore()
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,  # type: ignore[arg-type]
+        approval_policy=suspend_policy,
+        tools={"lookup": tool(name="lookup", schema=dict[str, str], execute=execute, requires_approval=True)},
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+
+    with pytest.raises(ValidationError, match="resume-claim reconciliation"):
+        await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+
+    assert executions == 0
+    parent = await backing.load(suspended.run_id)
+    assert parent is not None
+    assert parent.status == "suspended"
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_an_invalid_claim_before_tool_execution() -> None:
+    backing = create_in_memory_agent_run_store()
+    executions = 0
+
+    class InvalidClaimStore:
+        async def load(self, run_id: str) -> AgentRunState | None:
+            return await backing.load(run_id)
+
+        async def find_by_idempotency_key(self, key: str) -> AgentRunState | None:
+            return await backing.find_by_idempotency_key(key)
+
+        async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
+            return await backing.find_by_parent_run_id(parent_run_id)
+
+        async def save(self, state: AgentRunState) -> AgentRunState:
+            return await backing.save(state)
+
+        async def claim_pending_approval(self, run_id: str, *args: Any, **kwargs: Any) -> AgentRunState | None:
+            return await backing.load(run_id)
+
+        async def fail_resume_claim(self, *args: Any, **kwargs: Any) -> AgentRunState | None:
+            return await backing.fail_resume_claim(*args, **kwargs)
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    def execute(input: dict[str, str]) -> dict[str, str]:
+        nonlocal executions
+        executions += 1
+        return input
+
+    store = InvalidClaimStore()
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,  # type: ignore[arg-type]
+        approval_policy=suspend_policy,
+        tools={"lookup": tool(name="lookup", schema=dict[str, str], execute=execute, requires_approval=True)},
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+
+    with pytest.raises(ValidationError, match="invalid claim"):
+        await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+
+    assert executions == 0
+    parent = await backing.load(suspended.run_id)
+    assert parent is not None
+    assert parent.status == "suspended"
+
+
+def test_agent_run_state_schema_rejects_future_versions() -> None:
+    payload = {
+        "schema_version": 999,
+        "revision": 0,
+        "run_id": "future",
+        "agent_name": "assistant",
+        "provider": "mock",
+        "model_id": "model",
+    }
+
+    with pytest.raises(ValidationError, match="unsupported future schema_version"):
+        deserialize_agent_run_state(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("name", "factory"), _run_store_factories(), ids=[name for name, _factory in _run_store_factories()])
+async def test_stale_resume_claim_can_only_be_failed_by_its_claim_token(
+    name: str,
+    factory: Callable[[], tuple[AgentRunStore, Any]],
+) -> None:
+    del name
+    store, cleanup = factory()
+    try:
+        state = AgentRunState(
+            run_id="approval-run",
+            agent_name="assistant",
+            provider="mock",
+            model_id="model",
+            status="suspended",
+            pending_approvals=[PendingApproval(id="approval", name="write")],
+        )
+        await store.save(state)
+        claimed = await store.claim_pending_approval(
+            "approval-run",
+            "approval",
+            claim_token="worker-claim",
+            claimed_at_ms=100,
+        )
+        assert claimed is not None
+        assert claimed.status == "running"
+        assert claimed.revision == 1
+
+        wrong_claim = await fail_agent_run_resume_claim(
+            store,
+            "approval-run",
+            claim_token="other-worker",
+            reason="lease expired",
+            now_ms=200,
+        )
+        assert wrong_claim is None
+
+        reconciled = await fail_agent_run_resume_claim(
+            store,
+            "approval-run",
+            claim_token="worker-claim",
+            reason="resume worker lease expired; outcome requires operator review",
+            now_ms=200,
+        )
+        assert reconciled is not None
+        assert reconciled.status == "failed"
+        assert reconciled.revision == 2
+        assert reconciled.pending_approvals[0].id == "approval"
+        assert reconciled.metadata["resume_claim_failure"]["claim_token"] == "worker-claim"  # type: ignore[index]
+
+        repeated = await fail_agent_run_resume_claim(
+            store,
+            "approval-run",
+            claim_token="worker-claim",
+            reason="retry",
+            now_ms=300,
+        )
+        assert repeated is None
+    finally:
+        if cleanup is not None:
+            cleanup.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cancel_and_resume_reconciliation_assign_timestamps_by_default() -> None:
+    store = create_in_memory_agent_run_store()
+    await store.save(
+        AgentRunState(
+            run_id="untimed-cancel",
+            agent_name="assistant",
+            provider="mock",
+            model_id="model",
+        )
+    )
+    cancelled = await cancel_agent_run(store, "untimed-cancel")
+    assert cancelled is not None
+    assert isinstance(cancelled.updated_at_ms, int) and cancelled.updated_at_ms > 0
+    assert cancelled.finished_at_ms == cancelled.updated_at_ms
+
+    await store.save(
+        AgentRunState(
+            run_id="untimed-resume",
+            agent_name="assistant",
+            provider="mock",
+            model_id="model",
+            status="suspended",
+            pending_approvals=[PendingApproval(id="approval", name="write")],
+        )
+    )
+    claimed = await store.claim_pending_approval(
+        "untimed-resume",
+        "approval",
+        claim_token="lease-owner",
+        claimed_at_ms=100,
+    )
+    assert claimed is not None
+    failed = await fail_agent_run_resume_claim(
+        store,
+        "untimed-resume",
+        claim_token="lease-owner",
+        reason="lease expired",
+    )
+    assert failed is not None
+    assert isinstance(failed.updated_at_ms, int) and failed.updated_at_ms > 0
+    assert failed.finished_at_ms == failed.updated_at_ms
 
 
 @pytest.mark.asyncio

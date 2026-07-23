@@ -40,6 +40,14 @@ make smoke
 
 Scope checks with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. The smoke runner skips providers whose required credentials or model IDs are not configured.
 
+For an agent release candidate, use the strict agent-first variant:
+
+```bash
+ZHIVEX_SMOKE_PROVIDERS=openai,anthropic make smoke-agents
+```
+
+For every configured provider selected, this runs `run_agent(...)`, requires one local nonce-validation tool call, validates the tool result, and verifies the model continued to a final answer. `make smoke-agents` sets `ZHIVEX_SMOKE_AGENTS=1` and `ZHIVEX_SMOKE_STRICT=1`, so a run with no configured provider fails instead of silently recording only skips. Failure output redacts configured API-key, access-token, password, and secret values.
+
 | Provider | Required environment |
 | --- | --- |
 | OpenAI | `OPENAI_API_KEY`, `ZHIVEX_SMOKE_OPENAI_MODEL` |

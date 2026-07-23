@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, cast
 
-from .errors import ParseError, ToolExecutionSuspended, UnsupportedFeatureError, ValidationError
+from .errors import (
+    ParseError,
+    ToolExecutionOutcomeUnknown,
+    ToolExecutionSuspended,
+    UnsupportedFeatureError,
+    ValidationError,
+)
 from .messages import (
     create_text_message,
     get_agent_capabilities,
@@ -243,6 +250,15 @@ def _to_request(
     )
 
 
+async def _invoke_tool_callable_async(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
+    is_async = inspect.iscoroutinefunction(execute) or inspect.iscoroutinefunction(getattr(execute, "__call__", None))
+    if is_async:
+        output = _invoke_tool_callable(execute, parsed, context)
+    else:
+        output = await asyncio.to_thread(_invoke_tool_callable, execute, parsed, context)
+    return await output if inspect.isawaitable(output) else output
+
+
 async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int | None = None) -> ToolExecutionResult:
     tool = tools.get(call.name) if tools else None
     if tool is None:
@@ -258,16 +274,35 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     except Exception as error:
         raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
     try:
+        idempotency_prefix = str(callable_tool.metadata.get("zhivex_tool_idempotency_prefix") or "").strip()
+        idempotency_key = (
+            f"{idempotency_prefix}:{call.id or call.name}"
+            if idempotency_prefix
+            else call.id or f"{call.name}:tool-call"
+        )
         context = ToolExecutionContext(
             tool_name=call.name,
             tool_call_id=call.id,
+            idempotency_key=idempotency_key,
+            deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
             permissions=list(callable_tool.permissions),
             source=callable_tool.source,
             metadata=dict(callable_tool.metadata),
         )
-        output = _invoke_tool_callable(callable_tool.execute, parsed, context)
-        if inspect.isawaitable(output):
-            output = await asyncio.wait_for(output, timeout_ms / 1000) if timeout_ms is not None else await output
+        execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
+        try:
+            output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
+        except TimeoutError as error:
+            if not execution.cancelled():
+                raise
+            raise ToolExecutionOutcomeUnknown(
+                f'Tool "{call.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
+                f'Reconcile the side effect with idempotency key "{idempotency_key}" before retrying.',
+                tool_name=call.name,
+                tool_call_id=call.id,
+                timeout_ms=cast(int, timeout_ms),
+                idempotency_key=idempotency_key,
+            ) from error
         return ToolExecutionResult(
             tool_call_id=call.id,
             tool_name=call.name,
@@ -276,6 +311,8 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             provider_metadata=dict(call.provider_metadata),
         )
     except ToolExecutionSuspended:
+        raise
+    except ToolExecutionOutcomeUnknown:
         raise
     except Exception as error:
         return ToolExecutionResult(
@@ -326,7 +363,25 @@ async def _execute_tools(
     default_parallel: bool = False,
 ) -> list[ToolExecutionResult]:
     parallel = options.parallel if options and options.parallel is not None else default_parallel
+    # A human-approval suspension is a transactional boundary. Execute the
+    # whole batch in order whenever one of the tools can suspend so later side
+    # effects cannot race ahead of the pending approval.
+    if parallel and tools is not None:
+        for call in tool_calls:
+            definition = tools.get(call.name)
+            if (
+                definition is not None
+                and is_callable_tool_definition(definition)
+                and (
+                    definition.requires_approval is True
+                    or bool(definition.metadata.get("zhivex_agent_approval_gated"))
+                )
+            ):
+                parallel = False
+                break
     timeout_ms = options.timeout_ms if options else None
+    if timeout_ms is not None and timeout_ms <= 0:
+        raise ValidationError('The "tool_execution.timeout_ms" field must be greater than zero.')
     stop_on_error = options.stop_on_error if options else False
     max_concurrency = max(1, options.max_concurrency or len(tool_calls) or 1) if options else max(1, len(tool_calls) or 1)
 
@@ -336,7 +391,11 @@ async def _execute_tools(
     if not parallel or len(tool_calls) <= 1:
         sequential_results: list[ToolExecutionResult] = []
         for call in tool_calls:
-            result = await execute_single(call)
+            try:
+                result = await execute_single(call)
+            except ToolExecutionSuspended as suspended:
+                suspended.tool_results = [*sequential_results, *suspended.tool_results]
+                raise
             sequential_results.append(result)
             if stop_on_error and result.is_error:
                 raise RuntimeError(
@@ -363,6 +422,35 @@ async def _execute_tools(
                 f'Tool "{first_error.tool_name}" failed: {(first_error.error.message if first_error.error else "Unknown tool error.")}'
             )
     return resolved
+
+
+def _record_suspended_tool_state(
+    suspended: ToolExecutionSuspended,
+    *,
+    messages: list[ModelMessage],
+    steps: list[GenerateTextStep],
+    previous_tool_results: list[ToolExecutionResult],
+) -> None:
+    partial_results = cast(list[ToolExecutionResult], suspended.tool_results)
+    completed_ids = {result.tool_call_id for result in partial_results}
+    pending_call_id = str(getattr(suspended.pending_approval, "tool_call_id", "") or "")
+    allowed_call_ids = completed_ids | ({pending_call_id} if pending_call_id else set())
+    filtered_messages = [
+        ModelMessage(
+            role=message.role,
+            parts=[
+                part
+                for part in message.parts
+                if part.type != "tool-call" or part.tool_call.id in allowed_call_ids
+            ],
+        )
+        for message in messages
+    ]
+    for result in partial_results:
+        filtered_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
+    suspended.messages = filtered_messages
+    suspended.steps = list(steps)
+    suspended.tool_results = [*previous_tool_results, *partial_results]
 
 
 def _raise_for_provider_builtin_tool_calls(
@@ -483,9 +571,12 @@ async def generate_text(
                 default_parallel=model.capabilities.parallel_tool_calls,
             )
         except ToolExecutionSuspended as suspended:
-            suspended.messages = list(all_messages)
-            suspended.steps = list(steps)
-            suspended.tool_results = list(tool_results)
+            _record_suspended_tool_state(
+                suspended,
+                messages=all_messages,
+                steps=steps,
+                previous_tool_results=tool_results,
+            )
             raise
         tool_results.extend(current_results)
         for result in current_results:
@@ -673,9 +764,12 @@ def stream_text(
                         default_parallel=model.capabilities.parallel_tool_calls,
                     )
                 except ToolExecutionSuspended as suspended:
-                    suspended.messages = list(all_messages)
-                    suspended.steps = list(steps)
-                    suspended.tool_results = list(tool_results)
+                    _record_suspended_tool_state(
+                        suspended,
+                        messages=all_messages,
+                        steps=steps,
+                        previous_tool_results=tool_results,
+                    )
                     raise
                 tool_results.extend(current_results)
                 for result in current_results:

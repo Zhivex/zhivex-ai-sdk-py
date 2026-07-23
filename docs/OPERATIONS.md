@@ -26,6 +26,7 @@ Recommended pattern:
 - use bounded retries with backoff for provider calls and gateway fallbacks
 - honor `retry_after_ms` when present
 - do not retry validation errors, unsupported feature errors, auth failures, or policy denials
+- do not automatically retry `ToolExecutionOutcomeUnknown`; reconcile the downstream operation by `ToolExecutionContext.idempotency_key` first
 - make user actions idempotent before enabling client or worker retries
 
 Gateway routing exposes `max_retries`, `retry_backoff_ms`, `retryable`, `retry`, and target rank through `GatewayConfig(on_attempt=...)`.
@@ -64,9 +65,11 @@ The SDK is async-first. Production services should:
 - propagate cancellation from HTTP disconnects or worker shutdowns
 - keep tool implementations cooperative and timeout-aware
 - use run stores when cancellation, replay, idempotency, pending approvals, or auditability matters
-- use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled
+- stop new child dispatch, then use `cancel_agent_run_tree(...)` to mark the currently visible stored tree as cancelled and reconcile again after active workers settle
 
 Stored cancellation records do not stop already-running provider calls or arbitrary app tools by themselves. Workers must check their own cancellation signals.
+
+When an atomic stored cancellation beats a worker's final write, the worker raises `AgentRunCancelled` and does not replace the durable record with `completed` or `failed`. Treat it as a terminal cancelled job; inspect `run_id` and `reason` for reconciliation.
 
 ## Serverless And Workers
 
@@ -94,6 +97,9 @@ Map SDK errors at your API boundary:
 - `ValidationError` -> client error
 - `UnsupportedFeatureError` -> client or configuration error
 - `ConfigurationError` -> deployment/configuration error
+- `AgentRunCancelled` -> terminal cancelled job or conflict response
+- `AgentEventDeliveryError` -> event-pipeline incident; inspect `durable_state_committed` before any retry
+- `ToolExecutionOutcomeUnknown` -> manual/idempotency reconciliation before retry
 - `ProviderHTTPError(retryable=True)` -> retryable upstream error
 - `ProviderHTTPError(retryable=False)` -> non-retryable upstream error
 

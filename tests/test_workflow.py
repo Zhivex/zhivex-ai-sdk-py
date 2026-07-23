@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from zhivex_ai import (
     Agent,
     AgentEvaluationExpectations,
+    ApprovalDecision,
+    GuardrailResult,
     LoopAgent,
     ParallelAgent,
     SequentialAgent,
@@ -14,10 +17,11 @@ from zhivex_ai import (
     create_mock_language_model,
     replay_agent_run,
     run_workflow,
+    tool,
     validate_workflow_expectations,
 )
 from zhivex_ai.errors import ValidationError
-from zhivex_ai.types import GenerateResult
+from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
 
 
 def agent_with_text(name: str, *texts: str) -> Agent:
@@ -94,6 +98,156 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     WorkflowStep("two", agent_with_text("two", "two"), output_key="same"),
                 ],
             )
+
+    async def test_suspended_step_stops_sequential_workflow_without_writing_output(self) -> None:
+        continued = False
+
+        async def require_human(_request):
+            return ApprovalDecision.require_human("Review required.", approval_id="approval-1")
+
+        async def observe_continuation(_request) -> GuardrailResult:
+            nonlocal continued
+            continued = True
+            return GuardrailResult()
+
+        approval_model = create_mock_language_model(
+            responses=[
+                GenerateResult(
+                    messages=[
+                        ModelMessage(
+                            role="assistant",
+                            parts=[ToolCallPart(tool_call=ToolCall(id="call-1", name="danger", input={}))],
+                        )
+                    ],
+                    finish_reason="tool-calls",
+                )
+            ]
+        )
+        approval_agent = Agent(
+            name="approval-agent",
+            model=approval_model,
+            tools={
+                "danger": tool(
+                    name="danger",
+                    schema=dict,
+                    execute=lambda _input: "done",
+                    requires_approval=True,
+                )
+            },
+            approval_policy=require_human,
+            run_store=create_in_memory_agent_run_store(),
+        )
+        workflow = SequentialAgent(
+            name="approval-workflow",
+            steps=[
+                WorkflowStep("approval", approval_agent, output_key="approved", metadata_key="approval_meta"),
+                WorkflowStep(
+                    "after",
+                    Agent(
+                        name="after",
+                        model=create_mock_language_model(),
+                        input_guardrails=[observe_continuation],
+                    ),
+                ),
+            ],
+        )
+
+        result = await workflow.run(prompt="run")
+
+        self.assertEqual(result.status, "suspended")
+        self.assertEqual([item.name for item in result.step_results], ["approval"])
+        self.assertEqual(result.step_results[0].status, "suspended")
+        self.assertFalse(continued)
+        self.assertNotIn("approved", result.state)
+        self.assertEqual(result.state["approval_meta"]["status"], "suspended")
+        self.assertEqual(result.state_snapshot.status, "suspended")
+        self.assertEqual(result.state_snapshot.child_runs[0].status, "suspended")
+        self.assertEqual(result.state_snapshot.metadata["suspended_steps"], ["approval"])
+
+    async def test_parallel_capture_merges_error_payload_from_isolated_state(self) -> None:
+        workflow = ParallelAgent(
+            name="parallel-capture",
+            steps=[
+                WorkflowStep(
+                    "bad",
+                    agent_with_text("bad"),
+                    error_policy="capture",
+                    output_key="bad_error",
+                    metadata_key="bad_meta",
+                )
+            ],
+        )
+
+        result = await workflow.run()
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.state["bad_error"]["step"], "bad")
+        self.assertIn("no responses left", result.state["bad_error"]["error"])
+        self.assertEqual(result.state["bad_meta"]["status"], "failed")
+
+    async def test_parallel_fail_fast_cancels_pending_sibling(self) -> None:
+        slow_started = asyncio.Event()
+        slow_cancelled = asyncio.Event()
+        unblock_slow = asyncio.Event()
+        side_effects: list[str] = []
+
+        async def slow_tool(_input):
+            slow_started.set()
+            try:
+                await unblock_slow.wait()
+            finally:
+                slow_cancelled.set()
+            side_effects.append("slow-completed")
+            return "done"
+
+        async def fail_after_slow_started(_request) -> GuardrailResult:
+            await slow_started.wait()
+            raise RuntimeError("fail fast")
+
+        slow_model = create_mock_language_model(
+            responses=[
+                GenerateResult(
+                    messages=[
+                        ModelMessage(
+                            role="assistant",
+                            parts=[ToolCallPart(tool_call=ToolCall(id="call-slow", name="slow", input={}))],
+                        )
+                    ],
+                    finish_reason="tool-calls",
+                )
+            ]
+        )
+        workflow = ParallelAgent(
+            name="parallel-fail-fast",
+            steps=[
+                WorkflowStep(
+                    "bad",
+                    Agent(
+                        name="bad",
+                        model=create_mock_language_model(),
+                        input_guardrails=[fail_after_slow_started],
+                    ),
+                    error_policy="fail_fast",
+                ),
+                WorkflowStep(
+                    "slow",
+                    Agent(
+                        name="slow",
+                        model=slow_model,
+                        tools={"slow": tool(name="slow", schema=dict, execute=slow_tool)},
+                    ),
+                    error_policy="continue",
+                ),
+            ],
+        )
+
+        result = await asyncio.wait_for(workflow.run(), timeout=1)
+
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(slow_cancelled.is_set())
+        self.assertEqual(side_effects, [])
+        self.assertIn("fail fast", str(result.step_results[0].error))
+        self.assertIn("Cancelled because another parallel step failed fast", str(result.step_results[1].error))
 
     async def test_loop_agent_stops_by_max_iterations(self) -> None:
         workflow = LoopAgent(

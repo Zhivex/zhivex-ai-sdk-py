@@ -278,6 +278,18 @@ def tool(
         raise ValueError('Remote tools require a "remote_config".')
     if source == "mcp" and mcp_config is None:
         raise ValueError('MCP tools require an "mcp_config".')
+    resolved_requires_approval = requires_approval
+    resolved_permissions = list(permissions or [])
+    resolved_metadata = dict(metadata or {})
+    if source in {"remote", "mcp"}:
+        if resolved_requires_approval is None:
+            resolved_requires_approval = True
+        if permissions is None:
+            resolved_permissions = ["network", "external-side-effect"]
+    if source == "remote":
+        resolved_metadata["remote_trust"] = (
+            "application" if resolved_requires_approval is False else "approval-required"
+        )
     return ToolDefinition(
         name=name,
         description=description,
@@ -291,10 +303,10 @@ def tool(
         output_schema=output_schema,
         cache_control=serialize_json_value(cache_control) if cache_control is not None else None,
         tags=list(tags or []),
-        requires_approval=requires_approval,
-        permissions=list(permissions or []),
+        requires_approval=resolved_requires_approval,
+        permissions=resolved_permissions,
         source=source,
-        metadata=dict(metadata or {}),
+        metadata=resolved_metadata,
         supports_streaming=supports_streaming,
         remote_config=remote_config,
         mcp_config=mcp_config,

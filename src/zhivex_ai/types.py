@@ -1312,6 +1312,8 @@ class ToolExecutionOptions:
 class ToolExecutionContext:
     tool_name: str
     tool_call_id: str = ""
+    idempotency_key: str | None = None
+    deadline_ms: int | None = None
     run_id: str | None = None
     session_id: str | None = None
     agent_name: str | None = None

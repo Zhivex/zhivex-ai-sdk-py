@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -39,6 +40,59 @@ def _json_compatible(value: Any) -> Any:
         return {str(key): _json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_compatible(item) for item in value]
+    return value
+
+
+_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "authorization_token",
+    "cookie",
+    "credential",
+    "credentials",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return normalized in _SENSITIVE_KEYS or normalized.endswith(("_api_key", "_password", "_secret", "_token"))
+
+
+def _redact_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if not parsed.scheme or not parsed.netloc:
+        return value
+    hostname = parsed.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    try:
+        if parsed.port is not None:
+            netloc = f"{netloc}:{parsed.port}"
+    except ValueError:
+        netloc = hostname
+    query = urlencode(
+        [(key, "[REDACTED]" if _is_sensitive_key(key) else item) for key, item in parse_qsl(parsed.query, keep_blank_values=True)]
+    )
+    return urlunsplit((parsed.scheme, netloc, parsed.path, query, ""))
+
+
+def _redact_sensitive_json(value: Any, *, key: str | None = None) -> Any:
+    if key is not None and _is_sensitive_key(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(item_key): _redact_sensitive_json(item, key=str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_sensitive_json(item) for item in value]
+    if isinstance(value, str) and key is not None and key.lower() in {"url", "uri", "endpoint", "base_url"}:
+        return _redact_url(value)
     return value
 
 
@@ -245,12 +299,17 @@ def _serialize_schema(schema: Any) -> dict[str, Any]:
         return {"repr": repr(schema)}
 
 
-def serialize_remote_http_tool_config(config: RemoteHTTPToolConfig | None) -> dict[str, Any] | None:
+def serialize_remote_http_tool_config(
+    config: RemoteHTTPToolConfig | None,
+    *,
+    redact_credentials: bool = False,
+) -> dict[str, Any] | None:
     if config is None:
         return None
     return {
-        "url": config.url,
-        "headers": dict(config.headers),
+        "url": _redact_url(config.url) if redact_credentials else config.url,
+        "headers": {} if redact_credentials else dict(config.headers),
+        "credentials_redacted": bool(config.headers) if redact_credentials else False,
         "timeout_ms": config.timeout_ms,
     }
 
@@ -265,19 +324,25 @@ def deserialize_remote_http_tool_config(payload: dict[str, Any] | None) -> Remot
     )
 
 
-def serialize_mcp_server_config(config: MCPServerConfig | None) -> dict[str, Any] | None:
+def serialize_mcp_server_config(
+    config: MCPServerConfig | None,
+    *,
+    redact_credentials: bool = False,
+) -> dict[str, Any] | None:
     if config is None:
         return None
-    return {
+    payload = {
         "transport": config.transport,
         "name": config.name,
         "command": config.command,
         "args": list(config.args),
-        "env": dict(config.env),
-        "url": config.url,
-        "headers": dict(config.headers),
+        "env": {} if redact_credentials else dict(config.env),
+        "url": _redact_url(config.url) if redact_credentials and config.url else config.url,
+        "headers": {} if redact_credentials else dict(config.headers),
+        "credentials_redacted": bool(config.env or config.headers) if redact_credentials else False,
         "timeout_ms": config.timeout_ms,
     }
+    return cast(dict[str, Any], _redact_sensitive_json(payload)) if redact_credentials else payload
 
 
 def deserialize_mcp_server_config(payload: dict[str, Any] | None) -> MCPServerConfig | None:
@@ -295,11 +360,15 @@ def deserialize_mcp_server_config(payload: dict[str, Any] | None) -> MCPServerCo
     )
 
 
-def serialize_mcp_tool_config(config: MCPToolConfig | None) -> dict[str, Any] | None:
+def serialize_mcp_tool_config(
+    config: MCPToolConfig | None,
+    *,
+    redact_credentials: bool = False,
+) -> dict[str, Any] | None:
     if config is None:
         return None
     return {
-        "server": serialize_mcp_server_config(config.server),
+        "server": serialize_mcp_server_config(config.server, redact_credentials=redact_credentials),
         "tool_name": config.tool_name,
     }
 
@@ -313,10 +382,14 @@ def deserialize_mcp_tool_config(payload: dict[str, Any] | None) -> MCPToolConfig
     return MCPToolConfig(server=server, tool_name=str(payload.get("tool_name", "")))
 
 
-def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
+def serialize_tool_definition(
+    definition: AnyToolDefinition,
+    *,
+    redact_credentials: bool = False,
+) -> dict[str, Any]:
     if isinstance(definition, HostedToolDefinition) or getattr(definition, "kind", None) == "hosted":
         hosted = cast(HostedToolDefinition, definition)
-        return {
+        payload = {
             "kind": "hosted",
             "name": hosted.name,
             "provider": hosted.provider,
@@ -326,6 +399,7 @@ def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
             "requires_approval": hosted.requires_approval,
             "metadata": _json_compatible(hosted.metadata),
         }
+        return cast(dict[str, Any], _redact_sensitive_json(payload)) if redact_credentials else payload
     callable_definition = cast(ToolDefinition, definition)
     return {
         "name": callable_definition.name,
@@ -344,10 +418,18 @@ def serialize_tool_definition(definition: AnyToolDefinition) -> dict[str, Any]:
         "requires_approval": callable_definition.requires_approval,
         "permissions": list(callable_definition.permissions),
         "source": callable_definition.source,
-        "metadata": _json_compatible(callable_definition.metadata),
+        "metadata": _redact_sensitive_json(_json_compatible(callable_definition.metadata))
+        if redact_credentials
+        else _json_compatible(callable_definition.metadata),
         "supports_streaming": callable_definition.supports_streaming,
-        "remote_config": serialize_remote_http_tool_config(callable_definition.remote_config),
-        "mcp_config": serialize_mcp_tool_config(callable_definition.mcp_config),
+        "remote_config": serialize_remote_http_tool_config(
+            callable_definition.remote_config,
+            redact_credentials=redact_credentials,
+        ),
+        "mcp_config": serialize_mcp_tool_config(
+            callable_definition.mcp_config,
+            redact_credentials=redact_credentials,
+        ),
     }
 
 
@@ -419,15 +501,25 @@ def deserialize_structured_output(payload: dict[str, Any] | None) -> StructuredO
     )
 
 
-def serialize_model_generate_input(value: ModelGenerateInput) -> dict[str, Any]:
+def serialize_model_generate_input(
+    value: ModelGenerateInput,
+    *,
+    redact_tool_credentials: bool = False,
+    redact_provider_options: bool = False,
+) -> dict[str, Any]:
     return {
-        "messages": serialize_messages(value.messages),
-        "tools": {name: serialize_tool_definition(tool) for name, tool in (value.tools or {}).items()},
+        "messages": _redact_sensitive_json(serialize_messages(value.messages))
+        if redact_tool_credentials or redact_provider_options
+        else serialize_messages(value.messages),
+        "tools": {
+            name: serialize_tool_definition(tool, redact_credentials=redact_tool_credentials)
+            for name, tool in (value.tools or {}).items()
+        },
         "tool_choice": _json_compatible(value.tool_choice),
         "temperature": value.temperature,
         "max_tokens": value.max_tokens,
         "reasoning": _json_compatible(value.reasoning),
-        "provider_options": _json_compatible(value.provider_options),
+        "provider_options": None if redact_provider_options else _json_compatible(value.provider_options),
         "structured_output": serialize_structured_output(value.structured_output),
         "timeout_ms": value.timeout_ms,
         "max_retries": value.max_retries,
@@ -451,15 +543,23 @@ def deserialize_model_generate_input(payload: dict[str, Any]) -> ModelGenerateIn
     )
 
 
-def serialize_generate_result(value: GenerateResult) -> dict[str, Any]:
+def serialize_generate_result(value: GenerateResult, *, redact_raw_response: bool = False) -> dict[str, Any]:
     return {
-        "message": serialize_message(value.message) if value.message is not None else None,
-        "messages": serialize_messages(value.messages) if value.messages is not None else None,
+        "message": _redact_sensitive_json(serialize_message(value.message))
+        if redact_raw_response and value.message is not None
+        else serialize_message(value.message)
+        if value.message is not None
+        else None,
+        "messages": _redact_sensitive_json(serialize_messages(value.messages))
+        if redact_raw_response and value.messages is not None
+        else serialize_messages(value.messages)
+        if value.messages is not None
+        else None,
         "text": value.text,
         "finish_reason": value.finish_reason,
         "provider_finish_reason": value.provider_finish_reason,
         "usage": serialize_token_usage(value.usage),
-        "raw_response": _json_compatible(value.raw_response),
+        "raw_response": None if redact_raw_response else _json_compatible(value.raw_response),
     }
 
 
@@ -481,6 +581,8 @@ def serialize_tool_execution_context(context: ToolExecutionContext) -> dict[str,
     return {
         "tool_name": context.tool_name,
         "tool_call_id": context.tool_call_id,
+        "idempotency_key": context.idempotency_key,
+        "deadline_ms": context.deadline_ms,
         "run_id": context.run_id,
         "session_id": context.session_id,
         "agent_name": context.agent_name,

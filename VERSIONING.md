@@ -43,6 +43,8 @@ Beta APIs are intended for early adoption with documented change management. The
 
 The current beta-only areas are narrower than the full agent story. Middleware helpers and model catalog helpers remain beta. The agent runtime, session helpers, agent skills, MCP helpers, MCP-backed registries, Postgres-backed agent stores, run-state serialization, cancellation, replay, run-snapshot helpers, and durable local-tool approval resume are now part of the documented stable surface and follow the stable-surface rules above.
 
+`AgentRunStore.save(...)` remains compatible with implementations returning `None`; built-in stores return the authoritative persisted state and revision. Atomic capabilities such as `claim_idempotency_key(...)`, `claim_pending_approval(...)`, `cancel_run(...)`, and `fail_resume_claim(...)` are checked only when the corresponding feature is used. Custom production stores must implement those operations transactionally to enable those features.
+
 Experimental APIs are intended for evaluation. They should be consumed behind an application-owned abstraction if production teams need to try them before they graduate.
 
 ## Current maturity target

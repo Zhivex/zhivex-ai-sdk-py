@@ -19,12 +19,13 @@ Related documents:
 
 These APIs are the supported public contract for application code and production integrations:
 
-- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_vllm`
+- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_vllm`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `ToolRegistry`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `create_agent_session`, `load_agent_session`
+- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunResult`, `AgentStreamResult`, `AgentHandoff`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `handoff_to`, `create_agent_session`, `load_agent_session`
+- Agent tools: `ToolRegistry`, `ToolDefinition`, `ToolSet`, `ToolExecutionContext`, `ToolExecutionOptions`, `ToolExecutionResult`, `ToolExecutionError`, `tool`
 - Agent run state and replay: `AgentRunStore`, `AgentRunState`, `AgentRunStatus`, `AgentRunStep`, `AgentChildRun`, `PostgresAgentRunStore`, `create_postgres_agent_run_store`, `serialize_agent_run_state`, `deserialize_agent_run_state`, `agent_run_state_to_json`, `agent_run_state_from_json`, `cancel_agent_run`, `cancel_agent_run_tree`, `AgentRunTreeCancellationResult`, `AgentRunSnapshot`, `create_agent_run_snapshot`, `AgentReplayEvent`, `AgentReplayResult`, `replay_agent_run`
 - Durable agent approvals: `ApprovalDecision`, `ToolApprovalRequest`, `AgentToolApprovalEvent`, `PendingApproval`, `get_pending_agent_approvals`
 - Agent skills: `skill`, `load_skill`, `discover_skills`, `SkillDefinition`, `SkillDependency`, `SkillRegistry`
@@ -33,7 +34,7 @@ These APIs are the supported public contract for application code and production
 - Agent persistence: `create_postgres_agent_memory_store`, `create_postgres_checkpoint_store`
 - MCP helpers and registries: `discover_mcp_tools`, `mcp_stdio_server`, `mcp_http_server`, `create_mcp_tool_registry`
 - Gateway: `GatewayAttempt`, `GatewayConfig`, `GatewayError`, `GatewayImageAttachment`, `GatewayMessage`, `GatewayModelTarget`, `GatewayObjectResponse`, `GatewayResponse`, `create_gateway`
-- Core errors: `ProviderHTTPError`, `ConfigurationError`, `ValidationError`, `UnsupportedFeatureError`
+- Core errors: `AgentEventDeliveryError`, `AgentRunCancelled`, `ProviderHTTPError`, `ToolExecutionOutcomeUnknown`, `ConfigurationError`, `ValidationError`, `UnsupportedFeatureError`
 - HTTP and SSE helpers: `HTTPResponse`, `stream_sse`, `to_sse_response`, `to_sse_stream`, `to_text_stream`, `to_text_stream_response`, `to_ui_message_stream_response`
 
 The stable surface is intentionally narrow. It reflects the most defendable cross-provider experience and the main API-building primitives in this SDK today.
@@ -57,7 +58,7 @@ These APIs are supported and documented, but they may still change between minor
 - Qwen native hosted-tool, Files, Batch, ASR, and TTS helpers exposed through `provider.native`, `provider.responses()`, `provider.files()`, and `provider.batches()`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
-- Agent platform helpers beyond the stable run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
+- Agent platform helpers beyond the stable runtime/run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools such as `create_subagent_tool`, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
 - Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, shared `session.state`, workflow expectation helpers, and documented workflow examples in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
