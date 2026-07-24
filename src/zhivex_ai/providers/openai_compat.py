@@ -372,12 +372,12 @@ def _map_qwen_message_content(message: ModelMessage) -> str | list[dict[str, Any
     for part in message.parts:
         if part.type == "text":
             text_chunks.append(part.text)
-            content.append({"type": "text", "text": part.text})
+            content.append({"type": "input_text", "text": part.text})
         elif part.type == "image":
             content.append({"type": "input_image", "image_url": part.image})
         elif part.type == "file":
             content.append(_map_file_part(part))
-    if content and all(item.get("type") == "text" for item in content):
+    if content and all(item.get("type") == "input_text" for item in content):
         return "".join(text_chunks)
     return content
 
@@ -844,6 +844,26 @@ def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
     return {"reasoning": {"effort": input.reasoning.effort}}
 
 
+def _validate_qwen_responses_tools(input: ModelGenerateInput, mapped_tools: list[dict[str, Any]]) -> None:
+    tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
+    reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
+    thinking_enabled = reasoning_effort not in {None, "none"}
+
+    if "web_extractor" in tool_types and "web_search" not in tool_types:
+        raise ValidationError('Provider "qwen" requires the "web_search" tool when using "web_extractor".')
+    thinking_tools = sorted(tool_types & {"code_interpreter", "web_extractor"})
+    if thinking_tools and reasoning_effort == "none":
+        raise ValidationError(
+            f'Provider "qwen" does not support reasoning effort "none" when using '
+            f'{", ".join(thinking_tools)}.'
+        )
+    if thinking_enabled and (input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)):
+        raise UnsupportedFeatureError(
+            'Provider "qwen" does not support required or named tool choice while reasoning is enabled. '
+            'Omit tool_choice or use "auto".'
+        )
+
+
 def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
     usage = payload.get("usage") or {}
     if not usage:
@@ -1003,6 +1023,8 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         merged_tools.extend(mapped_tools)
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
+    if provider_name == "qwen":
+        _validate_qwen_responses_tools(input, merged_tools)
     if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
         raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')
     body = {

@@ -3,8 +3,9 @@ from __future__ import annotations
 import io
 import os
 from contextlib import redirect_stdout
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from scripts import run_live_smoke
 from zhivex_ai import create_mock_language_model, create_text_message
@@ -147,8 +148,44 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
                 ),
             ]
         )
+        captured: dict[str, Any] = {}
+        real_tool = run_live_smoke.tool
 
-        await run_live_smoke._run_agent_tool_smoke(provider="test", model=model)
+        def capture_tool(**kwargs: Any):
+            captured["schema"] = kwargs["schema"]
+            return real_tool(**kwargs)
+
+        with patch.object(run_live_smoke, "tool", side_effect=capture_tool):
+            await run_live_smoke._run_agent_tool_smoke(provider="test", model=model)
+
+        schema = captured["schema"].model_json_schema()
+        self.assertIs(schema["additionalProperties"], False)
+        self.assertEqual(schema["required"], ["nonce"])
+
+    async def test_qwen_smoke_accepts_exact_token_without_optional_period(self) -> None:
+        provider = MagicMock()
+        provider.return_value = object()
+        response = GenerateResult(
+            text="QWEN_SMOKE_OK",
+            messages=[create_text_message("assistant", "QWEN_SMOKE_OK")],
+            finish_reason="stop",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "QWEN_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_QWEN_MODEL": "qwen3.7-plus",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_qwen", return_value=provider),
+            patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)),
+        ):
+            result = await run_live_smoke._run_qwen()
+
+        self.assertEqual(result, ("qwen", True, "ok: qwen3.7-plus, region=intl", False))
 
     async def test_agent_tool_smoke_rejects_a_marker_embedded_in_extra_text(self) -> None:
         model = create_mock_language_model(

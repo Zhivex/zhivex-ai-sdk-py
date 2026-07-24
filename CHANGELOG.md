@@ -59,6 +59,7 @@ Related documents:
 
 - Bumped the package version to `0.12.0` while keeping the package in Beta.
 - Updated Qwen Responses reasoning to send all seven supported `reasoning.effort` values instead of deprecated `enable_thinking`.
+- Updated Qwen Responses to use Alibaba Cloud Model Studio's current `/compatible-mode/v1/responses` path, validate Web Extractor/tool-choice constraints before requests, and document regional Batch model limits.
 - Updated Anthropic hosted-tool defaults to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`; expanded adaptive-thinking and mid-conversation system-message rules for current model families.
 - Updated Kimi K3 to its distinct always-on reasoning contract with `reasoning_effort=low|high|max`, multimodal inputs, strict structured output, sampling validation, and reasoning-content continuation.
 - Updated recommended OpenAI examples to GPT-5.6 Terra while keeping older catalog entries available for compatibility.
@@ -71,6 +72,9 @@ Related documents:
 ### Fixed
 
 - Corrected current Gemini/Veo, Qwen snapshot, retired Anthropic Sonnet, and deprecated Imagen catalog guidance.
+- Fixed Qwen mixed text/image Responses inputs to emit `input_text` alongside `input_image`.
+- Fixed Qwen TTS downloads by upgrading allowlisted official signed HTTP URLs to HTTPS before the existing SSRF/host validation, without permitting untrusted hosts.
+- Fixed Qwen live agent smoke schemas to use closed Pydantic objects and accept the exact success token with or without its optional final period.
 - Preserved provider metadata on tool execution results so nested programmatic calls keep their `caller` linkage through serialization and replay.
 - Made idempotency-key acquisition atomic in built-in run stores and restored the original persisted session/run identity when a key is reused.
 - Bound durable approvals to a fingerprint of the complete tool definition and executor state, and reject legacy or changed tools before side effects run.

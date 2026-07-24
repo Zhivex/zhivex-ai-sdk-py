@@ -100,7 +100,7 @@ Anthropic is included in the tier-1 set for text-generation API paths. Current a
 
 Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai(...)` supports either API key authentication or Microsoft Entra ID token/provider authentication. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
 
-Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. Its hosted tools, raw Responses settings, Files, Batch, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
+Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings through the current `/compatible-mode/v1` route. Its hosted tools, raw Responses settings, Files, region-dependent Batch behavior, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
 
 Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. K3 `reasoning_effort`, K2 thinking controls, Files, Batch, token estimation, and Formulas remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
 

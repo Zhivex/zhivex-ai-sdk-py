@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,7 +20,10 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (
     AudioInput,
     ConfigurationError,
+    ImagePart,
+    ModelMessage,
     ReasoningConfig,
+    TextPart,
     ToolChoiceName,
     UnsupportedFeatureError,
     ValidationError,
@@ -79,11 +82,12 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         cn_provider = create_qwen(api_key="test", region="cn")
         override_provider = create_qwen(api_key="test", region="cn", base_url="https://proxy.example.com/compatible-mode/v1/")
 
-        self.assertEqual(default_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1")
+        self.assertEqual(default_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
         self.assertEqual(default_provider.native.embedding_model("text-embedding-v4").base_url, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
-        self.assertEqual(us_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1")
-        self.assertEqual(cn_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1")
+        self.assertEqual(us_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope-us.aliyuncs.com/compatible-mode/v1")
+        self.assertEqual(cn_provider.native.language_model("qwen3.5-plus").base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.assertEqual(override_provider.native.embedding_model("text-embedding-v4").base_url, "https://proxy.example.com/compatible-mode/v1")
+        self.assertEqual(override_provider.native.language_model("qwen3.5-plus").base_url, "https://proxy.example.com/compatible-mode/v1")
 
     def test_create_qwen_allows_explicit_responses_base_url_and_validates_region(self) -> None:
         provider = create_qwen(
@@ -118,7 +122,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         payload = await provider.responses().create({"model": "qwen3.5-plus", "input": "hello"})
 
         self.assertEqual(payload["id"], "resp_qwen")
-        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses")
+        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses")
         self.assertEqual(requests[0]["json"], {"model": "qwen3.5-plus", "input": "hello"})
         self.assertTrue(provider.native_support.responses)
         self.assertTrue(provider.native_support.files)
@@ -191,11 +195,58 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.text, "ok")
-        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses")
+        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses")
         self.assertEqual(requests[0]["json"]["input"], [{"role": "user", "content": "hello"}])
         self.assertEqual(requests[0]["json"]["tools"][0]["name"], "weather")
         self.assertEqual(requests[0]["json"]["previous_response_id"], "resp_previous")
         self.assertEqual(requests[0]["json"]["conversation"], "conv_123")
+
+    async def test_qwen_maps_mixed_multimodal_content_to_responses_input_types(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "blue"}]}
+                    ],
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("qwen3.7-max-2026-06-08"),
+            messages=[
+                ModelMessage(
+                    role="user",
+                    parts=[
+                        TextPart(text="What color is this?"),
+                        ImagePart(image="data:image/png;base64,iVBORw0KGgo="),
+                    ],
+                )
+            ],
+        )
+
+        self.assertEqual(result.text, "blue")
+        self.assertEqual(
+            requests[0]["json"]["input"][0]["content"],
+            [
+                {"type": "input_text", "text": "What color is this?"},
+                {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo="},
+            ],
+        )
 
     async def test_qwen_streams_responses_with_tools_and_provider_data(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -233,7 +284,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         result = await stream.collect()
 
         self.assertEqual(result.text, "hello qwen")
-        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses")
+        self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses")
         self.assertTrue(requests[0]["stream"])
         self.assertTrue(requests[0]["json"]["stream"])
         self.assertEqual(requests[0]["json"]["previous_response_id"], "resp_previous")
@@ -265,7 +316,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.embedding, [0.1, 0.2])
         self.assertEqual(requests[0]["url"], "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/embeddings")
 
-    async def test_qwen_maps_hosted_tools_and_named_tool_choice(self) -> None:
+    async def test_qwen_maps_hosted_tools_with_required_reasoning(self) -> None:
         requests: list[dict[str, Any]] = []
 
         async def fetch(
@@ -302,7 +353,6 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                 "files": qwen_file_search_tool(vector_store_ids=["vs_123"]),
                 "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True}),
             },
-            tool_choice=ToolChoiceName(tool_name="weather"),
             reasoning=ReasoningConfig(effort="high"),
         )
 
@@ -312,14 +362,44 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
             ["web_search", "web_extractor", "code_interpreter", "file_search", "function"],
         )
         self.assertEqual(requests[0]["json"]["tools"][3]["vector_store_ids"], ["vs_123"])
-        self.assertEqual(
-            requests[0]["json"]["tool_choice"],
-            {"type": "allowed_tools", "mode": "required", "tools": [{"type": "function", "name": "weather"}]},
-        )
+        self.assertNotIn("tool_choice", requests[0]["json"])
         self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "high"})
         self.assertNotIn("enable_thinking", requests[0]["json"])
         provider_parts = [part for part in result.steps[0].response.messages[0].parts if getattr(part, "type", None) == "provider-data"]
         self.assertEqual(provider_parts[0].provider, "qwen")
+
+    async def test_qwen_rejects_invalid_hosted_tool_combinations_before_fetch(self) -> None:
+        fetch = AsyncMock()
+        provider = create_qwen(api_key="test", fetch=fetch)
+        model = provider.native.language_model("qwen3.7-plus")
+
+        with self.assertRaisesRegex(ValidationError, "requires the .*web_search.* tool"):
+            await generate_text(
+                model=model,
+                prompt="extract",
+                tools={"extract": qwen_web_extractor_tool()},
+                reasoning=ReasoningConfig(effort="high"),
+            )
+        with self.assertRaisesRegex(ValidationError, 'does not support reasoning effort "none"'):
+            await generate_text(
+                model=model,
+                prompt="calculate",
+                tools={"code": qwen_code_interpreter_tool()},
+                reasoning=ReasoningConfig(effort="none"),
+            )
+        with self.assertRaisesRegex(UnsupportedFeatureError, "required or named tool choice"):
+            await generate_text(
+                model=model,
+                prompt="calculate",
+                tools={
+                    "code": qwen_code_interpreter_tool(),
+                    "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True}),
+                },
+                tool_choice=ToolChoiceName(tool_name="weather"),
+                reasoning=ReasoningConfig(effort="high"),
+            )
+
+        fetch.assert_not_called()
 
     async def test_qwen_maps_mcp_tool_and_accepts_dashscope_env_key(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -510,6 +590,55 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
             "https://dashscope-result.oss-cn-beijing.aliyuncs.com/audio.wav",
         )
 
+    async def test_qwen_upgrades_official_signed_audio_url_to_https(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "method": method})
+            if method == "GET":
+                return FakeResponse(
+                    status_code=200,
+                    body_bytes=b"qwen-voice",
+                    headers={"content-type": "audio/mpeg"},
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "output": {
+                        "audio": {
+                            "url": (
+                                "http://dashscope-result-sgp.oss-ap-southeast-1.aliyuncs.com/"
+                                "audio.mp3?Expires=123&Signature=signed"
+                            )
+                        }
+                    }
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        result = await generate_speech(
+            model=provider.native.speech_model("qwen3-tts-flash"),
+            input="hello",
+        )
+
+        self.assertEqual(result.audio, b"qwen-voice")
+        self.assertEqual(
+            requests[1]["url"],
+            (
+                "https://dashscope-result-sgp.oss-ap-southeast-1.aliyuncs.com/"
+                "audio.mp3?Expires=123&Signature=signed"
+            ),
+        )
+
     async def test_qwen_speech_rejects_untrusted_audio_url(self) -> None:
         async def fetch(
             url: str,
@@ -528,7 +657,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                 payload={
                     "output": {
                         "finish_reason": "stop",
-                        "audio": {"url": "http://127.0.0.1:8000/admin"},
+                        "audio": {"url": "http://aliyuncs.com.evil.example/admin"},
                     }
                 },
             )

@@ -54,24 +54,7 @@ def _qwen_base_url(region: QwenRegion) -> str:
 
 
 def _qwen_responses_base_url(base_url: str) -> str:
-    parsed = urlparse(base_url.rstrip("/"))
-    path = parsed.path.rstrip("/")
-    if path.endswith("/api/v2/apps/protocols/compatible-mode/v1"):
-        return base_url.rstrip("/")
-    for suffix in ("/compatible-mode/v1", "/compatible-mode"):
-        if path.endswith(suffix):
-            path = path[: -len(suffix)]
-            break
-    return urlunparse(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            f"{path}/api/v2/apps/protocols/compatible-mode/v1",
-            "",
-            "",
-            "",
-        )
-    )
+    return base_url.rstrip("/")
 
 
 def _qwen_speech_url(base_url: str) -> str:
@@ -99,6 +82,29 @@ def _qwen_audio_allowed_suffixes(base_url: str) -> tuple[str, ...]:
     if host and host != "aliyuncs.com" and not host.endswith(".aliyuncs.com"):
         suffixes.append(host)
     return tuple(suffixes)
+
+
+def _qwen_secure_audio_url(url: str, *, base_url: str, provider: str) -> str:
+    candidate = str(url)
+    parsed = urlparse(candidate)
+    if parsed.scheme == "http":
+        try:
+            host = (parsed.hostname or "").strip(".").encode("idna").decode("ascii").lower()
+            allowed_suffixes = tuple(
+                suffix.strip(".").encode("idna").decode("ascii").lower()
+                for suffix in _qwen_audio_allowed_suffixes(base_url)
+            )
+        except UnicodeError:
+            host = ""
+            allowed_suffixes = ()
+        if host and any(host == suffix or host.endswith(f".{suffix}") for suffix in allowed_suffixes):
+            candidate = parsed._replace(scheme="https").geturl()
+    return validate_provider_url(
+        candidate,
+        provider=provider,
+        purpose="audio download",
+        allowed_suffixes=_qwen_audio_allowed_suffixes(base_url),
+    )
 
 
 def _infer_qwen_media_type(url: str | None) -> str:
@@ -309,11 +315,10 @@ class QwenSpeechModel(SpeechModel):
         payload = await response.json()
         audio_info = ((payload.get("output") or {}).get("audio") or {})
         if isinstance(audio_info.get("url"), str) and audio_info.get("url"):
-            audio_url = validate_provider_url(
+            audio_url = _qwen_secure_audio_url(
                 str(audio_info["url"]),
+                base_url=self.base_url,
                 provider=self.provider,
-                purpose="audio download",
-                allowed_suffixes=_qwen_audio_allowed_suffixes(self.base_url),
             )
             audio_response = await with_retry(
                 lambda: self.fetch(

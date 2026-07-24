@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from pydantic import BaseModel, ConfigDict
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 _USE_INSTALLED_PACKAGE = os.getenv("ZHIVEX_SMOKE_USE_INSTALLED", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -48,6 +50,12 @@ _SUPPORTED_PROVIDERS = {
     "vllm",
 }
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+
+
+class _AgentSmokeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nonce: str
 
 
 def _load_dotenv_if_available() -> None:
@@ -120,9 +128,9 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
     nonce = "zhivex-agent-smoke"
     executions: list[dict[str, str]] = []
 
-    def validate_agent_smoke(input: dict[str, str]) -> dict[str, object]:
-        executions.append(dict(input))
-        return {"nonce": input.get("nonce"), "validated": input.get("nonce") == nonce}
+    def validate_agent_smoke(input: _AgentSmokeInput) -> dict[str, object]:
+        executions.append(input.model_dump())
+        return {"nonce": input.nonce, "validated": input.nonce == nonce}
 
     agent = Agent(
         name=f"{provider.replace('-', '_')}_live_smoke",
@@ -135,7 +143,7 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
             "validate_agent_smoke": tool(
                 name="validate_agent_smoke",
                 description="Validates the fixed, non-secret nonce used by the Zhivex live agent smoke.",
-                schema=dict[str, str],
+                schema=_AgentSmokeInput,
                 execute=validate_agent_smoke,
             )
         },
@@ -402,7 +410,7 @@ async def _run_qwen() -> tuple[str, bool, str, bool]:
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
-    if result.text.strip() != "QWEN_SMOKE_OK.":
+    if not _matches_smoke_token(result.text, "QWEN_SMOKE_OK."):
         raise RuntimeError(f"unexpected response: {result.text!r}")
 
     details = [f"ok: {model}", f"region={region}"]
