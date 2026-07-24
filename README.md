@@ -164,9 +164,9 @@ Tool support now follows the same rule everywhere:
 - Hosted tools now fail fast in the shared foundation layer when they target the wrong provider, request an unsupported hosted-tool class, or use hosted-only combinations such as unsupported `tool_choice="none"` / `ToolChoiceName(...)`.
 - The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
-- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8 are cataloged. Use `ReasoningConfig(effort="medium" | "high" | "xhigh" | "max")` to send `output_config.effort`; the adapter selects adaptive thinking for current compatible families. Extended thinking still restricts `tool_choice` to `auto` or `none`, and embeddings, transcription, and speech remain unavailable on the Anthropic provider path here.
-- Claude Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` entries on the Anthropic native path when they follow Anthropic's placement rules. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}`.
-- Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason`. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`.
+- Anthropic is part of the tier-1 text-generation story in this SDK. Claude Opus 5, Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8 are cataloged. Opus 5 uses adaptive thinking by default; `ReasoningConfig(effort="low" | "medium" | "high" | "xhigh" | "max")` selects effort, while `ReasoningConfig(effort="none")` disables thinking only through `high`. Manual thinking budgets and non-default sampling are rejected for Opus 5. Forced tool choice is supported with adaptive thinking; the `auto`/`none` restriction applies only to manual extended thinking on older models.
+- Claude Opus 5, Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` sections on the Anthropic native path when they follow Anthropic's placement rules. Opus 5 does not support assistant prefill or server-side Web Fetch. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}` and the adapter adds its required beta header.
+- Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason` and `stop_details`; collected partial streaming text is discarded after a refusal. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`. Anthropic server-side fallback remains a beta raw `provider_options` escape hatch.
 - Anthropic hosted-tool helpers now default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. `anthropic_mcp_server()` keeps its compatibility default; opt into current MCP with `version="current"` when the target account/model supports it.
 - OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM now participate in the tier-1 portable text-generation contract.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
@@ -1279,7 +1279,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, Qwen 3.7 including its multimodal June snapshot, and Kimi K3. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Opus/Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, Qwen 3.7 including its multimodal June snapshot, and Kimi K3. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 
@@ -1640,7 +1640,7 @@ For real provider validation, the repo also includes a live smoke runner:
 ```bash
 export ZHIVEX_SMOKE_OPENAI_MODEL=your-openai-model
 export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
-export ZHIVEX_SMOKE_ANTHROPIC_MODEL=your-anthropic-model
+export ZHIVEX_SMOKE_ANTHROPIC_MODEL=claude-opus-5
 export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model

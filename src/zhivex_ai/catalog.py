@@ -73,6 +73,7 @@ default_model_catalog = create_model_catalog(
         ModelCatalogEntry("azure-openai", "text-embedding-3-small", recommended_for=["embedding", "retrieval"]),
         ModelCatalogEntry("anthropic", "claude-fable-5", cost_per_1k_tokens=5, recommended_for=["chat", "reasoning", "tools", "vision"]),
         ModelCatalogEntry("anthropic", "claude-mythos-5", recommended_for=["reasoning", "tools", "vision"]),
+        ModelCatalogEntry("anthropic", "claude-opus-5", cost_per_1k_tokens=5, recommended_for=["reasoning", "tools", "vision"]),
         ModelCatalogEntry("anthropic", "claude-opus-4-8", aliases=["claude-opus-4-7"], cost_per_1k_tokens=5, recommended_for=["reasoning", "tools", "vision"]),
         ModelCatalogEntry("anthropic", "claude-sonnet-5", cost_per_1k_tokens=3, recommended_for=["chat", "reasoning", "tools", "vision"]),
         ModelCatalogEntry("anthropic", "claude-sonnet-4-6", cost_per_1k_tokens=3, recommended_for=["chat", "reasoning", "tools", "vision"]),

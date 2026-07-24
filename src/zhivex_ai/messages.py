@@ -350,7 +350,7 @@ def normalize_finish_reason(reason: str | None) -> FinishReason | None:
     lowered = reason.lower()
     if lowered in {"stop", "end_turn"}:
         return "stop"
-    if lowered in {"length", "max_tokens"}:
+    if lowered in {"length", "max_tokens", "model_context_window_exceeded"}:
         return "length"
     if lowered in {"tool_calls", "tool_use"}:
         return "tool-calls"

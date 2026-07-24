@@ -55,16 +55,16 @@ class ReleaseArtifactToolingTests(TestCase):
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             dist = Path(temporary_dir)
-            expected = dist / "zhivex_ai_sdk-0.12.0-py3-none-any.whl"
+            expected = dist / "zhivex_ai_sdk-0.12.1-py3-none-any.whl"
             stale = dist / "zhivex_ai_sdk-0.11.0-py3-none-any.whl"
-            self._write_wheel(expected, metadata_version="0.12.0")
+            self._write_wheel(expected, metadata_version="0.12.1")
             self._write_wheel(stale, metadata_version="0.11.0")
 
             with self.assertRaisesRegex(RuntimeError, "Remove stale or mismatched artifacts"):
-                verify_release_artifacts._select_release_artifact(dist, version="0.12.0", kind="wheel")
+                verify_release_artifacts._select_release_artifact(dist, version="0.12.1", kind="wheel")
 
             stale.unlink()
-            selected = verify_release_artifacts._select_release_artifact(dist, version="0.12.0", kind="wheel")
+            selected = verify_release_artifacts._select_release_artifact(dist, version="0.12.1", kind="wheel")
 
         self.assertEqual(selected.name, expected.name)
 
@@ -73,24 +73,24 @@ class ReleaseArtifactToolingTests(TestCase):
             dist = Path(temporary_dir)
             self._write_sdist(dist / "zhivex_ai_sdk-0.11.0.tar.gz", metadata_version="0.11.0")
 
-            with self.assertRaisesRegex(RuntimeError, "Expected exactly one sdist artifact for version 0.12.0"):
-                verify_release_artifacts._select_release_artifact(dist, version="0.12.0", kind="sdist")
+            with self.assertRaisesRegex(RuntimeError, "Expected exactly one sdist artifact for version 0.12.1"):
+                verify_release_artifacts._select_release_artifact(dist, version="0.12.1", kind="sdist")
 
     def test_wheel_metadata_must_match_release_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
-            wheel = Path(temporary_dir) / "zhivex_ai_sdk-0.12.0-py3-none-any.whl"
+            wheel = Path(temporary_dir) / "zhivex_ai_sdk-0.12.1-py3-none-any.whl"
             self._write_wheel(wheel, metadata_version="0.11.0")
 
             with self.assertRaisesRegex(RuntimeError, "metadata version mismatch"):
-                verify_release_artifacts._verify_wheel_metadata(wheel, expected_version="0.12.0")
+                verify_release_artifacts._verify_wheel_metadata(wheel, expected_version="0.12.1")
 
     def test_sdist_pyproject_must_match_release_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
-            sdist = Path(temporary_dir) / "zhivex_ai_sdk-0.12.0.tar.gz"
+            sdist = Path(temporary_dir) / "zhivex_ai_sdk-0.12.1.tar.gz"
             self._write_sdist(sdist, metadata_version="0.11.0")
 
             with self.assertRaisesRegex(RuntimeError, "metadata version mismatch"):
-                verify_release_artifacts._verify_sdist_metadata(sdist, expected_version="0.12.0")
+                verify_release_artifacts._verify_sdist_metadata(sdist, expected_version="0.12.1")
 
     def test_release_evidence_collector_and_plan_are_present(self) -> None:
         script = ROOT / "scripts/collect_release_evidence.py"

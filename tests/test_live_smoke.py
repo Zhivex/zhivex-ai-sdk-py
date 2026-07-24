@@ -13,6 +13,16 @@ from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
 
 
 class LiveSmokeControlTests(IsolatedAsyncioTestCase):
+    def test_anthropic_agent_smoke_uses_compatible_sampling_and_budget(self) -> None:
+        self.assertEqual(
+            run_live_smoke._agent_smoke_generation_options("anthropic"),
+            {"temperature": None, "max_tokens": 4096},
+        )
+        self.assertEqual(
+            run_live_smoke._agent_smoke_generation_options("openai"),
+            {"temperature": 0, "max_tokens": 80},
+        )
+
     def test_selected_providers_normalizes_azure_alias(self) -> None:
         with patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "openai,azure"}, clear=True):
             selected = run_live_smoke._selected_providers()

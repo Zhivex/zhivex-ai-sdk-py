@@ -1117,6 +1117,7 @@ class CodeExecutionResultPart:
     type: Literal["code-result"] = "code-result"
     output: str = ""
     outcome: str | None = None
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 ContentPart: TypeAlias = (

@@ -28,7 +28,19 @@ from zhivex_ai import (
     stream_text,
     tool,
 )
-from zhivex_ai.types import ImagePart, ModelGenerateInput, ModelMessage, ReasoningConfig, StructuredOutputConfig, TextPart, ToolChoiceName
+from zhivex_ai.types import (
+    ImagePart,
+    ModelGenerateInput,
+    ModelMessage,
+    ReasoningConfig,
+    StructuredOutputConfig,
+    TextPart,
+    ToolCall,
+    ToolCallPart,
+    ToolChoiceName,
+    ToolExecutionResult,
+    ToolResultPart,
+)
 
 
 @dataclass
@@ -196,7 +208,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         provider = create_anthropic(api_key="test", fetch=fetch)
         result = await stream_text(model=provider.native.language_model("claude-fable-5"), prompt="hello").collect()
 
-        self.assertEqual(result.text, "I cannot help.")
+        self.assertEqual(result.text, "")
         self.assertEqual(result.finish_reason, "refusal")
         self.assertEqual(result.provider_finish_reason, "refusal")
 
@@ -283,6 +295,9 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         assistant_blocks = requests[1]["messages"][1]["content"]
         self.assertEqual(assistant_blocks[0]["type"], "thinking")
         self.assertEqual(assistant_blocks[1]["type"], "tool_use")
+        tool_result_blocks = requests[1]["messages"][2]["content"]
+        self.assertEqual(tool_result_blocks[0]["type"], "tool_result")
+        self.assertEqual(tool_result_blocks[0]["tool_use_id"], "tool-1")
 
     async def test_anthropic_maps_hosted_tools_from_tools_set(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -405,11 +420,13 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
     async def test_anthropic_opus_4_8_maps_effort_to_adaptive_thinking(self) -> None:
         requests: list[dict[str, Any]] = []
+        headers_seen: list[dict[str, str]] = []
 
         async def fetch(
             url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
         ):
             requests.append(json_body)
+            headers_seen.append(headers)
             return FakeResponse(
                 status_code=200,
                 payload={
@@ -431,6 +448,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["speed"], "fast")
         self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
         self.assertEqual(requests[0]["output_config"], {"effort": "xhigh"})
+        self.assertIn("fast-mode-2026-02-01", headers_seen[0]["anthropic-beta"])
 
     async def test_anthropic_opus_4_8_accepts_max_effort(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -718,7 +736,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_anthropic(api_key="test", fetch=fetch)
-        for model_id in ("claude-fable-5", "claude-mythos-5", "claude-opus-4-8"):
+        for model_id in ("claude-fable-5", "claude-mythos-5", "claude-opus-4-8", "claude-opus-5"):
             with self.subTest(model_id=model_id):
                 await provider.native.language_model(model_id).generate(
                     ModelGenerateInput(
@@ -1426,3 +1444,536 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(mcp_server.config["default_config"]["allowed_tools"], ["echo"])
         self.assertEqual(current_mcp_server.metadata["anthropic_mcp_beta"], "mcp-client-2025-11-20")
         self.assertEqual(code_execution.type, "code_execution_20260521")
+
+    async def test_anthropic_opus_5_maps_effort_and_default_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        await model.generate(ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="default")])]))
+        self.assertNotIn("thinking", requests[-1])
+        self.assertNotIn("output_config", requests[-1])
+
+        for effort in ("low", "medium", "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                await generate_text(
+                    model=model,
+                    prompt="reason",
+                    reasoning=ReasoningConfig(effort=effort),
+                )
+                self.assertEqual(requests[-1]["thinking"], {"type": "adaptive"})
+                self.assertEqual(requests[-1]["output_config"], {"effort": effort})
+
+        await generate_text(model=model, prompt="do not think", reasoning=ReasoningConfig(effort="none"))
+        self.assertEqual(requests[-1]["thinking"], {"type": "disabled"})
+        self.assertNotIn("output_config", requests[-1])
+
+    async def test_anthropic_opus_5_validates_disabled_thinking_after_merges(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        for effort in ("low", "medium", "high"):
+            with self.subTest(effort=effort):
+                await generate_text(
+                    model=model,
+                    prompt="hello",
+                    provider_options={"thinking": {"type": "disabled"}, "output_config": {"effort": effort}},
+                )
+        self.assertEqual(len(requests), 3)
+
+        for effort in ("xhigh", "max"):
+            with self.subTest(effort=effort):
+                with self.assertRaises(UnsupportedFeatureError):
+                    await generate_text(
+                        model=model,
+                        prompt="hello",
+                        provider_options={"thinking": {"type": "disabled"}, "output_config": {"effort": effort}},
+                    )
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=model,
+                prompt="hello",
+                reasoning=ReasoningConfig(effort="none"),
+                provider_options={"output_config": {"effort": "max"}},
+            )
+        self.assertEqual(len(requests), 3)
+
+    async def test_anthropic_opus_5_rejects_manual_thinking_and_sampling_without_dispatch(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        invalid_requests = (
+            {"reasoning": ReasoningConfig(budget_tokens=1024)},
+            {"provider_options": {"thinking": {"type": "enabled", "budget_tokens": 1024}}},
+            {"temperature": 0},
+            {"provider_options": {"top_p": 0.9}},
+            {"provider_options": {"top_k": 40}},
+        )
+        for kwargs in invalid_requests:
+            with self.subTest(kwargs=kwargs), self.assertRaises(UnsupportedFeatureError):
+                await generate_text(model=model, prompt="hello", **kwargs)
+
+    async def test_anthropic_opus_5_allows_forced_tools_with_adaptive_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-opus-5"),
+            prompt="use the tool",
+            tools={"lookup": tool(name="lookup", schema=dict[str, str], execute=lambda input: input)},
+            tool_choice=ToolChoiceName(tool_name="lookup"),
+            reasoning=ReasoningConfig(effort="high"),
+        )
+
+        self.assertEqual(requests[0]["tool_choice"], {"type": "tool", "name": "lookup"})
+        self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
+
+    async def test_anthropic_opus_5_rejects_prefill_and_web_fetch_including_count_tokens(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            raise AssertionError("request should not be dispatched")
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        with self.assertRaises(UnsupportedFeatureError):
+            await model.generate(
+                ModelGenerateInput(
+                    messages=[
+                        ModelMessage(role="user", parts=[TextPart(text="complete")]),
+                        ModelMessage(role="assistant", parts=[TextPart(text="prefix")]),
+                    ]
+                )
+            )
+        for tools in (
+            {"fetch": anthropic_web_fetch_tool()},
+            None,
+        ):
+            provider_options = None if tools else {"tools": [{"type": "web_fetch_20260318", "name": "web_fetch"}]}
+            with self.assertRaises(UnsupportedFeatureError):
+                await generate_text(
+                    model=model,
+                    prompt="fetch",
+                    tools=tools,
+                    provider_options=provider_options,
+                )
+        with self.assertRaises(UnsupportedFeatureError):
+            await provider.tokens().count(
+                model_id="claude-opus-5",
+                prompt="fetch",
+                provider_options={"tools": [{"type": "web_fetch_20260318", "name": "web_fetch"}]},
+            )
+
+    async def test_anthropic_opus_5_preserves_interleaved_thinking_roundtrip(self) -> None:
+        requests: list[dict[str, Any]] = []
+        calls = 0
+        expected_blocks = [
+            {"type": "thinking", "thinking": "first", "signature": "sig-1"},
+            {"type": "tool_use", "id": "tool-1", "name": "one", "input": {"value": 1}},
+            {"type": "redacted_thinking", "data": "redacted-2"},
+            {"type": "tool_use", "id": "tool-2", "name": "two", "input": {"value": 2}},
+        ]
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            nonlocal calls
+            calls += 1
+            requests.append(json_body)
+            if calls == 1:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "content": expected_blocks,
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        first = await model.generate(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="run")])])
+        )
+        assert first.messages is not None
+        await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="user", parts=[TextPart(text="run")]),
+                    first.messages[0],
+                    ModelMessage(
+                        role="tool",
+                        parts=[
+                            ToolResultPart(
+                                tool_result=ToolExecutionResult(
+                                    tool_call_id="tool-1",
+                                    tool_name="one",
+                                    output={"ok": True},
+                                )
+                            ),
+                            ToolResultPart(
+                                tool_result=ToolExecutionResult(
+                                    tool_call_id="tool-2",
+                                    tool_name="two",
+                                    output={"ok": True},
+                                )
+                            ),
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        self.assertEqual(requests[1]["messages"][1]["content"], expected_blocks)
+
+    async def test_anthropic_opus_5_stream_preserves_interleaved_thinking_roundtrip(self) -> None:
+        requests: list[dict[str, Any]] = []
+        calls = 0
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            nonlocal calls
+            calls += 1
+            requests.append(json_body)
+            if calls == 1:
+                return FakeResponse(
+                    status_code=200,
+                    body_text=(
+                        'event: content_block_start\n'
+                        'data: {"index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}\n\n'
+                        'event: content_block_delta\n'
+                        'data: {"index":0,"delta":{"type":"thinking_delta","thinking":"first"}}\n\n'
+                        'event: content_block_delta\n'
+                        'data: {"index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}\n\n'
+                        'event: content_block_stop\n'
+                        'data: {"index":0}\n\n'
+                        'event: content_block_start\n'
+                        'data: {"index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"one","input":{}}}\n\n'
+                        'event: content_block_delta\n'
+                        'data: {"index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":1}"}}\n\n'
+                        'event: content_block_stop\n'
+                        'data: {"index":1}\n\n'
+                        'event: content_block_start\n'
+                        'data: {"index":2,"content_block":{"type":"redacted_thinking","data":"redacted-2"}}\n\n'
+                        'event: content_block_stop\n'
+                        'data: {"index":2}\n\n'
+                        'event: content_block_start\n'
+                        'data: {"index":3,"content_block":{"type":"tool_use","id":"tool-2","name":"two","input":{}}}\n\n'
+                        'event: content_block_delta\n'
+                        'data: {"index":3,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":2}"}}\n\n'
+                        'event: content_block_stop\n'
+                        'data: {"index":3}\n\n'
+                        'event: message_delta\n'
+                        'data: {"delta":{"stop_reason":"tool_use"}}\n\n'
+                        'event: message_stop\n'
+                        'data: {"stop_reason":"tool_use"}\n'
+                    ),
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        tool_calls = []
+        async for event in await model.stream(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="run")])])
+        ):
+            if event.type == "tool-call":
+                tool_calls.append(ToolCallPart(tool_call=event.tool_call))
+        await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="user", parts=[TextPart(text="run")]),
+                    ModelMessage(role="assistant", parts=tool_calls),
+                    ModelMessage(
+                        role="tool",
+                        parts=[
+                            ToolResultPart(
+                                tool_result=ToolExecutionResult(
+                                    tool_call_id="tool-1",
+                                    tool_name="one",
+                                    output={"ok": True},
+                                )
+                            ),
+                            ToolResultPart(
+                                tool_result=ToolExecutionResult(
+                                    tool_call_id="tool-2",
+                                    tool_name="two",
+                                    output={"ok": True},
+                                )
+                            ),
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            requests[1]["messages"][1]["content"],
+            [
+                {"type": "thinking", "thinking": "first", "signature": "sig-1"},
+                {"type": "tool_use", "id": "tool-1", "name": "one", "input": {"value": 1}},
+                {"type": "redacted_thinking", "data": "redacted-2"},
+                {"type": "tool_use", "id": "tool-2", "name": "two", "input": {"value": 2}},
+            ],
+        )
+
+    async def test_anthropic_opus_5_mid_system_sections_and_server_results(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        raw_result = {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srv-1",
+            "content": [{"type": "web_search_result", "url": "https://example.com"}],
+        }
+        server_result = ToolResultPart(
+            tool_result=ToolExecutionResult(
+                tool_call_id="srv-1",
+                tool_name="web_search_tool_result",
+                output=raw_result["content"],
+                provider_metadata={
+                    "provider_managed": True,
+                    "anthropic_tool_block_type": "web_search_tool_result",
+                    "anthropic_raw_block": raw_result,
+                },
+            )
+        )
+        await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="user", parts=[TextPart(text="search")]),
+                    ModelMessage(role="assistant", parts=[server_result]),
+                    ModelMessage(role="system", parts=[TextPart(text="first update")]),
+                    ModelMessage(role="system", parts=[TextPart(text="second update")]),
+                    ModelMessage(role="assistant", parts=[TextPart(text="continue")]),
+                    ModelMessage(role="user", parts=[TextPart(text="acknowledged")]),
+                ]
+            )
+        )
+        self.assertEqual(
+            [message["role"] for message in requests[0]["messages"]],
+            ["user", "assistant", "system", "system", "assistant", "user"],
+        )
+        self.assertEqual(requests[0]["messages"][1]["content"], [raw_result])
+
+        with self.assertRaises(ValidationError):
+            await model.generate(
+                ModelGenerateInput(
+                    messages=[
+                        ModelMessage(role="user", parts=[TextPart(text="search")]),
+                        ModelMessage(
+                            role="assistant",
+                            parts=[
+                                ToolCallPart(
+                                    tool_call=ToolCall(
+                                        id="srv-1",
+                                        name="web_search",
+                                        input={},
+                                        provider_metadata={"provider_managed": True},
+                                    )
+                                )
+                            ],
+                        ),
+                        ModelMessage(role="system", parts=[TextPart(text="invalid")]),
+                    ]
+                )
+            )
+
+    async def test_anthropic_opus_5_preserves_stop_details_and_context_limit(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "partial"}],
+                    "stop_reason": "model_context_window_exceeded",
+                    "stop_details": {"reason": "safety", "refusal": "blocked"},
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await provider.native.language_model("claude-opus-5").generate(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="hello")])])
+        )
+        assert result.messages is not None
+        self.assertEqual(result.finish_reason, "length")
+        self.assertEqual(result.messages[0].parts[-1].type, "provider-data")
+        self.assertEqual(result.messages[0].parts[-1].data["type"], "stop_details")
+
+    async def test_anthropic_opus_5_stream_preserves_stop_details_once(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'event: message_delta\n'
+                    'data: {"delta":{"stop_reason":"refusal","stop_details":{"reason":"safety"}}}\n\n'
+                    'event: message_stop\n'
+                    'data: {"stop_reason":"refusal","stop_details":{"reason":"safety"}}\n'
+                ),
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        events = [
+            event
+            async for event in await provider.native.language_model("claude-opus-5").stream(
+                ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="hello")])])
+            )
+        ]
+        provider_data = [event for event in events if event.type == "provider-data"]
+        self.assertEqual(len(provider_data), 1)
+        self.assertEqual(provider_data[0].data, {"type": "stop_details", "stop_details": {"reason": "safety"}})
+
+    async def test_anthropic_opus_5_fallback_discards_prior_thinking_and_preserves_boundary(self) -> None:
+        requests: list[dict[str, Any]] = []
+        calls = 0
+        fallback_block = {
+            "type": "fallback",
+            "fallback_model": "claude-opus-4-8",
+            "reason": "capacity",
+        }
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            nonlocal calls
+            calls += 1
+            requests.append(json_body)
+            if calls == 1:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "content": [
+                            {"type": "thinking", "thinking": "discard me", "signature": "old"},
+                            fallback_block,
+                            {"type": "thinking", "thinking": "keep me", "signature": "new"},
+                            {"type": "tool_use", "id": "tool-1", "name": "lookup", "input": {"q": "x"}},
+                        ],
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-5")
+        first = await model.generate(
+            ModelGenerateInput(
+                messages=[ModelMessage(role="user", parts=[TextPart(text="run")])],
+                provider_options={"fallbacks": "default", "anthropic_beta": "model-fallback-2026-07-01"},
+            )
+        )
+        assert first.messages is not None
+        await model.generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="user", parts=[TextPart(text="run")]),
+                    first.messages[0],
+                    ModelMessage(
+                        role="tool",
+                        parts=[
+                            ToolResultPart(
+                                tool_result=ToolExecutionResult(
+                                    tool_call_id="tool-1",
+                                    tool_name="lookup",
+                                    output={"ok": True},
+                                )
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            requests[1]["messages"][1]["content"],
+            [
+                fallback_block,
+                {"type": "thinking", "thinking": "keep me", "signature": "new"},
+                {"type": "tool_use", "id": "tool-1", "name": "lookup", "input": {"q": "x"}},
+            ],
+        )

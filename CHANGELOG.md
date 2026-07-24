@@ -39,6 +39,36 @@ Related documents:
 
 - None.
 
+## 0.12.1
+
+### Added
+
+- Added direct Anthropic Claude Opus 5 catalog guidance and request-contract coverage for `claude-opus-5`.
+- Added Opus 5 coverage for adaptive effort, disabled thinking, forced tool choice, intermediate system sections, refusals, context limits, and installed-wheel live smoke configuration.
+
+### Changed
+
+- Bumped the package version to `0.12.1` while keeping the package in Beta.
+- Anthropic Fast mode now adds its required beta header automatically.
+- Anthropic live agent smoke omits incompatible temperature sampling and uses a larger output-token budget.
+
+### Fixed
+
+- Preserved interleaved Anthropic thinking and redacted-thinking blocks, including signatures and ordering, across non-streaming and SSE tool loops.
+- Prevented inherited Anthropic tool-call metadata from replaying the original `tool_use` block inside the following user tool-result message.
+- Validated the final merged Opus 5 thinking/effort configuration so disabled thinking cannot be combined with `xhigh` or `max`.
+- Rejected unsupported Opus 5 assistant prefill, manual thinking budgets, non-default sampling, and server-side Web Fetch before dispatch, including token counting.
+- Preserved Anthropic refusal details, normalized context-window exhaustion to `length`, and discarded collected partial streaming text when the final result is a refusal.
+- Tightened mid-conversation system-section placement to require a preceding user message or completed server-tool result.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.12.0
 
 ### Added

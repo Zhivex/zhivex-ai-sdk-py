@@ -117,6 +117,7 @@ def _part_from_dict(
         return CodeExecutionResultPart(
             output=value.get("output", ""),
             outcome=value.get("outcome"),
+            provider_metadata=value.get("provider_metadata") or {},
         )
     raise ValueError(f"Unsupported content part type: {part_type}")
 

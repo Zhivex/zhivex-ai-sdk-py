@@ -96,6 +96,12 @@ def _matches_smoke_token(text: str, expected: str) -> bool:
     return text.strip().rstrip(".") == expected.rstrip(".")
 
 
+def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
+    if provider == "anthropic":
+        return {"temperature": None, "max_tokens": 4096}
+    return {"temperature": 0, "max_tokens": 80}
+
+
 def _safe_error_message(error: BaseException) -> str:
     message = str(error)
     secret_markers = (
@@ -148,6 +154,7 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
             )
         },
     )
+    generation_options = _agent_smoke_generation_options(provider)
     result = await run_agent(
         agent=agent,
         prompt=(
@@ -155,8 +162,8 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
             f'"{nonce}", then reply with AGENT_SMOKE_OK.'
         ),
         max_steps=3,
-        temperature=0,
-        max_tokens=80,
+        temperature=generation_options["temperature"],
+        max_tokens=generation_options["max_tokens"],
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=30_000,
@@ -256,12 +263,12 @@ async def _run_anthropic() -> tuple[str, bool, str, bool]:
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly ANTHROPIC_SMOKE_OK.",
-        max_tokens=20,
+        max_tokens=1024,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
-    if result.text.strip() != "ANTHROPIC_SMOKE_OK.":
+    if not _matches_smoke_token(result.text, "ANTHROPIC_SMOKE_OK."):
         raise RuntimeError(f"unexpected response: {result.text!r}")
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
