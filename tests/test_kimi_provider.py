@@ -23,6 +23,7 @@ from zhivex_ai import (
     ReasoningConfig,
     ToolChoiceName,
     UnsupportedFeatureError,
+    ValidationError,
     create_kimi,
     generate_text,
     kimi_formula_toolset,
@@ -129,6 +130,185 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
                 tool_choice=ToolChoiceName("weather"),
             )
 
+    async def test_kimi_k3_maps_reasoning_vision_tools_and_strict_structured_output(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            if len(requests) == 1:
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "reasoning_content": "inspect the image before answering",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_1",
+                                            "type": "function",
+                                            "function": {"name": "inspect", "arguments": '{"target":"image"}'},
+                                        }
+                                    ],
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ]
+                    },
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {"message": {"role": "assistant", "content": '{"ok":true}'}, "finish_reason": "stop"}
+                    ]
+                },
+            )
+
+        schema = {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        }
+        provider = create_kimi(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("kimi-k3"),
+            messages=[
+                user(
+                    [
+                        ImagePart(image="data:image/png;base64,aGVsbG8="),
+                        FilePart(file_id="video_1", media_type="video/mp4"),
+                    ]
+                )
+            ],
+            tools={
+                "inspect": tool(
+                    name="inspect",
+                    schema={"type": "object", "properties": {"target": {"type": "string"}}},
+                    execute=lambda input: {"target": input["target"], "visible": True},
+                )
+            },
+            tool_choice="required",
+            reasoning=ReasoningConfig(effort="high"),
+            max_tokens=4096,
+            structured_output=StructuredOutputConfig(schema=schema, mode="native", name="inspection"),
+            max_steps=2,
+        )
+
+        first_body = requests[0]["json"]
+        self.assertEqual(result.text, '{"ok":true}')
+        self.assertEqual(first_body["model"], "kimi-k3")
+        self.assertEqual(first_body["reasoning_effort"], "high")
+        self.assertNotIn("thinking", first_body)
+        self.assertEqual(first_body["max_completion_tokens"], 4096)
+        self.assertEqual(first_body["tool_choice"], "required")
+        self.assertEqual(
+            first_body["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {"name": "inspection", "strict": True, "schema": schema},
+            },
+        )
+        self.assertEqual(
+            first_body["messages"][0]["content"],
+            [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+                {"type": "video_url", "video_url": {"url": "ms://video_1"}},
+            ],
+        )
+        self.assertEqual(requests[1]["json"]["messages"][1]["reasoning_content"], "inspect the image before answering")
+
+    async def test_kimi_k3_accepts_all_documented_reasoning_efforts(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append(json_body or {})
+            return FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]},
+            )
+
+        model = create_kimi(api_key="test", fetch=fetch).native.language_model("kimi-k3")
+        await generate_text(model=model, prompt="hello")
+        for effort in ("low", "high", "max"):
+            await generate_text(model=model, prompt="hello", reasoning=ReasoningConfig(effort=effort))  # type: ignore[arg-type]
+
+        self.assertNotIn("reasoning_effort", requests[0])
+        self.assertNotIn("thinking", requests[0])
+        self.assertEqual([request["reasoning_effort"] for request in requests[1:]], ["low", "high", "max"])
+
+    async def test_kimi_k3_rejects_incompatible_reasoning_sampling_tools_and_public_urls(self) -> None:
+        model = create_kimi(api_key="test").native.language_model("kimi-k3")
+
+        for effort in ("none", "minimal", "medium", "xhigh"):
+            with self.subTest(effort=effort), self.assertRaises(UnsupportedFeatureError):
+                await generate_text(model=model, prompt="hello", reasoning=ReasoningConfig(effort=effort))  # type: ignore[arg-type]
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=model,
+                prompt="hello",
+                reasoning=ReasoningConfig(effort="max", budget_tokens=1024),
+            )
+
+        with self.assertRaises(ValidationError):
+            await generate_text(model=model, prompt="hello", provider_options={"thinking": {"type": "enabled"}})
+
+        with self.assertRaises(ValidationError):
+            await generate_text(
+                model=model,
+                prompt="hello",
+                reasoning=ReasoningConfig(effort="high"),
+                provider_options={"reasoning_effort": "max"},
+            )
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(model=model, prompt="hello", provider_options={"reasoning_effort": "medium"})
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(model=model, prompt="hello", temperature=1.0)
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(model=model, prompt="hello", provider_options={"top_p": 0.95})
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=model,
+                prompt="hello",
+                tools={
+                    "weather": tool(
+                        name="weather",
+                        schema={"type": "object", "properties": {}},
+                        execute=lambda input: {"ok": True},
+                    )
+                },
+                tool_choice=ToolChoiceName("weather"),
+            )
+
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(model=model, messages=[user([ImagePart(image="https://example.com/image.png")])])
+
     async def test_kimi_maps_structured_output_and_multimodal_inputs(self) -> None:
         requests: list[dict[str, Any]] = []
 
@@ -196,6 +376,58 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual([event.text_delta for event in events if event.type == "text-delta"], ["hola", " mundo"])
         self.assertEqual(result.text, "hola mundo")
         self.assertEqual(result.finish_reason, "stop")
+
+    async def test_kimi_k3_streaming_preserves_complete_reasoning_across_tool_turns(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append(json_body or {})
+            if len(requests) == 1:
+                return FakeResponse(
+                    status_code=200,
+                    body_text=(
+                        'data: {"choices":[{"delta":{"reasoning_content":"inspect "},"finish_reason":null}]}\n\n'
+                        'data: {"choices":[{"delta":{"reasoning_content":"carefully","tool_calls":[{"index":0,"id":"call_1","function":{"name":"inspect","arguments":"{\\"target\\":\\"image\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+                        "data: [DONE]\n\n"
+                    ),
+                )
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+
+        model = create_kimi(api_key="test", fetch=fetch).native.language_model("kimi-k3")
+        stream = stream_text(
+            model=model,
+            prompt="inspect",
+            tools={
+                "inspect": tool(
+                    name="inspect",
+                    schema={"type": "object", "properties": {"target": {"type": "string"}}},
+                    execute=lambda input: {"visible": input["target"] == "image"},
+                )
+            },
+            reasoning=ReasoningConfig(effort="max"),
+            max_steps=2,
+        )
+        result = await stream.collect()
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(requests[1]["messages"][1]["reasoning_content"], "inspect carefully")
+        self.assertEqual(requests[1]["messages"][1]["tool_calls"][0]["function"]["name"], "inspect")
+        self.assertEqual(requests[1]["messages"][2]["role"], "tool")
 
     async def test_kimi_tool_calls_round_trip_through_chat_completions(self) -> None:
         requests: list[dict[str, Any]] = []

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
     AudioInput,
@@ -85,7 +87,7 @@ async def generate_speech(
             resolved_provider_options["format"] = resolved_config.audio_format
         elif getattr(model, "provider", "") == "openrouter":
             resolved_provider_options.setdefault("audio", {})
-            audio_options = dict(resolved_provider_options["audio"])
+            audio_options = dict(cast(dict[str, object], resolved_provider_options["audio"]))
             audio_options["format"] = resolved_config.audio_format
             resolved_provider_options["audio"] = audio_options
     result = await model.generate_speech(

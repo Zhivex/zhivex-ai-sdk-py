@@ -12,7 +12,7 @@ Create one application request id per inbound request and carry it through:
 - trace exports
 - run-store metadata
 
-Use `idempotency_key` with `run_agent(...)` or `stream_agent(...)` when a user action can be retried by the client or job runner. The SDK returns the existing completed run state when the key already exists in the configured run store.
+Use `idempotency_key` with `run_agent(...)` or `stream_agent(...)` when a user action can be retried by the client or job runner. Built-in stores claim the key atomically: the SDK returns the existing completed or in-progress run identity when the key already exists and does not start a second model loop. Custom production stores must implement atomic `claim_idempotency_key(...)`.
 
 Authenticate and authorize before constructing an agent or gateway request. Bind each credential to a server-owned tenant partition and provider/model policy; do not treat `X-Tenant-ID`, model IDs, tool names, or run IDs supplied by a client as authorization. Enforce request-body and field-size limits while the body is read, plus distributed rate/concurrency limits before provider work begins. The production FastAPI example demonstrates a fail-closed single-tenant bearer boundary and an in-process limiter; replace the limiter with a shared gateway or datastore implementation across replicas.
 
@@ -76,7 +76,9 @@ Use `create_budget_guard(...)` and `create_safety_policy(...)` for runtime ceili
 
 The SDK is async-first. Keep concurrency bounded per provider/model and give every production call a timeout budget. Tool implementations should accept cancellation from the worker or HTTP layer and avoid unbounded network calls.
 
-Use run stores when you need cancellation records, idempotency, replay, or auditability. `cancel_agent_run_tree(...)` marks stored run trees as cancelled; active workers and tools must still cooperate to interrupt work.
+Tool timeouts are an uncertainty boundary, not proof that an external action was rolled back. The SDK raises `ToolExecutionOutcomeUnknown` and stops the agent loop when a tool exceeds `ToolExecutionOptions.timeout_ms`. Use `ToolExecutionContext.idempotency_key` with the downstream service to reconcile the operation before retrying; Python cannot terminate a synchronous callable that is already running in a worker thread.
+
+Use run stores when you need cancellation records, idempotency, replay, or auditability. Built-in stores cancel atomically and use state revisions so a late worker completion cannot overwrite `cancelled`. Cancellation does not terminate a provider request, thread, or external side effect already in flight; workers and tools must still cooperate to stop promptly.
 
 ## Serverless Vs Workers
 
@@ -101,7 +103,7 @@ Use `create_otel_agent_observer(...)` for OpenTelemetry spans, and `create_agent
 
 ## Recovery
 
-Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to mark stored run trees as cancelled; application workers must still cooperate to interrupt active tasks.
+Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to cancel the root and descendants visible while it traverses the store. Each state transition is atomic, but the multi-record traversal is best-effort: prevent new child dispatch in the application and repeat reconciliation if workers can create descendants concurrently. Application workers must still cooperate to interrupt active tasks.
 
 ## Release Evidence
 

@@ -34,6 +34,7 @@ from zhivex_ai import (  # noqa: E402
     load_agent_session,
     permission_allowlist_approval_policy,
     provider_data_part,
+    remote_tool,
     run_agent,
     stream_agent,
     tool,
@@ -726,6 +727,53 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(saved), 2)
         self.assertTrue(saved[-1].is_final)
+
+    async def test_agent_checkpoints_and_events_redact_credentials_and_raw_payloads(self) -> None:
+        class CheckpointModel(EchoAgentModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                return GenerateResult(
+                    messages=[create_text_message("assistant", "done")],
+                    text="done",
+                    raw_response={"api_key": "raw-secret-value"},
+                )
+
+        checkpoints = create_in_memory_checkpoint_store()
+        agent = Agent(
+            name="assistant",
+            model=CheckpointModel(),
+            checkpoint_store=checkpoints,
+            tools={
+                "remote": remote_tool(
+                    name="remote",
+                    url="https://user:password@example.com/tool?token=query-secret-value",
+                    schema=dict[str, str],
+                    headers={"authorization": "Bearer header-secret-value"},
+                )
+            },
+        )
+
+        result = await run_agent(
+            agent=agent,
+            prompt="hello",
+            provider_options={"api_key": "provider-secret-value"},
+        )
+        saved = await checkpoints.list(run_id=result.run_id)
+        checkpoint_events = [event for event in result.trace.events if event.type == "checkpoint"]  # type: ignore[union-attr]
+
+        self.assertTrue(saved)
+        serialized = repr([saved, checkpoint_events])
+        for secret in (
+            "password",
+            "query-secret-value",
+            "header-secret-value",
+            "provider-secret-value",
+            "raw-secret-value",
+        ):
+            self.assertNotIn(secret, serialized)
+        definition = saved[0].request.tools["remote"]  # type: ignore[index]
+        self.assertEqual(definition.remote_config.headers, {})  # type: ignore[union-attr]
+        self.assertIsNone(saved[0].request.provider_options)
+        self.assertIsNone(saved[0].response.raw_response)
 
     async def test_stream_agent_emits_events_and_collects(self) -> None:
         agent = Agent(

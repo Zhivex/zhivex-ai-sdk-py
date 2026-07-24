@@ -25,7 +25,7 @@ app = FastAPI(title="Zhivex AI SDK FastAPI Streaming Example")
 class StreamRequest(BaseModel):
     prompt: str = Field(min_length=1)
     system: str | None = None
-    model: str = "gpt-5.4-mini"
+    model: str = "gpt-5.6-terra"
     timeout_ms: int = Field(default=30_000, gt=0)
 
 

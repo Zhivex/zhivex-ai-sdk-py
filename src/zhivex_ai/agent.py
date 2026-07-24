@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import hashlib
 import inspect
 import json
 import re
 import sqlite3
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
-from dataclasses import asdict, dataclass, field, is_dataclass, replace
-from functools import lru_cache
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4
@@ -23,9 +24,10 @@ from ._serde import (
     serialize_generate_result,
     serialize_messages,
     serialize_model_generate_input,
+    serialize_tool_definition,
     serialize_tool_execution_context,
 )
-from .errors import ProviderHTTPError, ToolExecutionSuspended, ValidationError
+from .errors import AgentEventDeliveryError, AgentRunCancelled, ProviderHTTPError, ToolExecutionSuspended, ValidationError
 from .agent_state import (
     AgentChildRun,
     AgentRunState,
@@ -34,6 +36,7 @@ from .agent_state import (
     AgentRunStore,
     PendingApproval,
     agent_child_run_from_state,
+    fail_agent_run_resume_claim,
 )
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, is_callable_tool_definition, provider_data_part, serialize_json_value, tool_result_part
@@ -95,6 +98,22 @@ def _now_ms() -> int:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
+
+
+async def _persist_agent_run_state(store: AgentRunStore, state: AgentRunState) -> AgentRunState:
+    """Persist one CAS revision and surface a winning cancellation explicitly."""
+
+    try:
+        persisted = await store.save(state)
+    except ValidationError as error:
+        current = await store.load(state.run_id)
+        if current is not None and current.status == "cancelled":
+            raise AgentRunCancelled(
+                state.run_id,
+                reason=current.cancellation_reason,
+            ) from error
+        raise
+    return persisted if isinstance(persisted, AgentRunState) else state
 
 
 def _text_from_message(message: ModelMessage) -> str:
@@ -254,6 +273,91 @@ def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionConte
     if mode == "positional":
         return execute(parsed, context)
     return execute(parsed)
+
+
+def _stable_fingerprint_value(value: Any, _seen: set[int] | None = None) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, bytes):
+        return {"bytes_sha256": hashlib.sha256(value).hexdigest()}
+    seen = _seen if _seen is not None else set()
+    marker = id(value)
+    if marker in seen:
+        return {"cycle": f"{value.__class__.__module__}.{value.__class__.__qualname__}"}
+    seen.add(marker)
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_fingerprint_value(item, seen)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_fingerprint_value(item, seen) for item in value]
+    if isinstance(value, (set, frozenset)):
+        normalized = [_stable_fingerprint_value(item, seen) for item in value]
+        return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _stable_fingerprint_value(getattr(value, item.name), seen)
+            for item in fields(value)
+            if not item.name.startswith("_")
+        }
+    state = getattr(value, "__dict__", None)
+    if isinstance(state, dict):
+        public_state = {key: item for key, item in state.items() if not str(key).startswith("_")}
+        return {
+            "type": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
+            "state": _stable_fingerprint_value(public_state, seen),
+        }
+    return {"type": f"{value.__class__.__module__}.{value.__class__.__qualname__}"}
+
+
+def _callable_fingerprint(execute: Any) -> dict[str, Any] | None:
+    if execute is None:
+        return None
+    if isinstance(execute, partial):
+        return {
+            "partial": _callable_fingerprint(execute.func),
+            "args": _stable_fingerprint_value(execute.args),
+            "keywords": _stable_fingerprint_value(execute.keywords or {}),
+        }
+    target = inspect.unwrap(execute)
+    code = getattr(target, "__code__", None)
+    code_digest = ""
+    if code is not None:
+        material = b"\0".join(
+            (
+                code.co_code,
+                repr(code.co_consts).encode("utf-8", "backslashreplace"),
+                repr(code.co_names).encode("utf-8", "backslashreplace"),
+                repr(getattr(target, "__defaults__", None)).encode("utf-8", "backslashreplace"),
+                repr(getattr(target, "__kwdefaults__", None)).encode("utf-8", "backslashreplace"),
+            )
+        )
+        code_digest = hashlib.sha256(material).hexdigest()
+    closure: list[Any] = []
+    for cell in getattr(target, "__closure__", None) or ():
+        try:
+            closure.append(_stable_fingerprint_value(cell.cell_contents))
+        except ValueError:
+            closure.append({"unavailable": True})
+    bound_self = getattr(target, "__self__", None)
+    return {
+        "module": str(getattr(target, "__module__", target.__class__.__module__)),
+        "qualname": str(getattr(target, "__qualname__", target.__class__.__qualname__)),
+        "code_sha256": code_digest,
+        "closure": closure,
+        "bound_state": _stable_fingerprint_value(bound_self) if bound_self is not None else None,
+        "callable_state": _stable_fingerprint_value(target)
+        if code is None and not inspect.ismethod(target) and not inspect.isfunction(target)
+        else None,
+    }
+
+
+def _tool_definition_fingerprint(definition: ToolDefinition) -> str:
+    payload = serialize_tool_definition(definition, redact_credentials=True)
+    payload["executor"] = _callable_fingerprint(definition.execute)
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @lru_cache(maxsize=256)
@@ -465,7 +569,13 @@ class LocalToolRuntime:
             raise RuntimeError(f'Tool "{definition.name}" is provider-managed and cannot run in the local tool runtime.')
         if definition.execute is None:
             raise RuntimeError(f'Tool "{definition.name}" does not define a local executor.')
-        result = _invoke_tool_callable(definition.execute, input, context)
+        is_async = inspect.iscoroutinefunction(definition.execute) or inspect.iscoroutinefunction(
+            getattr(definition.execute, "__call__", None)
+        )
+        if is_async:
+            result = _invoke_tool_callable(definition.execute, input, context)
+        else:
+            result = await asyncio.to_thread(_invoke_tool_callable, definition.execute, input, context)
         return await _maybe_await(result)
 
     async def aclose(self) -> None:
@@ -566,6 +676,14 @@ def _normalize_mcp_result(payload: Any) -> Any:
     return normalized
 
 
+def _mcp_result_is_error(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        value = payload.get("isError", payload.get("is_error"))
+    else:
+        value = getattr(payload, "isError", getattr(payload, "is_error", None))
+    return value is True
+
+
 class MCPToolRuntime:
     def __init__(self) -> None:
         self._sessions: dict[str, tuple[Any, Any]] = {}
@@ -638,6 +756,11 @@ class MCPToolRuntime:
             raise RuntimeError(f'Tool "{definition.name}" does not define an mcp_config.')
         session = await self._get_session(config.server)
         result = await session.call_tool(config.tool_name, arguments=input)
+        if _mcp_result_is_error(result):
+            detail = str(_normalize_mcp_result(result))
+            if len(detail) > 1000:
+                detail = f"{detail[:997]}..."
+            raise RuntimeError(f'MCP tool "{config.tool_name}" returned an error: {detail}')
         return _normalize_mcp_result(result)
 
     async def aclose(self) -> None:
@@ -779,18 +902,60 @@ def _build_mcp_local_tool_name(
     return f"{resolved_prefix}_{base_name}"
 
 
+def _mcp_tool_annotations(item: Any) -> dict[str, bool]:
+    raw = item.get("annotations") if isinstance(item, dict) else getattr(item, "annotations", None)
+    names = {
+        "read_only": ("readOnlyHint", "read_only_hint"),
+        "destructive": ("destructiveHint", "destructive_hint"),
+        "idempotent": ("idempotentHint", "idempotent_hint"),
+        "open_world": ("openWorldHint", "open_world_hint"),
+    }
+    normalized: dict[str, bool] = {}
+    for target, candidates in names.items():
+        for candidate in candidates:
+            if isinstance(raw, dict) and candidate in raw:
+                value = raw[candidate]
+            elif raw is not None and hasattr(raw, candidate):
+                value = getattr(raw, candidate)
+            else:
+                continue
+            if isinstance(value, bool):
+                normalized[target] = value
+            break
+    return normalized
+
+
+def _mcp_tool_security_classification(
+    annotations: dict[str, bool],
+    *,
+    trusted_by_application: bool = False,
+) -> tuple[bool, list[str]]:
+    # MCP annotations are untrusted hints. They help describe permissions but
+    # never grant automatic execution; only the application's exact-name
+    # allowlist can opt a discovered tool out of approval.
+    if annotations.get("read_only") is True and annotations.get("destructive") is False:
+        permissions = ["read", "network"]
+    else:
+        permissions = ["network", "external-side-effect"]
+        if annotations.get("destructive") is True:
+            permissions.extend(["write", "delete"])
+    return not trusted_by_application, permissions
+
+
 async def _load_mcp_tool_definitions(
     server: MCPServerConfig,
     *,
     prefix: str | None = None,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    trusted_tools: Iterable[str] | None = None,
     name_transform: Literal["preserve", "snake_case"] = "preserve",
 ) -> ToolSet:
     runtime = MCPToolRuntime()
     try:
         include_set = set(include or [])
         exclude_set = set(exclude or [])
+        trusted_tool_names = set(trusted_tools or [])
         tools: ToolSet = {}
         seen_remote_names: dict[str, str] = {}
         for item in await runtime.list_tools(server):
@@ -820,13 +985,26 @@ async def _load_mcp_tool_definitions(
                     "Use a prefix or preserve the original names to disambiguate them."
                 )
             seen_remote_names[local_name] = remote_name
+            annotations = _mcp_tool_annotations(item)
+            trusted_by_application = remote_name in trusted_tool_names
+            requires_approval, permissions = _mcp_tool_security_classification(
+                annotations,
+                trusted_by_application=trusted_by_application,
+            )
             tools[local_name] = ToolDefinition(
                 name=local_name,
                 description=description,
                 schema=schema or {},
                 execute=None,
                 source="mcp",
-                metadata={"mcp_server": server.name, "mcp_tool_name": remote_name},
+                requires_approval=requires_approval,
+                permissions=permissions,
+                metadata={
+                    "mcp_server": server.name,
+                    "mcp_tool_name": remote_name,
+                    "mcp_annotations": annotations,
+                    "mcp_trust": "application" if trusted_by_application else "approval-required",
+                },
                 mcp_config=MCPToolConfig(server=server, tool_name=remote_name),
             )
         return tools
@@ -840,12 +1018,14 @@ async def discover_mcp_tools(
     prefix: str | None = None,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    trusted_tools: Iterable[str] | None = None,
 ) -> ToolSet:
     return await _load_mcp_tool_definitions(
         server,
         prefix=prefix,
         include=include,
         exclude=exclude,
+        trusted_tools=trusted_tools,
         name_transform="preserve",
     )
 
@@ -856,6 +1036,7 @@ async def create_mcp_tool_registry(
     prefix: str | None = None,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    trusted_tools: Iterable[str] | None = None,
     name_transform: Literal["preserve", "snake_case"] = "snake_case",
 ) -> ToolRegistry:
     resolved_prefix = server.name if prefix is None and name_transform == "snake_case" else prefix
@@ -864,6 +1045,7 @@ async def create_mcp_tool_registry(
         prefix=resolved_prefix,
         include=include,
         exclude=exclude,
+        trusted_tools=trusted_tools,
         name_transform=name_transform,
     )
     return ToolRegistry(
@@ -886,6 +1068,7 @@ class Agent:
     approval_policy: ApprovalPolicy | None = None
     input_guardrails: list[InputGuardrail] = field(default_factory=list)
     output_guardrails: list[OutputGuardrail] = field(default_factory=list)
+    tool_execution: ToolExecutionOptions | None = None
     run_limits: RunLimits = field(default_factory=RunLimits)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -1314,8 +1497,12 @@ def _serialize_agent_checkpoint(checkpoint: AgentCheckpoint) -> dict[str, Any]:
         "session_id": checkpoint.session_id,
         "agent_name": checkpoint.agent_name,
         "step_index": checkpoint.step_index,
-        "request": serialize_model_generate_input(checkpoint.request),
-        "response": serialize_generate_result(checkpoint.response),
+        "request": serialize_model_generate_input(
+            checkpoint.request,
+            redact_tool_credentials=True,
+            redact_provider_options=True,
+        ),
+        "response": serialize_generate_result(checkpoint.response, redact_raw_response=True),
         "saved_at_ms": checkpoint.saved_at_ms,
         "is_final": checkpoint.is_final,
     }
@@ -1828,9 +2015,11 @@ async def load_agent_session(agent: Agent, session_id: str, *, metadata: dict[st
 def _normalize_approval_decision(value: ApprovalDecision | bool | None) -> ApprovalDecision:
     if isinstance(value, ApprovalDecision):
         return value
-    if value is False:
+    if value is False or value is None:
         return ApprovalDecision(approved=False)
-    return ApprovalDecision(approved=True)
+    if value is True:
+        return ApprovalDecision(approved=True)
+    raise ValidationError("Approval policies must return ApprovalDecision or bool.")
 
 
 def _pending_approval_from_request(
@@ -1838,6 +2027,7 @@ def _pending_approval_from_request(
     decision: ApprovalDecision,
     *,
     tool_call_id: str,
+    tool_fingerprint: str,
 ) -> PendingApproval:
     return PendingApproval(
         id=decision.approval_id or _new_id("approval"),
@@ -1851,6 +2041,7 @@ def _pending_approval_from_request(
         metadata={str(key): serialize_json_value(value) for key, value in request.tool_metadata.items()},
         created_at_ms=_now_ms(),
         handoff_path=list(request.handoff_path),
+        tool_fingerprint=tool_fingerprint,
     )
 
 
@@ -2072,18 +2263,58 @@ def _provider_managed_approval_response_message(
 
 
 def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMessage]:
-    messages = list(result.messages)
+    messages = [message for message in result.messages if message.role == "assistant"]
     if messages:
         return messages
     if result.steps:
         collected: list[ModelMessage] = []
         for step in result.steps:
-            collected.extend(_response_messages(step))
+            collected.extend(message for message in _response_messages(step) if message.role == "assistant")
         if collected:
             return collected
     if result.text:
         return [create_text_message("assistant", result.text)]
     return []
+
+
+def _replace_assistant_messages(
+    messages: list[ModelMessage],
+    replacements: list[ModelMessage],
+) -> list[ModelMessage]:
+    resolved = list(messages)
+    positions = [index for index, message in enumerate(resolved) if message.role == "assistant"]
+    if not positions or not replacements:
+        return resolved
+    positions = positions[-len(replacements) :]
+    replacements = replacements[-len(positions) :]
+    for index, replacement in zip(positions, replacements, strict=True):
+        resolved[index] = replacement
+    return resolved
+
+
+def _apply_guarded_output(
+    result: GenerateTextOutput,
+    *,
+    text: str,
+    messages: list[ModelMessage],
+) -> None:
+    result.text = text
+    result.messages = _replace_assistant_messages(result.messages, messages)
+    cursor = 0
+    for step in result.steps:
+        response = step.response
+        response_messages = _response_messages(step)
+        assistant_count = sum(message.role == "assistant" for message in response_messages)
+        step_replacements = messages[cursor : cursor + assistant_count]
+        cursor += assistant_count
+        if response.messages is not None:
+            response.messages = _replace_assistant_messages(response.messages, step_replacements)
+        elif response.message is not None and response.message.role == "assistant" and step_replacements:
+            response.message = step_replacements[-1]
+        if step_replacements:
+            response.text = "".join(_text_from_message(message) for message in step_replacements)
+    if result.steps:
+        result.steps[-1].response.text = text
 
 
 def _resolve_tool_registry(agent: Agent, extra_tools: ToolSet | ToolRegistry | None) -> ToolRegistry:
@@ -2425,7 +2656,10 @@ def _agent_run_state_from_result(
         output_text=result.text,
         finish_reason=result.finish_reason,
         error=error,
-        metadata={"orchestration_path": list(result.orchestration_path)},
+        metadata={
+            "orchestration_path": list(result.orchestration_path),
+            "session_messages": cast(JsonValue, serialize_messages(result.session.messages)),
+        },
     )
     return state
 
@@ -2553,6 +2787,9 @@ async def _save_checkpoints(
             saved_at_ms=_now_ms(),
             is_final=index == len(result.steps),
         )
+        # Emit and persist the same sanitized checkpoint so credentials and
+        # raw provider payloads cannot leak through observers or trace events.
+        checkpoint = _deserialize_agent_checkpoint(_serialize_agent_checkpoint(checkpoint))
         await checkpoint_store.save(checkpoint)
         if trace is not None:
             trace.checkpoint_count += 1
@@ -2618,6 +2855,37 @@ class AgentObserver(Protocol):
     def start_span(self, name: str, attributes: dict[str, Any] | None = None) -> Any: ...
 
 
+def _agent_run_result_from_state(state: AgentRunState, fallback_session: AgentSession) -> AgentRunResult:
+    raw_path = state.metadata.get("orchestration_path")
+    orchestration_path = (
+        [str(item) for item in raw_path]
+        if isinstance(raw_path, list) and raw_path
+        else [state.agent_name]
+    )
+    raw_session_messages = state.metadata.get("session_messages")
+    if isinstance(raw_session_messages, list):
+        session_messages = deserialize_messages(cast(list[dict[str, Any]], raw_session_messages))
+    else:
+        session_messages = [message for step in state.steps for message in step.messages]
+    session = create_agent_session(
+        id=state.session_id or fallback_session.id,
+        messages=session_messages,
+        summary=fallback_session.summary,
+        metadata={**fallback_session.metadata, "idempotency_reused": True},
+    )
+    return AgentRunResult(
+        run_id=state.run_id,
+        agent_name=state.agent_name,
+        session=session,
+        text=state.output_text,
+        finish_reason=state.finish_reason,
+        usage=state.usage,
+        tool_results=list(state.tool_results),
+        orchestration_path=orchestration_path,
+        state=state,
+    )
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -2663,19 +2931,31 @@ class AgentRuntime:
 
         run_id = _new_id("run")
         started_at_ms = _now_ms()
-        if idempotency_key and agent.run_store is not None:
-            existing_state = await agent.run_store.find_by_idempotency_key(idempotency_key)
-            if existing_state is not None:
-                return AgentRunResult(
-                    run_id=existing_state.run_id,
-                    agent_name=existing_state.agent_name,
-                    session=resolved_session,
-                    text=existing_state.output_text,
-                    finish_reason=existing_state.finish_reason,
-                    usage=existing_state.usage,
-                    orchestration_path=[existing_state.agent_name],
-                    state=existing_state,
-                )
+        initial_state = AgentRunState(
+            run_id=run_id,
+            agent_name=agent.name,
+            provider=str(getattr(agent.model, "provider", "")),
+            model_id=str(getattr(agent.model, "model_id", "")),
+            session_id=resolved_session.id,
+            parent_run_id=parent_run_id,
+            idempotency_key=idempotency_key,
+            started_at_ms=started_at_ms,
+            updated_at_ms=started_at_ms,
+            metadata={"orchestration_path": [agent.name]},
+        )
+        if agent.run_store is not None:
+            if idempotency_key:
+                claim_idempotency_key = getattr(agent.run_store, "claim_idempotency_key", None)
+                if not callable(claim_idempotency_key):
+                    raise ValidationError(
+                        "Idempotent agent runs require an AgentRunStore with atomic "
+                        "claim_idempotency_key(...)."
+                    )
+                claimed_state = await claim_idempotency_key(initial_state)
+                if claimed_state.run_id != run_id:
+                    return _agent_run_result_from_state(claimed_state, resolved_session)
+            else:
+                await agent.run_store.save(initial_state)
         trace = AgentTrace(
             run_id=run_id,
             session_id=resolved_session.id,
@@ -2684,58 +2964,76 @@ class AgentRuntime:
             orchestration_path=[agent.name],
         )
 
-        async def publish(event: AgentEvent) -> None:
+        async def publish(event: AgentEvent, *, durable_state_committed: bool = False) -> None:
             trace.events.append(event)
             if emit is not None:
-                await emit(event)
-
-        await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
-        if agent.run_store is not None:
-            await agent.run_store.save(
-                AgentRunState(
-                    run_id=run_id,
-                    agent_name=agent.name,
-                    provider=str(getattr(agent.model, "provider", "")),
-                    model_id=str(getattr(agent.model, "model_id", "")),
-                    session_id=resolved_session.id,
-                    parent_run_id=parent_run_id,
-                    idempotency_key=idempotency_key,
-                    started_at_ms=started_at_ms,
-                    updated_at_ms=started_at_ms,
-                    metadata={"orchestration_path": [agent.name]},
-                )
-            )
+                try:
+                    await emit(event)
+                except Exception as error:
+                    raise AgentEventDeliveryError(
+                        run_id,
+                        event_type=event.type,
+                        durable_state_committed=durable_state_committed,
+                    ) from error
 
         current_agent = agent
         current_prompt = prompt
         current_messages = messages
         handoff_depth = 0
+        accumulated_steps: list[GenerateTextStep] = []
+        accumulated_tool_results: list[ToolExecutionResult] = []
+        accumulated_artifacts: list[SkillArtifact] = []
+        accumulated_usages: list[TokenUsage | None] = []
+        run_deadline_ms = (
+            started_at_ms + agent.run_limits.max_wall_time_ms
+            if agent.run_limits.max_wall_time_ms is not None
+            else None
+        )
         try:
+            await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
             while True:
                 trace.segments.append(AgentTraceSegment(agent_name=current_agent.name, started_at_ms=_now_ms()))
                 await publish(AgentDelegationStartEvent(agent_name=current_agent.name, handoff_depth=handoff_depth))
-                segment_result = await self._run_single(
-                    agent=current_agent,
-                    session=resolved_session,
-                    run_id=run_id,
-                    trace=trace,
-                    prompt=current_prompt,
-                    messages=current_messages,
-                    tools=tools,
-                    skills=skills,
-                    tool_choice=tool_choice,
-                    tool_execution=tool_execution,
-                    max_steps=max_steps,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    timeout_ms=timeout_ms,
-                    max_retries=max_retries,
-                    retry_backoff_ms=retry_backoff_ms,
-                    emit=publish,
-                    live_stream=live_stream,
-                )
+
+                async def run_segment() -> AgentRunResult:
+                    return await self._run_single(
+                        agent=current_agent,
+                        session=resolved_session,
+                        run_id=run_id,
+                        trace=trace,
+                        prompt=current_prompt,
+                        messages=current_messages,
+                        tools=tools,
+                        skills=skills,
+                        tool_choice=tool_choice,
+                        tool_execution=tool_execution,
+                        max_steps=max_steps,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        timeout_ms=timeout_ms,
+                        max_retries=max_retries,
+                        retry_backoff_ms=retry_backoff_ms,
+                        emit=publish,
+                        live_stream=live_stream,
+                    )
+
+                if run_deadline_ms is None:
+                    segment_result = await run_segment()
+                else:
+                    remaining_seconds = (run_deadline_ms - _now_ms()) / 1000
+                    if remaining_seconds <= 0:
+                        raise RuntimeError("Agent run exceeded max wall time.")
+                    try:
+                        async with asyncio.timeout(remaining_seconds):
+                            segment_result = await run_segment()
+                    except TimeoutError as error:
+                        raise RuntimeError("Agent run exceeded max wall time.") from error
+                accumulated_steps.extend(segment_result.steps)
+                accumulated_tool_results.extend(segment_result.tool_results)
+                accumulated_artifacts.extend(segment_result.artifacts)
+                accumulated_usages.append(segment_result.usage)
                 trace.segments[-1].finished_at_ms = _now_ms()
                 await publish(
                     AgentDelegationFinishEvent(
@@ -2746,14 +3044,6 @@ class AgentRuntime:
                 )
                 if segment_result.handoff is None or stop_on_handoff:
                     final_handoff = segment_result.handoff if stop_on_handoff else None
-                    await publish(
-                        AgentFinishEvent(
-                            run_id=run_id,
-                            session_id=resolved_session.id,
-                            text=segment_result.text,
-                            finish_reason=segment_result.finish_reason,
-                        )
-                    )
                     trace.finished_at_ms = _now_ms()
                     output = AgentRunResult(
                         run_id=run_id,
@@ -2762,11 +3052,11 @@ class AgentRuntime:
                         text=segment_result.text,
                         finish_reason=segment_result.finish_reason,
                         provider_finish_reason=segment_result.provider_finish_reason,
-                        usage=segment_result.usage,
-                        steps=segment_result.steps,
+                        usage=_merge_usage(accumulated_usages),
+                        steps=list(accumulated_steps),
                         messages=segment_result.messages,
-                        tool_results=segment_result.tool_results,
-                        artifacts=segment_result.artifacts,
+                        tool_results=list(accumulated_tool_results),
+                        artifacts=list(accumulated_artifacts),
                         trace=trace,
                         handoff=final_handoff,
                         orchestration_path=list(trace.orchestration_path),
@@ -2774,15 +3064,24 @@ class AgentRuntime:
                     )
                     run_state = _agent_run_state_from_result(
                         result=output,
-                        agent=agent,
+                        agent=current_agent,
                         parent_run_id=parent_run_id,
                         idempotency_key=idempotency_key,
                         started_at_ms=started_at_ms,
                         finished_at_ms=trace.finished_at_ms,
                     )
-                    output.state = run_state
                     if agent.run_store is not None:
-                        await agent.run_store.save(run_state)
+                        run_state = await _persist_agent_run_state(agent.run_store, run_state)
+                    output.state = run_state
+                    await publish(
+                        AgentFinishEvent(
+                            run_id=run_id,
+                            session_id=resolved_session.id,
+                            text=segment_result.text,
+                            finish_reason=segment_result.finish_reason,
+                        ),
+                        durable_state_committed=agent.run_store is not None,
+                    )
                     return output
 
                 handoff = segment_result.handoff
@@ -2816,11 +3115,13 @@ class AgentRuntime:
             suspended_at_ms = _now_ms()
             trace.finished_at_ms = suspended_at_ms
             pending = cast(PendingApproval, suspended.pending_approval)
+            suspended.steps = [*accumulated_steps, *suspended.steps]
+            suspended.tool_results = [*accumulated_tool_results, *suspended.tool_results]
             run_state = _agent_run_state_from_suspension(
                 run_id=run_id,
                 agent_name=current_agent.name,
                 session_id=resolved_session.id,
-                agent=agent,
+                agent=current_agent,
                 parent_run_id=parent_run_id,
                 idempotency_key=idempotency_key,
                 started_at_ms=started_at_ms,
@@ -2829,14 +3130,19 @@ class AgentRuntime:
                 orchestration_path=list(trace.orchestration_path),
             )
             if agent.run_store is not None:
-                await agent.run_store.save(run_state)
+                try:
+                    run_state = await _persist_agent_run_state(agent.run_store, run_state)
+                except AgentRunCancelled as error:
+                    await publish(AgentErrorEvent(error=error), durable_state_committed=True)
+                    raise
             await publish(
                 AgentFinishEvent(
                     run_id=run_id,
                     session_id=resolved_session.id,
                     text="",
                     finish_reason="tool-calls",
-                )
+                ),
+                durable_state_committed=agent.run_store is not None,
             )
             return AgentRunResult(
                 run_id=run_id,
@@ -2853,27 +3159,50 @@ class AgentRuntime:
                 state=run_state,
                 provider_finish_reason=pending.reason,
             )
-        except Exception as error:
-            await publish(AgentErrorEvent(error=error))
+        except AgentRunCancelled as error:
             trace.finished_at_ms = _now_ms()
+            await publish(AgentErrorEvent(error=error), durable_state_committed=True)
+            raise
+        except Exception as error:
+            trace.finished_at_ms = _now_ms()
+            if isinstance(error, AgentEventDeliveryError) and error.durable_state_committed:
+                raise
             if agent.run_store is not None:
-                await agent.run_store.save(
-                    AgentRunState(
-                        run_id=run_id,
-                        agent_name=agent.name,
-                        provider=str(getattr(agent.model, "provider", "")),
-                        model_id=str(getattr(agent.model, "model_id", "")),
-                        status="failed",
-                        session_id=resolved_session.id,
-                        parent_run_id=parent_run_id,
-                        idempotency_key=idempotency_key,
-                        started_at_ms=started_at_ms,
-                        updated_at_ms=trace.finished_at_ms,
-                        finished_at_ms=trace.finished_at_ms,
-                        error=str(error),
-                        metadata={"orchestration_path": list(trace.orchestration_path)},
-                    )
+                failed_result = AgentRunResult(
+                    run_id=run_id,
+                    agent_name=current_agent.name,
+                    session=resolved_session,
+                    text="",
+                    finish_reason="error",
+                    usage=_merge_usage(accumulated_usages),
+                    steps=list(accumulated_steps),
+                    tool_results=list(accumulated_tool_results),
+                    artifacts=list(accumulated_artifacts),
+                    trace=trace,
+                    orchestration_path=list(trace.orchestration_path),
                 )
+                try:
+                    await _persist_agent_run_state(
+                        agent.run_store,
+                        _agent_run_state_from_result(
+                            result=failed_result,
+                            agent=current_agent,
+                            parent_run_id=parent_run_id,
+                            idempotency_key=idempotency_key,
+                            started_at_ms=started_at_ms,
+                            finished_at_ms=trace.finished_at_ms,
+                            error=str(error),
+                        ),
+                    )
+                except AgentRunCancelled as cancelled:
+                    await publish(AgentErrorEvent(error=cancelled), durable_state_committed=True)
+                    raise cancelled from error
+            if isinstance(error, AgentEventDeliveryError):
+                raise
+            await publish(
+                AgentErrorEvent(error=error),
+                durable_state_committed=agent.run_store is not None,
+            )
             raise
 
     async def _run_input_guardrails(
@@ -2887,7 +3216,7 @@ class AgentRuntime:
         context: AgentContext,
         trace: AgentTrace,
         emit: Callable[[AgentEvent], Awaitable[None]],
-    ) -> None:
+    ) -> InputGuardrailRequest:
         request = InputGuardrailRequest(
             run_id=run_id,
             session_id=session_id,
@@ -2935,6 +3264,7 @@ class AgentRuntime:
                     reason=outcome.reason,
                     metadata=outcome.metadata,
                 )
+        return request
 
     async def _run_output_guardrails(
         self,
@@ -2948,7 +3278,7 @@ class AgentRuntime:
         context: AgentContext,
         trace: AgentTrace,
         emit: Callable[[AgentEvent], Awaitable[None]],
-    ) -> None:
+    ) -> OutputGuardrailRequest:
         request = OutputGuardrailRequest(
             run_id=run_id,
             session_id=session_id,
@@ -2997,6 +3327,7 @@ class AgentRuntime:
                     reason=outcome.reason,
                     metadata=outcome.metadata,
                 )
+        return request
 
     async def _run_single(
         self,
@@ -3049,7 +3380,7 @@ class AgentRuntime:
             },
             handoff_path=list(trace.orchestration_path),
         )
-        await self._run_input_guardrails(
+        guarded_input = await self._run_input_guardrails(
             agent=agent,
             run_id=run_id,
             session_id=session.id,
@@ -3059,6 +3390,7 @@ class AgentRuntime:
             trace=trace,
             emit=emit,
         )
+        built_messages = guarded_input.messages
         registry = _resolve_tool_registry(agent, tools)
         if agent.subagents:
             registry = registry.merge(
@@ -3095,6 +3427,7 @@ class AgentRuntime:
         conversation_messages = list(built_messages)
         persisted_run_messages: list[ModelMessage] = []
         remaining_steps = _effective_max_steps(agent.run_limits, max_steps)
+        resolved_tool_execution = tool_execution if tool_execution is not None else agent.tool_execution
 
         async def resolve_provider_managed_approval(
             approval: _ProviderManagedApproval,
@@ -3194,7 +3527,7 @@ class AgentRuntime:
                         messages=conversation_messages,
                         tools=merged_tools or None,
                         tool_choice=cast(Any, tool_choice),
-                        tool_execution=tool_execution,
+                        tool_execution=resolved_tool_execution,
                         max_steps=remaining_steps,
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -3212,7 +3545,7 @@ class AgentRuntime:
                         messages=conversation_messages,
                         tools=merged_tools or None,
                         tool_choice=cast(Any, tool_choice),
-                        tool_execution=tool_execution,
+                        tool_execution=resolved_tool_execution,
                         max_steps=remaining_steps,
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -3270,12 +3603,10 @@ class AgentRuntime:
         segment_text = _segment_text(result)
         segment_finish_reason = _segment_finish_reason(result)
         segment_provider_finish_reason = _segment_provider_finish_reason(result)
-        if segment_text and not emitted_live_text and not buffer_live_text:
-            await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if not emitted_live_tool_events:
             for tool_result in accumulated_tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
-        await self._run_output_guardrails(
+        guarded_output = await self._run_output_guardrails(
             agent=agent,
             run_id=run_id,
             session_id=session.id,
@@ -3286,8 +3617,14 @@ class AgentRuntime:
             trace=trace,
             emit=emit,
         )
+        segment_text = guarded_output.text
+        _apply_guarded_output(result, text=segment_text, messages=guarded_output.messages)
+        conversation_messages = _replace_assistant_messages(conversation_messages, guarded_output.messages)
+        persisted_run_messages = _replace_assistant_messages(persisted_run_messages, guarded_output.messages)
+        if segment_text and not emitted_live_text and not buffer_live_text:
+            await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if buffer_live_text:
-            if buffered_text_deltas:
+            if buffered_text_deltas and segment_text == "".join(buffered_text_deltas):
                 for text_delta in buffered_text_deltas:
                     await emit(AgentTextDeltaEvent(text_delta=text_delta))
             elif segment_text:
@@ -3423,12 +3760,15 @@ class AgentRuntime:
                     handoff_path=list(trace.orchestration_path),
                 )
                 decision = ApprovalDecision(approved=True)
-                if _definition.requires_approval or (
+                approval_required = _definition.requires_approval is True or (
+                    _definition.requires_approval is None and _definition.source in {"remote", "mcp"}
+                )
+                if approval_required or (
                     _definition.requires_approval is None and agent.approval_policy is not None
                 ):
-                    if _definition.requires_approval and agent.approval_policy is None:
+                    if approval_required and agent.approval_policy is None:
                         raise RuntimeError(
-                            f'Local tool "{_tool_name}" requires an approval_policy on the agent.'
+                            f'Tool "{_tool_name}" requires an approval_policy on the agent.'
                         )
                     trace.approval_count += 1
                     if agent.approval_policy is not None:
@@ -3438,6 +3778,7 @@ class AgentRuntime:
                             request,
                             decision,
                             tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                            tool_fingerprint=_tool_definition_fingerprint(_definition),
                         )
                         if decision.suspend
                         else None
@@ -3465,6 +3806,7 @@ class AgentRuntime:
                             request,
                             decision,
                             tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                            tool_fingerprint=_tool_definition_fingerprint(_definition),
                         ),
                     )
                 if not decision.approved:
@@ -3473,6 +3815,12 @@ class AgentRuntime:
                 tool_context = ToolExecutionContext(
                     tool_name=_tool_name,
                     tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                    idempotency_key=(
+                        call_context.idempotency_key
+                        if call_context is not None and call_context.idempotency_key
+                        else f"{run_id}:{call_context.tool_call_id if call_context is not None else _tool_name}"
+                    ),
+                    deadline_ms=call_context.deadline_ms if call_context is not None else None,
                     run_id=run_id,
                     session_id=session_id,
                     agent_name=agent.name,
@@ -3534,11 +3882,26 @@ class AgentRuntime:
                 description=definition.description,
                 schema=definition.schema,
                 execute=execute,
+                input_examples=list(definition.input_examples),
+                strict=definition.strict,
+                defer_loading=definition.defer_loading,
+                eager_input_streaming=definition.eager_input_streaming,
+                allowed_callers=list(definition.allowed_callers),
+                output_schema=definition.output_schema,
+                cache_control=dict(definition.cache_control) if definition.cache_control is not None else None,
                 tags=list(definition.tags),
                 requires_approval=definition.requires_approval,
                 permissions=list(definition.permissions),
                 source=definition.source,
-                metadata=dict(definition.metadata),
+                metadata={
+                    **definition.metadata,
+                    "zhivex_tool_idempotency_prefix": run_id,
+                    "zhivex_agent_approval_gated": bool(
+                        definition.requires_approval is True
+                        or (definition.requires_approval is None and definition.source in {"remote", "mcp"})
+                        or (definition.requires_approval is None and agent.approval_policy is not None)
+                    ),
+                },
                 supports_streaming=definition.supports_streaming,
                 remote_config=definition.remote_config,
                 mcp_config=definition.mcp_config,
@@ -3895,6 +4258,16 @@ async def _execute_resolved_approval_tool(
     definition = registry.get(pending.name)
     if definition is None or not is_callable_tool_definition(definition):
         raise ValidationError(f'Pending approval references unknown local tool "{pending.name}".')
+    if not pending.tool_fingerprint:
+        raise ValidationError(
+            f'Pending approval "{pending.id}" predates tool fingerprinting and cannot be executed safely. '
+            "Start a new agent run to request approval again."
+        )
+    if _tool_definition_fingerprint(definition) != pending.tool_fingerprint:
+        raise ValidationError(
+            f'Pending approval "{pending.id}" no longer matches the registered tool definition. '
+            "Start a new agent run to approve the current tool version."
+        )
     context = ToolExecutionContext(
         tool_name=pending.name,
         tool_call_id=pending.tool_call_id or pending.id,
@@ -3923,6 +4296,47 @@ async def _execute_resolved_approval_tool(
         is_error=False,
         provider_metadata={"approval_id": pending.id, "approval_status": "approved"},
     )
+
+
+def _validate_resolved_approval_tool(
+    *,
+    agent: Agent,
+    pending: PendingApproval,
+    tools: ToolSet | ToolRegistry | None,
+) -> None:
+    registry = _resolve_tool_registry(agent, tools)
+    definition = registry.get(pending.name)
+    if definition is None or not is_callable_tool_definition(definition):
+        raise ValidationError(f'Pending approval references unknown local tool "{pending.name}".')
+    if not pending.tool_fingerprint:
+        raise ValidationError(
+            f'Pending approval "{pending.id}" predates tool fingerprinting and cannot be executed safely. '
+            "Start a new agent run to request approval again."
+        )
+    if _tool_definition_fingerprint(definition) != pending.tool_fingerprint:
+        raise ValidationError(
+            f'Pending approval "{pending.id}" no longer matches the registered tool definition. '
+            "Start a new agent run to approve the current tool version."
+        )
+
+
+def _find_agent_for_resume(root: Agent, agent_name: str, registry: AgentRegistry) -> Agent | None:
+    seen: set[int] = set()
+
+    def visit(candidate: Agent) -> Agent | None:
+        identity = id(candidate)
+        if identity in seen:
+            return None
+        seen.add(identity)
+        if candidate.name == agent_name:
+            return candidate
+        for subagent in candidate.subagents.values():
+            match = visit(subagent)
+            if match is not None:
+                return match
+        return None
+
+    return visit(root) or registry.get(agent_name)
 
 
 def resume_agent_run(
@@ -3970,11 +4384,25 @@ def resume_agent_run(
         )
         if selected_pending is None:
             raise ValidationError(f'Pending approval "{approval_id}" was not found on run "{run_id}".')
+        approval_agent = _find_agent_for_resume(agent, loaded_state.agent_name, resolved_runtime._registry)
+        if approval_agent is None:
+            raise ValidationError(
+                f'Agent "{loaded_state.agent_name}" that suspended run "{run_id}" is not registered for resume.'
+            )
+        resume_agent_instance = replace(approval_agent, run_store=run_store)
+        if approved:
+            _validate_resolved_approval_tool(agent=resume_agent_instance, pending=selected_pending, tools=tools)
         claim_pending_approval = getattr(run_store, "claim_pending_approval", None)
         if not callable(claim_pending_approval):
             raise ValidationError(
                 "resume_agent_run(...) requires a run store with atomic pending-approval claims. "
                 "Use a built-in run store or implement claim_pending_approval(...)."
+            )
+        fail_resume_claim_capability = getattr(run_store, "fail_resume_claim", None)
+        if not callable(fail_resume_claim_capability):
+            raise ValidationError(
+                "resume_agent_run(...) requires a run store with atomic resume-claim reconciliation. "
+                "Use a built-in run store or implement fail_resume_claim(...)."
             )
         claim_token = str(uuid4())
         suspended_state = await claim_pending_approval(
@@ -3987,6 +4415,23 @@ def resume_agent_run(
             raise ValidationError(
                 f'Pending approval "{selected_pending.id}" on run "{run_id}" is already being resumed or is no longer pending.'
             )
+        raw_resume_claim = suspended_state.metadata.get("resume_claim")
+        claim_is_valid = (
+            suspended_state.status == "running"
+            and isinstance(raw_resume_claim, dict)
+            and raw_resume_claim.get("approval_id") == selected_pending.id
+            and raw_resume_claim.get("claim_token") == claim_token
+        )
+        if not claim_is_valid:
+            await fail_resume_claim_capability(
+                run_id,
+                claim_token=claim_token,
+                reason="Run store returned an invalid pending-approval claim.",
+                failed_at_ms=_now_ms(),
+            )
+            raise ValidationError(
+                f'Run store returned an invalid claim for approval "{selected_pending.id}" on run "{run_id}".'
+            )
         pending = next(
             (item for item in suspended_state.pending_approvals if item.id == selected_pending.id),
             None,
@@ -3996,7 +4441,7 @@ def resume_agent_run(
 
         async def resume_claimed_run() -> AgentRunResult:
             approval_result = await _execute_resolved_approval_tool(
-                agent=agent,
+                agent=resume_agent_instance,
                 state=suspended_state,
                 pending=pending,
                 approved=approved,
@@ -4015,7 +4460,7 @@ def resume_agent_run(
                 },
             )
             result = await resolved_runtime.run(
-                agent=agent,
+                agent=resume_agent_instance,
                 session=session,
                 messages=resume_messages,
                 tools=tools,
@@ -4057,7 +4502,7 @@ def resume_agent_run(
                     "resumed_at_ms": resumed_at_ms,
                 },
             }
-            await run_store.save(suspended_state)
+            await _persist_agent_run_state(run_store, suspended_state)
             result.resumed_from_checkpoint = result.resumed_from_checkpoint
             return result
 
@@ -4065,15 +4510,23 @@ def resume_agent_run(
             return await resume_claimed_run()
         except BaseException as error:
             failed_at_ms = _now_ms()
-            suspended_state.status = "failed"
-            suspended_state.updated_at_ms = failed_at_ms
-            suspended_state.finished_at_ms = failed_at_ms
-            suspended_state.error = str(error) or type(error).__name__
-            suspended_state.metadata = {
-                **suspended_state.metadata,
-                "resume_claim_failed_at_ms": failed_at_ms,
-            }
-            await run_store.save(suspended_state)
+            reconciled = await fail_agent_run_resume_claim(
+                run_store,
+                run_id,
+                claim_token=claim_token,
+                reason=str(error) or type(error).__name__,
+                now_ms=failed_at_ms,
+            )
+            if reconciled is None:
+                current = await run_store.load(run_id)
+                if current is not None and current.status == "cancelled":
+                    raise AgentRunCancelled(
+                        run_id,
+                        reason=current.cancellation_reason,
+                    ) from error
+                raise ValidationError(
+                    f'Agent run "{run_id}" resume claim changed before its failure could be reconciled.'
+                ) from error
             raise
 
     return runner()
@@ -4215,7 +4668,7 @@ def stream_live_agent(
             active_skills=[item.skill for item in active_skill_activations],
         )
         _persist_active_skills(resolved_session, active_skill_activations)
-        await resolved_runtime._run_input_guardrails(
+        guarded_input = await resolved_runtime._run_input_guardrails(
             agent=agent,
             run_id=run_id,
             session_id=resolved_session.id,
@@ -4225,6 +4678,8 @@ def stream_live_agent(
             trace=trace,
             emit=emit_agent,
         )
+        input_messages = guarded_input.messages
+        guarded_new_messages = input_messages[-len(messages) :] if messages else []
         wrapped_tools = resolved_runtime._wrap_agent_tools(
             agent=agent,
             registry=registry_instance,
@@ -4256,6 +4711,7 @@ def stream_live_agent(
         tool_results: list[ToolExecutionResult] = []
         assistant_buffer: list[str] = []
         last_assistant_text = ""
+        buffer_realtime_output = bool(agent.output_guardrails)
         live_model = cast(RealtimeModel, agent.model)
         live_session = await live_model.connect(config=live_config, options=connect_options)
         live_session_future.set_result(live_session)
@@ -4268,18 +4724,24 @@ def stream_live_agent(
         }
         try:
             if messages is not None:
-                for message in messages:
+                for message in guarded_new_messages:
                     text = _text_from_message(message)
                     if message.role == "user" and text:
                         await live_session.send_text(text)
-            elif prompt is not None:
-                await live_session.send_text(prompt)
+            elif guarded_input.prompt is not None:
+                await live_session.send_text(guarded_input.prompt)
 
             async for event in live_session.event_stream():
-                await emit_live(event)
+                contains_unredacted_assistant_text = buffer_realtime_output and (
+                    isinstance(event, RealtimeTextDeltaEvent)
+                    or (isinstance(event, RealtimeTranscriptEvent) and event.role == "assistant")
+                )
+                if not contains_unredacted_assistant_text:
+                    await emit_live(event)
                 if isinstance(event, RealtimeTextDeltaEvent):
                     assistant_buffer.append(event.text_delta)
-                    await emit_agent(AgentTextDeltaEvent(text_delta=event.text_delta))
+                    if not buffer_realtime_output:
+                        await emit_agent(AgentTextDeltaEvent(text_delta=event.text_delta))
                     continue
                 if isinstance(event, RealtimeTranscriptEvent):
                     if event.role == "user" and event.is_final and event.text:
@@ -4342,7 +4804,7 @@ def stream_live_agent(
                 last_assistant_text = "".join(assistant_buffer)
                 if last_assistant_text:
                     transcript.append(create_text_message("assistant", last_assistant_text))
-            await resolved_runtime._run_output_guardrails(
+            guarded_output = await resolved_runtime._run_output_guardrails(
                 agent=agent,
                 run_id=run_id,
                 session_id=resolved_session.id,
@@ -4353,6 +4815,10 @@ def stream_live_agent(
                 trace=trace,
                 emit=emit_agent,
             )
+            last_assistant_text = guarded_output.text
+            transcript = _replace_assistant_messages(transcript, guarded_output.messages)
+            if buffer_realtime_output and last_assistant_text:
+                await emit_agent(AgentTextDeltaEvent(text_delta=last_assistant_text))
         except Exception as error:
             if not live_session_future.done():
                 live_session_future.set_exception(error)

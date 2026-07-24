@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zhivex_ai import (
+    ReasoningConfig,
     assistant,
     azure_openai_mcp_approval_response,
     azure_openai_mcp_tool,
@@ -334,15 +335,18 @@ class AzureOpenAIHostedToolTests(IsolatedAsyncioTestCase):
             fetch=fetch,
         )
         await generate_text(
-            model=provider.native.language_model("gpt-4o-mini"),
+            model=provider.native.language_model("gpt-5.6-sol"),
             prompt="hello",
             tools={
                 "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True}),
                 "search": azure_openai_web_search_tool(search_context_size="high"),
                 "mcp": azure_openai_mcp_tool(server_url="https://mcp.example.com", server_label="Example MCP"),
             },
+            reasoning=ReasoningConfig(effort="max"),
         )
 
+        self.assertEqual(requests[0]["json"]["model"], "gpt-5.6-sol")  # type: ignore[index]
+        self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "max"})  # type: ignore[index]
         mapped_tools = requests[0]["json"]["tools"]  # type: ignore[index]
         assert isinstance(mapped_tools, list)
         self.assertEqual(mapped_tools[0]["type"], "function")

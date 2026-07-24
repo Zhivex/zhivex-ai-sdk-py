@@ -99,10 +99,17 @@ _ANTHROPIC_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
 _ANTHROPIC_MCP_BETA = "mcp-client-2025-04-04"
 _ANTHROPIC_CURRENT_MCP_BETA = "mcp-client-2025-11-20"
-_ANTHROPIC_CODE_EXECUTION_BETA = "code-execution-2025-08-25"
-_ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20250305"
-_ANTHROPIC_ADAPTIVE_THINKING_PREFIXES = ("claude-opus-4-7", "claude-opus-4-8", "claude-fable-5", "claude-sonnet-5")
-_ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = ("claude-opus-4-8",)
+_ANTHROPIC_DEFAULT_CODE_EXECUTION_TYPE = "code_execution_20260521"
+_ANTHROPIC_DEFAULT_WEB_SEARCH_TYPE = "web_search_20260318"
+_ANTHROPIC_DEFAULT_WEB_FETCH_TYPE = "web_fetch_20260318"
+_ANTHROPIC_ADAPTIVE_THINKING_PREFIXES = (
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-sonnet-5",
+)
+_ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = ("claude-opus-4-8", "claude-fable-5", "claude-mythos-5")
 _ANTHROPIC_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 AnthropicMcpVersion = Literal["legacy", "current"]
 _ANTHROPIC_MCP_BETA_BY_VERSION: dict[AnthropicMcpVersion, str] = {
@@ -217,6 +224,39 @@ def anthropic_web_search_tool(
     )
 
 
+def anthropic_web_fetch_tool(
+    *,
+    name: str = "web_fetch",
+    max_uses: int | None = None,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+    citations_enabled: bool | None = None,
+    max_content_tokens: int | None = None,
+    use_cache: bool | None = None,
+    response_inclusion: Literal["full", "excluded"] | None = None,
+    tool_type: str = _ANTHROPIC_DEFAULT_WEB_FETCH_TYPE,
+    **extra: Any,
+) -> HostedToolDefinition:
+    return hosted_tool(
+        name=name,
+        provider="anthropic",
+        type=tool_type,
+        tool_class="custom",
+        config=drop_none(
+            {
+                "max_uses": max_uses,
+                "allowed_domains": list(allowed_domains) if allowed_domains else None,
+                "blocked_domains": list(blocked_domains) if blocked_domains else None,
+                "citations": {"enabled": citations_enabled} if citations_enabled is not None else None,
+                "max_content_tokens": max_content_tokens,
+                "use_cache": use_cache,
+                "response_inclusion": response_inclusion,
+                **deepcopy(extra),
+            }
+        ),
+    )
+
+
 def anthropic_mcp_server(
     *,
     url: str,
@@ -261,7 +301,7 @@ def anthropic_mcp_server(
 def anthropic_code_execution_tool(
     *,
     name: str = "code_execution",
-    tool_type: str = "code_execution_20250825",
+    tool_type: str = _ANTHROPIC_DEFAULT_CODE_EXECUTION_TYPE,
     **extra: Any,
 ) -> HostedToolDefinition:
     return hosted_tool(
@@ -329,8 +369,6 @@ def _tool_beta_headers(
     raw_mcp_servers = provider_options.get("mcp_servers")
     if raw_mcp_servers is not None or "mcp_tool" in tool_types or "mcp_tool_use" in tool_types:
         headers.append(mcp_beta or _ANTHROPIC_MCP_BETA)
-    if any(tool_type.startswith("code_execution") for tool_type in tool_types):
-        headers.append(_ANTHROPIC_CODE_EXECUTION_BETA)
     return headers
 
 
@@ -962,13 +1000,19 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
                         )
                     )
                 )
-        elif block_type in {"mcp_tool_result", "web_search_tool_result"}:
+        elif block_type in {"mcp_tool_result", "web_search_tool_result", "web_fetch_tool_result"}:
             parts.append(_parse_provider_tool_result_block(block))
-        elif block_type.endswith("_code_execution_result") or block_type == "code_execution_result":
+        elif (
+            block_type.endswith("_code_execution_tool_result")
+            or block_type.endswith("_code_execution_result")
+            or block_type == "code_execution_result"
+        ):
+            content = block.get("content")
+            result_block = content if isinstance(content, dict) else block
             parts.append(
                 CodeExecutionResultPart(
-                    output=_anthropic_result_text(block),
-                    outcome=block_type,
+                    output=_anthropic_result_text(result_block),
+                    outcome=str(result_block.get("type") or block_type),
                 )
             )
         elif block_type:
@@ -1443,7 +1487,14 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                 elif event.event == "content_block_start" and payload.get("content_block", {}).get("type") in {
                     "mcp_tool_result",
                     "web_search_tool_result",
+                    "web_fetch_tool_result",
                 }:
+                    yield StreamToolResultEvent(
+                        tool_result=_parse_provider_tool_result_block(payload["content_block"]).tool_result
+                    )
+                elif event.event == "content_block_start" and str(
+                    payload.get("content_block", {}).get("type") or ""
+                ).endswith("_code_execution_tool_result"):
                     yield StreamToolResultEvent(
                         tool_result=_parse_provider_tool_result_block(payload["content_block"]).tool_result
                     )

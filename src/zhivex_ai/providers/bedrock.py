@@ -364,16 +364,16 @@ class BedrockLanguageModel(LanguageModel):
                 if "contentBlockStop" in event:
                     stop = event["contentBlockStop"]
                     block_index = int(stop.get("contentBlockIndex") or stop.get("index") or 0)
-                    current = tool_buffers.pop(block_index, None)
-                    if current is not None:
+                    completed_tool = tool_buffers.pop(block_index) if block_index in tool_buffers else None
+                    if completed_tool is not None:
                         try:
-                            parsed_input = json.loads(current["input"]) if current["input"] else {}
+                            parsed_input = json.loads(completed_tool["input"]) if completed_tool["input"] else {}
                         except json.JSONDecodeError:
-                            parsed_input = current["input"]
+                            parsed_input = completed_tool["input"]
                         yield StreamToolCallEvent(
                             tool_call=ToolCall(
-                                id=current["id"],
-                                name=current["name"],
+                                id=completed_tool["id"],
+                                name=completed_tool["name"],
                                 input=parsed_input,
                                 provider_metadata={"provider": "bedrock"},
                             )

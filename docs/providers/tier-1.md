@@ -40,6 +40,14 @@ make smoke
 
 Scope checks with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. The smoke runner skips providers whose required credentials or model IDs are not configured.
 
+For an agent release candidate, use the strict agent-first variant:
+
+```bash
+ZHIVEX_SMOKE_PROVIDERS=openai,anthropic make smoke-agents
+```
+
+For every configured provider selected, this runs `run_agent(...)`, requires one local nonce-validation tool call, validates the tool result, and verifies the model continued to a final answer. `make smoke-agents` sets `ZHIVEX_SMOKE_AGENTS=1` and `ZHIVEX_SMOKE_STRICT=1`, so a run with no configured provider fails instead of silently recording only skips. Failure output redacts configured API-key, access-token, password, and secret values.
+
 | Provider | Required environment |
 | --- | --- |
 | OpenAI | `OPENAI_API_KEY`, `ZHIVEX_SMOKE_OPENAI_MODEL` |
@@ -51,7 +59,7 @@ Scope checks with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,v
 | Kimi/Moonshot | `MOONSHOT_API_KEY` or `KIMI_API_KEY`, `ZHIVEX_SMOKE_KIMI_MODEL`; optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL` |
 | vLLM | `ZHIVEX_SMOKE_VLLM_MODEL`; optional `ZHIVEX_SMOKE_VLLM_BASE_URL`, `ZHIVEX_SMOKE_VLLM_API_KEY` or `VLLM_API_KEY` |
 
-Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the relevant Gemini or Vertex image/video/media model IDs, such as `gemini-3.1-flash-image`, `gemini-3.5-live-translate-preview`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
+Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the relevant Gemini or Vertex image/video/media model IDs, such as `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `gemini-3.5-live-translate-preview`, `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 
 ## Focused Example
 
@@ -60,11 +68,11 @@ Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1
 ## Capability Notes
 
 - OpenAI, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM expose portable text, streaming, structured output, and tool paths.
-- OpenAI catalog guidance tracks GPT-5.5 as the current generally available flagship and GPT Realtime 2.1 as the current realtime reference. GPT-5.6 remains outside default catalog guidance while official OpenAI documentation lists it as limited preview availability.
-- Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, Realtime, and Vector Store / File Search management through `provider.native` / bundle helper methods. Azure OpenAI image/video lifecycle clients remain outside this release even though the catalog tracks current deployment IDs such as GPT Image 2. The catalog also tracks Azure `gpt-chat-latest` and GPT Realtime 2.1 where available.
-- Anthropic is tier-1 for portable text-generation paths. Claude Fable 5 is cataloged as `claude-fable-5`, Claude Sonnet 5 is cataloged as `claude-sonnet-5`, both use adaptive thinking with `ReasoningConfig(effort=...)`, and provider refusals normalize to `finish_reason="refusal"`. Embeddings, transcription, and speech are outside the current Anthropic SDK surface.
-- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, Live Translate, and Veo-style workflows through native clients rather than the stable portable contract. Gemini also exposes explicit context caching through `create_gemini().caches()`. The catalog tracks current Gemini 3.5 Flash, Gemini 3.1 Flash-Lite, Gemini 3.5 Live Translate, and Gemini 3.1 live/image/TTS IDs as selection guidance.
-- Qwen exposes hosted web/file/code/MCP tools, raw Responses, Files, Batch, ASR, and TTS as native/provider-specific beta surfaces. The catalog tracks Qwen3.7 Max/Plus plus Qwen3.6 and current embedding/rerank/audio IDs. File Search remains a hosted Responses tool with `vector_store_ids`, not a lifecycle client.
-- Kimi exposes Files, Batch, token counting, and Formulas as native/provider-specific beta surfaces. Portable Kimi does not claim embeddings, speech, or transcription.
+- OpenAI catalog guidance tracks GA GPT-5.6 Sol/Terra/Luna and GPT Realtime 2.1. Responses is the recommended reasoning/tool route; the beta native path preserves Programmatic Tool Calling `program`, `caller`, and `program_output` items.
+- Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, Realtime, and Vector Store / File Search management through `provider.native` / bundle helper methods. The catalog tracks GPT-5.6 Sol/Terra/Luna, `gpt-chat-latest`, GPT Image 2, and GPT Realtime 2.1 subject to deployment region/quota.
+- Anthropic is tier-1 for portable text-generation paths. Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8 use their current adaptive-thinking rules; Fable 5, Mythos 5, and Opus 4.8 accept valid mid-conversation system messages. Hosted helpers default to the 2026 web search, web fetch, and code execution types.
+- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, Live Translate, and Veo-style workflows through native clients rather than the stable portable contract. Gemini Developer API additionally tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Imagen 4 is no longer catalog guidance.
+- Qwen exposes hosted web/file/code/MCP tools, raw Responses, Files, Batch, ASR, and TTS as native/provider-specific beta surfaces. Responses uses the current `/compatible-mode/v1/responses` route and mixed vision content uses `input_text` / `input_image`. Web Extractor requires Web Search, and reasoning-enabled requests cannot force a required or named tool choice. All seven supported reasoning efforts map to `reasoning.effort`; the catalog distinguishes multimodal `qwen3.7-max-2026-06-08` from the text-only snapshot. Batch support varies by region; Singapore currently documents only the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
+- Kimi K3 is the current catalog reference with always-on reasoning, `reasoning_effort=low|high|max`, vision, tools, and strict structured output. K2.6/K2.5 retain their separate `thinking` contract. Portable Kimi does not claim embeddings, speech, or transcription.
 - vLLM support depends on the tasks served by the local OpenAI-compatible server. Custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK contract.
 - DeepSeek is deferred for Python GA and is not part of `TIER_1_PROVIDERS`.

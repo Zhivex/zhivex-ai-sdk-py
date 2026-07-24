@@ -25,12 +25,12 @@ TINY_PNG = (
 
 async def main() -> None:
     kimi = create_kimi()
-    model = os.getenv("KIMI_MODEL", "kimi-k2.6")
+    model = os.getenv("KIMI_MODEL", "kimi-k3")
 
     chat = await generate_text(
         model=kimi.native.language_model(model),
         prompt="Explain Kimi support in Zhivex AI SDK in one sentence.",
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="high"),
     )
     print("chat:", chat.text)
 
@@ -38,7 +38,7 @@ async def main() -> None:
         model=kimi.native.language_model(model),
         messages=[user([ImagePart(image=TINY_PNG)])],
         prompt="Describe the image in one short phrase.",
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="high"),
     )
     print("image:", image.text)
 
@@ -51,7 +51,7 @@ async def main() -> None:
             model=kimi.native.language_model(model),
             system=extracted,
             prompt="Summarize the uploaded file in three bullets.",
-            reasoning=ReasoningConfig(effort="none"),
+            reasoning=ReasoningConfig(effort="high"),
         )
         print("file:", summary.text)
 
@@ -81,7 +81,7 @@ async def main() -> None:
             model=kimi.native.language_model(model),
             messages=[user([FilePart(file_id=os.environ["KIMI_VIDEO_FILE_ID"], media_type="video/mp4")])],
             prompt="Describe this video briefly.",
-            reasoning=ReasoningConfig(effort="none"),
+            reasoning=ReasoningConfig(effort="high"),
         )
         print("video:", result.text)
 

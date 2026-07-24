@@ -19,6 +19,7 @@ from zhivex_ai import (
     ValidationError,
     anthropic_code_execution_tool,
     anthropic_mcp_server,
+    anthropic_web_fetch_tool,
     anthropic_web_search_tool,
     create_anthropic,
     generate_grounded_text,
@@ -307,16 +308,19 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             tools={
                 "lookup": tool(name="lookup", schema=dict[str, str], execute=lambda input: {"ok": True}),
                 "search": anthropic_web_search_tool(max_uses=2),
+                "fetch": anthropic_web_fetch_tool(max_uses=3, citations_enabled=True),
                 "mcp": anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"]),
                 "code": anthropic_code_execution_tool(),
             },
         )
 
         self.assertEqual(requests[0]["tools"][0]["name"], "lookup")
-        self.assertEqual(requests[0]["tools"][1]["type"], "web_search_20250305")
-        self.assertEqual(requests[0]["tools"][2]["type"], "mcp_toolset")
-        self.assertEqual(requests[0]["tools"][2]["mcp_server_name"], "example-mcp")
-        self.assertEqual(requests[0]["tools"][3]["type"], "code_execution_20250825")
+        self.assertEqual(requests[0]["tools"][1]["type"], "web_search_20260318")
+        self.assertEqual(requests[0]["tools"][2]["type"], "web_fetch_20260318")
+        self.assertEqual(requests[0]["tools"][2]["citations"], {"enabled": True})
+        self.assertEqual(requests[0]["tools"][3]["type"], "mcp_toolset")
+        self.assertEqual(requests[0]["tools"][3]["mcp_server_name"], "example-mcp")
+        self.assertEqual(requests[0]["tools"][4]["type"], "code_execution_20260521")
         self.assertEqual(requests[0]["mcp_servers"][0]["name"], "example-mcp")
         self.assertEqual(requests[0]["mcp_servers"][0]["url"], "https://mcp.example.com")
 
@@ -479,6 +483,33 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["model"], "claude-fable-5")
         self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
         self.assertEqual(requests[0]["output_config"], {"effort": "high"})
+
+    async def test_anthropic_mythos_5_maps_effort_to_adaptive_thinking(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "done"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("claude-mythos-5"),
+            prompt="plan the migration",
+            reasoning=ReasoningConfig(effort="max"),
+        )
+
+        self.assertEqual(requests[0]["model"], "claude-mythos-5")
+        self.assertEqual(requests[0]["thinking"], {"type": "adaptive"})
+        self.assertEqual(requests[0]["output_config"], {"effort": "max"})
 
     async def test_anthropic_sonnet_5_maps_effort_to_adaptive_thinking(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -669,6 +700,69 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["system"], "base instructions")
         self.assertEqual([message["role"] for message in requests[0]["messages"]], ["user", "system"])
         self.assertEqual(requests[0]["messages"][1]["content"][0]["text"], "narrow the scope")
+
+    async def test_anthropic_current_families_preserve_mid_conversation_system_messages(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        for model_id in ("claude-fable-5", "claude-mythos-5", "claude-opus-4-8"):
+            with self.subTest(model_id=model_id):
+                await provider.native.language_model(model_id).generate(
+                    ModelGenerateInput(
+                        messages=[
+                            ModelMessage(role="system", parts=[TextPart(text="base")]),
+                            ModelMessage(role="user", parts=[TextPart(text="start")]),
+                            ModelMessage(role="system", parts=[TextPart(text="update")]),
+                        ]
+                    )
+                )
+
+        for request in requests:
+            self.assertEqual(request["system"], "base")
+            self.assertEqual([message["role"] for message in request["messages"]], ["user", "system"])
+
+    async def test_anthropic_sonnet_5_keeps_system_messages_top_level(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        await provider.native.language_model("claude-sonnet-5").generate(
+            ModelGenerateInput(
+                messages=[
+                    ModelMessage(role="system", parts=[TextPart(text="base")]),
+                    ModelMessage(role="user", parts=[TextPart(text="start")]),
+                    ModelMessage(role="system", parts=[TextPart(text="update")]),
+                ]
+            )
+        )
+
+        self.assertEqual(requests[0]["system"], "base\nupdate")
+        self.assertEqual([message["role"] for message in requests[0]["messages"]], ["user"])
 
     async def test_anthropic_mid_conversation_system_messages_validate_placement(self) -> None:
         async def fetch(
@@ -905,6 +999,34 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(events[0].tool_call.input, {"query": "latest mars news"})
         self.assertEqual(events[-1].usage.total_tokens, 10)
 
+    async def test_anthropic_stream_handles_current_web_fetch_and_code_results(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'event: content_block_start\n'
+                    'data: {"index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"fetch_1","content":{"type":"web_fetch_result","url":"https://example.com"}}}\n\n'
+                    'event: content_block_start\n'
+                    'data: {"index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"code_1","content":{"type":"bash_code_execution_result","stdout":"42\\n","return_code":0,"content":[]}}}\n\n'
+                    'event: message_stop\n'
+                    'data: {"stop_reason":"end_turn"}\n'
+                ),
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        model = provider.native.language_model("claude-opus-4-8")
+        events = []
+        async for event in await model.stream(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="fetch and compute")])])
+        ):
+            events.append(event)
+
+        self.assertEqual(events[0].tool_result.tool_call_id, "fetch_1")
+        self.assertEqual(events[1].tool_result.tool_call_id, "code_1")
+        self.assertEqual(events[1].tool_result.output["stdout"], "42\n")
+
     async def test_anthropic_stream_handles_mcp_tool_events(self) -> None:
         async def fetch(
             url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
@@ -1011,7 +1133,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(headers_seen[0]["anthropic-beta"], "mcp-client-2025-11-20")
         self.assertNotIn("anthropic_mcp_beta", requests[0])
 
-    async def test_anthropic_adds_code_execution_beta_header(self) -> None:
+    async def test_anthropic_current_code_execution_does_not_add_legacy_beta_header(self) -> None:
         headers_seen: list[dict[str, str]] = []
 
         async def fetch(
@@ -1030,7 +1152,52 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             provider_options={"tools": [anthropic_code_execution_tool()]},
         )
 
-        self.assertIn("code-execution-2025-08-25", headers_seen[0]["anthropic-beta"])
+        self.assertNotIn("anthropic-beta", headers_seen[0])
+
+    async def test_anthropic_parses_current_server_tool_results(self) -> None:
+        async def fetch(
+            url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False
+        ):
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "content": [
+                        {
+                            "type": "web_fetch_tool_result",
+                            "tool_use_id": "srv_fetch",
+                            "content": {
+                                "type": "web_fetch_result",
+                                "url": "https://example.com/article",
+                            },
+                        },
+                        {
+                            "type": "bash_code_execution_tool_result",
+                            "tool_use_id": "srv_code",
+                            "content": {
+                                "type": "bash_code_execution_result",
+                                "stdout": "42\n",
+                                "stderr": "",
+                                "return_code": 0,
+                                "content": [],
+                            },
+                        },
+                        {"type": "text", "text": "done"},
+                    ],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        provider = create_anthropic(api_key="test", fetch=fetch)
+        result = await provider.native.language_model("claude-opus-4-8").generate(
+            ModelGenerateInput(messages=[ModelMessage(role="user", parts=[TextPart(text="fetch and compute")])])
+        )
+
+        assert result.messages is not None
+        self.assertEqual([part.type for part in result.messages[0].parts], ["tool-result", "code-result", "text"])
+        self.assertEqual(result.messages[0].parts[0].tool_result.tool_call_id, "srv_fetch")
+        self.assertEqual(result.messages[0].parts[1].output, "42\n")
+        self.assertEqual(result.messages[0].parts[1].outcome, "bash_code_execution_result")
 
     async def test_anthropic_files_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -1204,7 +1371,7 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
             prompt="What is the latest Mars rover update?",
         )
 
-        self.assertEqual(requests[0]["tools"][0]["type"], "web_search_20250305")
+        self.assertEqual(requests[0]["tools"][0]["type"], "web_search_20260318")
         self.assertEqual(result.text, "Latest rover update.")
         self.assertEqual(result.sources[0].url, "https://example.com/mars")
         self.assertTrue(any(source.snippet == "Rover update snippet" for source in result.sources))
@@ -1236,16 +1403,26 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
 
     def test_anthropic_hosted_tool_builders(self) -> None:
         web_search = anthropic_web_search_tool(max_uses=2, allowed_domains=["example.com"])
-        current_web_search = anthropic_web_search_tool(tool_type="web_search_20260209")
+        legacy_web_search = anthropic_web_search_tool(tool_type="web_search_20250305")
+        web_fetch = anthropic_web_fetch_tool(
+            max_uses=3,
+            citations_enabled=True,
+            use_cache=False,
+            response_inclusion="excluded",
+        )
         mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", allowed_tools=["echo"])
         current_mcp_server = anthropic_mcp_server(url="https://mcp.example.com", name="example-mcp", version="current")
         code_execution = anthropic_code_execution_tool()
 
-        self.assertEqual(web_search.type, "web_search_20250305")
-        self.assertEqual(current_web_search.type, "web_search_20260209")
+        self.assertEqual(web_search.type, "web_search_20260318")
+        self.assertEqual(legacy_web_search.type, "web_search_20250305")
         self.assertEqual(web_search.config["max_uses"], 2)
+        self.assertEqual(web_fetch.type, "web_fetch_20260318")
+        self.assertEqual(web_fetch.config["citations"], {"enabled": True})
+        self.assertFalse(web_fetch.config["use_cache"])
+        self.assertEqual(web_fetch.config["response_inclusion"], "excluded")
         self.assertEqual(mcp_server.type, "mcp_toolset")
         self.assertEqual(mcp_server.config["server"]["name"], "example-mcp")
         self.assertEqual(mcp_server.config["default_config"]["allowed_tools"], ["echo"])
         self.assertEqual(current_mcp_server.metadata["anthropic_mcp_beta"], "mcp-client-2025-11-20")
-        self.assertEqual(code_execution.type, "code_execution_20250825")
+        self.assertEqual(code_execution.type, "code_execution_20260521")

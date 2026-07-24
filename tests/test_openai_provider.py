@@ -47,6 +47,7 @@ from zhivex_ai import (
     openai_local_skill,
     openai_mcp_approval_response,
     openai_mcp_tool,
+    openai_programmatic_tool_calling_tool,
     openai_namespace_tool,
     openai_network_policy_allowlist,
     openai_response_options,
@@ -107,6 +108,11 @@ class FakeResponse:
 class WeatherToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     city: str
+
+
+class WeatherToolOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    temperature_c: float
 
 
 class OpenAIProviderTests(IsolatedAsyncioTestCase):
@@ -1463,6 +1469,132 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(options["tools"][-1]["type"], "mcp")
         self.assertTrue(options["background"])
         self.assertEqual(options["conversation"], "conv_123")
+
+    async def test_openai_programmatic_tool_calling_preserves_replay_contract(self) -> None:
+        requests: list[dict[str, Any]] = []
+        payloads = [
+            {
+                "id": "resp_program",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "program",
+                        "id": "prog_123",
+                        "call_id": "call_prog_123",
+                        "code": "text(await tools.weather({city: 'Buenos Aires'}))",
+                        "fingerprint": "opaque_replay_state",
+                    },
+                    {
+                        "type": "function_call",
+                        "id": "fc_123",
+                        "call_id": "call_weather_123",
+                        "name": "weather",
+                        "arguments": '{"city":"Buenos Aires"}',
+                        "caller": {"type": "program", "caller_id": "call_prog_123"},
+                    },
+                ],
+            },
+            {
+                "id": "resp_final",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "program_output",
+                        "id": "prog_out_123",
+                        "call_id": "call_prog_123",
+                        "result": '{"temperature_c":21}',
+                        "status": "completed",
+                    },
+                    {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "21 C"}]},
+                ],
+            },
+        ]
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(status_code=200, payload=payloads.pop(0))
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("gpt-5.6-sol"),
+            prompt="Weather?",
+            tools={
+                "programmatic": openai_programmatic_tool_calling_tool(),
+                "weather": tool(
+                    name="weather",
+                    schema=WeatherToolInput,
+                    output_schema=WeatherToolOutput,
+                    allowed_callers=["programmatic"],
+                    execute=lambda input: {"temperature_c": 21},
+                ),
+            },
+            provider_options=openai_response_options(
+                store=False,
+                reasoning={"mode": "pro", "effort": "medium", "context": "all_turns"},
+                prompt_cache_options={"mode": "explicit", "ttl": "30m"},
+            ),
+            max_steps=2,
+        )
+
+        self.assertEqual(result.text, "21 C")
+        self.assertEqual(requests[0]["json"]["tools"][0]["type"], "programmatic_tool_calling")
+        self.assertEqual(requests[0]["json"]["tools"][1]["allowed_callers"], ["programmatic"])
+        self.assertEqual(requests[0]["json"]["tools"][1]["output_schema"]["required"], ["temperature_c"])
+        self.assertEqual(requests[0]["json"]["reasoning"]["mode"], "pro")
+        self.assertEqual(requests[0]["json"]["prompt_cache_options"]["ttl"], "30m")
+        replay = requests[1]["json"]["input"]
+        self.assertEqual([item["type"] for item in replay[1:]], ["program", "function_call", "function_call_output"])
+        self.assertEqual(replay[1]["fingerprint"], "opaque_replay_state")
+        self.assertEqual(replay[2]["caller"]["caller_id"], "call_prog_123")
+        self.assertEqual(replay[3]["caller"]["caller_id"], "call_prog_123")
+        provider_parts = [
+            part
+            for part in result.steps[-1].response.messages[0].parts
+            if getattr(part, "type", None) == "provider-data" and isinstance(getattr(part, "data", None), dict)
+        ]
+        self.assertEqual(provider_parts[0].data["type"], "program_output")
+
+    async def test_openai_programmatic_tool_calling_streams_provider_items(self) -> None:
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            return FakeResponse(
+                status_code=200,
+                body_text=(
+                    'data: {"type":"response.output_item.done","item":{"type":"program","id":"prog_1","call_id":"call_prog_1","code":"text(1)","fingerprint":"fp"}}\n\n'
+                    'data: {"type":"response.output_item.done","item":{"type":"program_output","id":"out_1","call_id":"call_prog_1","result":"1","status":"completed"}}\n\n'
+                    'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+
+        provider = create_openai(api_key="test", fetch=fetch)
+        stream = stream_text(
+            model=provider.native.language_model("gpt-5.6-sol"),
+            prompt="Return one",
+            tools={"programmatic": openai_programmatic_tool_calling_tool()},
+        )
+        events = [event async for event in stream.event_stream()]
+        provider_items = [event.data for event in events if getattr(event, "type", None) == "provider-data" and isinstance(event.data, dict)]
+
+        self.assertEqual([item["type"] for item in provider_items], ["program", "program_output"])
+        self.assertEqual(provider_items[0]["fingerprint"], "fp")
 
     async def test_openai_response_options_builder_integrates_with_generate_text(self) -> None:
         requests: list[dict[str, Any]] = []

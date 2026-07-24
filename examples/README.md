@@ -32,7 +32,7 @@ make smoke
 ```
 
 It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`.
-Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable, such as `gemini-3.1-flash-image`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
+Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable, such as `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
 Qwen uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`; optional checks are enabled by `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
@@ -195,7 +195,7 @@ DATABASE_URL=postgres://user:pass@localhost:5432/app \
 ZHIVEX_AGENT_API_TOKEN='replace-with-a-secret' \
 ZHIVEX_TENANT_ID='tenant-a' \
 ZHIVEX_AGENT_TABLE_PREFIX='tenant_a_zhivex_agent' \
-ZHIVEX_AGENT_MODEL='gpt-5.4-mini' \
+ZHIVEX_AGENT_MODEL='gpt-5.6-terra' \
 uvicorn examples.production.fastapi_agent_api:app --reload
 ```
 

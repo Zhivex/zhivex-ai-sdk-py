@@ -18,7 +18,7 @@ Write concise release notes with:
     agent = Agent(
         name="assistant",
         instructions="You are a careful SDK assistant.",
-        model=provider("gpt-5.4-mini"),
+        model=provider("gpt-5.6-terra"),
         skills={"release-notes": release_notes},
     )
 

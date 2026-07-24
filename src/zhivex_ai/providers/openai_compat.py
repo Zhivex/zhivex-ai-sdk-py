@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import builtins
 from copy import deepcopy
 import json
 import os
@@ -34,6 +35,7 @@ from ..types import (
     ContainersClient,
     ConversationsClient,
     EmbedResult,
+    EmbeddingContent,
     EmbeddingModel,
     FileSearchBatch,
     FileSearchDocument,
@@ -45,6 +47,7 @@ from ..types import (
     FileSearchStoresClient,
     FilePart,
     FilesClient,
+    FinishReason,
     GenerateResult,
     GeneratedCodePart,
     GroundedGenerateResult,
@@ -123,6 +126,7 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
             hosted_file_search=True,
             remote_mcp=True,
             computer_use=True,
+            code_execution=provider_name == "openai",
         )
     if provider_name == "openrouter":
         return AgentCapabilities(
@@ -368,12 +372,12 @@ def _map_qwen_message_content(message: ModelMessage) -> str | list[dict[str, Any
     for part in message.parts:
         if part.type == "text":
             text_chunks.append(part.text)
-            content.append({"type": "text", "text": part.text})
+            content.append({"type": "input_text", "text": part.text})
         elif part.type == "image":
             content.append({"type": "input_image", "image_url": part.image})
         elif part.type == "file":
             content.append(_map_file_part(part))
-    if content and all(item.get("type") == "text" for item in content):
+    if content and all(item.get("type") == "input_text" for item in content):
         return "".join(text_chunks)
     return content
 
@@ -398,6 +402,9 @@ def _serialize_provider_data_input(message: ModelMessage, provider_name: str) ->
         provider = getattr(part, "provider", "")
         data = getattr(part, "data", None)
         if provider not in accepted_providers:
+            continue
+        if isinstance(data, dict) and data.get("type") in {"program", "program_output"}:
+            items.append(deepcopy(data))
             continue
         parsed = _parse_provider_data_value(data, provider_name)
         if parsed is None:
@@ -510,13 +517,15 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
         if message.role == "tool":
             for part in message.parts:
                 if isinstance(part, ToolResultPart):
-                    items.append(
-                        {
+                    payload: dict[str, Any] = {
                             "type": "function_call_output",
                             "call_id": part.tool_result.tool_call_id,
                             "output": _serialize_tool_output(part.tool_result),
                         }
-                    )
+                    caller = part.tool_result.provider_metadata.get("caller")
+                    if isinstance(caller, dict):
+                        payload["caller"] = deepcopy(caller)
+                    items.append(payload)
             items.extend(_serialize_provider_data_input(message, provider_name))
             continue
 
@@ -531,17 +540,24 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
             )
 
         if message.role == "assistant":
+            # Preserve provider-owned response items before the function calls
+            # they initiated. Programmatic Tool Calling relies on this order
+            # when output items are replayed with store=False.
+            items.extend(_serialize_provider_data_input(message, provider_name))
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
-                    items.append(
-                        {
+                    payload = {
                             "type": "function_call",
                             "call_id": part.tool_call.id,
                             "name": part.tool_call.name,
                             "arguments": json.dumps(part.tool_call.input),
                         }
-                    )
-        items.extend(_serialize_provider_data_input(message, provider_name))
+                    caller = part.tool_call.provider_metadata.get("caller")
+                    if isinstance(caller, dict):
+                        payload["caller"] = deepcopy(caller)
+                    items.append(payload)
+        else:
+            items.extend(_serialize_provider_data_input(message, provider_name))
     return items
 
 
@@ -615,13 +631,20 @@ def _map_tools(tools: dict[str, Any] | None, *, provider_name: str) -> list[dict
             parameters = _normalize_openai_strict_tool_schema(parameters)
         _validate_openai_strict_tool_schema(tool.name, parameters)
         mapped.append(
-            {
+            drop_none(
+                {
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
                 "strict": True,
                 "parameters": parameters,
-            }
+                    "output_schema": create_schema_adapter(tool.output_schema).json_schema()
+                    if tool.output_schema is not None
+                    else None,
+                    "allowed_callers": list(tool.allowed_callers) if tool.allowed_callers else None,
+                    "defer_loading": tool.defer_loading,
+                }
+            )
         )
     return mapped
 
@@ -818,7 +841,27 @@ def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
         raise UnsupportedFeatureError('Provider "qwen" does not support "reasoning.budgetTokens" through the Responses API.')
     if input.reasoning.effort is None:
         return {}
-    return {"enable_thinking": input.reasoning.effort != "none"}
+    return {"reasoning": {"effort": input.reasoning.effort}}
+
+
+def _validate_qwen_responses_tools(input: ModelGenerateInput, mapped_tools: list[dict[str, Any]]) -> None:
+    tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
+    reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
+    thinking_enabled = reasoning_effort not in {None, "none"}
+
+    if "web_extractor" in tool_types and "web_search" not in tool_types:
+        raise ValidationError('Provider "qwen" requires the "web_search" tool when using "web_extractor".')
+    thinking_tools = sorted(tool_types & {"code_interpreter", "web_extractor"})
+    if thinking_tools and reasoning_effort == "none":
+        raise ValidationError(
+            f'Provider "qwen" does not support reasoning effort "none" when using '
+            f'{", ".join(thinking_tools)}.'
+        )
+    if thinking_enabled and (input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)):
+        raise UnsupportedFeatureError(
+            'Provider "qwen" does not support required or named tool choice while reasoning is enabled. '
+            'Omit tool_choice or use "auto".'
+        )
 
 
 def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
@@ -832,7 +875,7 @@ def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
     )
 
 
-def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[FinishReason | None, str | None]:
     status = payload.get("status")
     if status == "completed":
         return "stop", status
@@ -875,6 +918,8 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
                 parts.extend(_parse_output_content_part(content))
     elif item_type == "reasoning":
         parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
+    elif item_type in {"program", "program_output"}:
+        parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
     elif item_type == "function_call":
         parts.append(
             ToolCallPart(
@@ -882,6 +927,13 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
                     id=item.get("call_id") or item.get("id", ""),
                     name=item.get("name", ""),
                     input=_normalize_tool_call_input(item.get("arguments")),
+                    provider_metadata=drop_none(
+                        {
+                            "provider": provider_name,
+                            "response_item_id": item.get("id"),
+                            "caller": deepcopy(item.get("caller")) if isinstance(item.get("caller"), dict) else None,
+                        }
+                    ),
                 )
             )
         )
@@ -971,6 +1023,8 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         merged_tools.extend(mapped_tools)
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
+    if provider_name == "qwen":
+        _validate_qwen_responses_tools(input, merged_tools)
     if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
         raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')
     body = {
@@ -1855,7 +1909,7 @@ class OpenAICompatibleContainersClient(ContainersClient):
         after: str | None = None,
         limit: int | None = None,
         options: RetryOptions | None = None,
-    ) -> list[ProviderFile]:
+    ) -> builtins.list[ProviderFile]:
         response = await with_retry(
             lambda: self.fetch(
                 _request_url(self.base_url, f"/containers/{container_id}/files", {"after": after, "limit": limit}),
@@ -2277,7 +2331,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         filename: str,
         media_type: str | None = None,
         display_name: str | None = None,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         uploaded = await self._files_client().upload(
@@ -2298,7 +2352,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         *,
         file_search_store_name: str,
         file_name: str,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchOperation:
         response = await self.fetch(
@@ -2391,7 +2445,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         name: str,
         *,
-        custom_metadata: list[dict[str, Any]] | None = None,
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchDocument:
         store_id, file_id = _parse_openai_vector_store_file_name(name)
@@ -2414,7 +2468,7 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        query: str | list[str],
+        query: str | builtins.list[str],
         filters: dict[str, Any] | None = None,
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
@@ -2443,8 +2497,8 @@ class OpenAICompatibleFileSearchStoresClient(FileSearchStoresClient):
         self,
         *,
         file_search_store_name: str,
-        file_names: list[str],
-        custom_metadata: list[dict[str, Any]] | None = None,
+        file_names: builtins.list[str],
+        custom_metadata: builtins.list[dict[str, Any]] | None = None,
         chunking_config: dict[str, Any] | None = None,
     ) -> FileSearchBatch:
         response = await self.fetch(
@@ -2911,8 +2965,19 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                                 id=item.get("call_id") or item.get("id", ""),
                                 name=item.get("name", ""),
                                 input=_normalize_tool_call_input(item.get("arguments")),
+                                provider_metadata=drop_none(
+                                    {
+                                        "provider": self.provider,
+                                        "response_item_id": item.get("id"),
+                                        "caller": deepcopy(item.get("caller"))
+                                        if isinstance(item.get("caller"), dict)
+                                        else None,
+                                    }
+                                ),
                             )
                         )
+                    elif item.get("type") in {"program", "program_output"}:
+                        yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(item))
                     elif isinstance(item, dict) and _is_provider_managed_output_item(item):
                         yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
                     continue
@@ -2935,7 +3000,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 class OpenAICompatibleEmbeddingModel(_BaseOpenAICompatible, EmbeddingModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
-    async def embed(self, values: list[str], options: RetryOptions | None = None) -> EmbedResult:
+    async def embed(self, values: list[EmbeddingContent], options: RetryOptions | None = None) -> EmbedResult:
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/embeddings",
@@ -3609,8 +3674,9 @@ class OpenAICompatibleRealtimeModel(_BaseOpenAICompatible, RealtimeModel):
         if isinstance(secret, dict):
             value = str(secret.get("value") or "")
             expires_at_ms = secret.get("expires_at_ms")
-            if expires_at_ms is None and secret.get("expires_at") is not None:
-                expires_at_ms = int(secret.get("expires_at")) * 1000
+            expires_at = secret.get("expires_at")
+            if expires_at_ms is None and expires_at is not None:
+                expires_at_ms = int(expires_at) * 1000
         else:
             value = str(payload.get("token") or payload.get("value") or "")
             expires_at_ms = payload.get("expires_at_ms")

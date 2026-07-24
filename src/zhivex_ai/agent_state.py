@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import sqlite3
+import time
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
@@ -17,7 +18,13 @@ from .types import FinishReason, JsonValue, ModelMessage, TokenUsage, ToolCall, 
 
 AgentRunStatus = Literal["running", "completed", "failed", "cancelled", "suspended"]
 
+AGENT_RUN_STATE_SCHEMA_VERSION = 1
+_TERMINAL_AGENT_RUN_STATUSES: frozenset[AgentRunStatus] = frozenset({"completed", "failed", "cancelled"})
 _POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def _validate_postgres_table_prefix(table_prefix: str) -> str:
@@ -79,6 +86,7 @@ class PendingApproval:
     metadata: dict[str, JsonValue] = field(default_factory=dict)
     created_at_ms: int | None = None
     handoff_path: list[str] = field(default_factory=list)
+    tool_fingerprint: str | None = None
 
 
 @dataclass(slots=True)
@@ -115,6 +123,8 @@ class AgentRunState:
     agent_name: str
     provider: str
     model_id: str
+    schema_version: int = AGENT_RUN_STATE_SCHEMA_VERSION
+    revision: int = 0
     status: AgentRunStatus = "running"
     session_id: str | None = None
     parent_run_id: str | None = None
@@ -142,7 +152,7 @@ class AgentRunStore(Protocol):
 
     async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]: ...
 
-    async def save(self, state: AgentRunState) -> None: ...
+    async def save(self, state: AgentRunState) -> AgentRunState | None: ...
 
 
 @dataclass(slots=True)
@@ -153,7 +163,104 @@ class AgentRunTreeCancellationResult:
 
 
 def serialize_agent_run_state(state: AgentRunState) -> dict[str, Any]:
+    _validate_state_version(state.schema_version, state.revision)
     return _to_plain(state)
+
+
+def _validate_state_version(schema_version: Any, revision: Any) -> tuple[int, int]:
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version < 1:
+        raise ValidationError("Agent run state schema_version must be a positive integer.")
+    if schema_version > AGENT_RUN_STATE_SCHEMA_VERSION:
+        raise ValidationError(
+            "Agent run state uses unsupported future schema_version "
+            f"{schema_version}; this SDK supports up to {AGENT_RUN_STATE_SCHEMA_VERSION}."
+        )
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise ValidationError("Agent run state revision must be a non-negative integer.")
+    return schema_version, revision
+
+
+def _clone_agent_run_state(state: AgentRunState) -> AgentRunState:
+    return agent_run_state_from_json(agent_run_state_to_json(state))
+
+
+def _prepare_new_state(state: AgentRunState) -> AgentRunState:
+    _validate_state_version(state.schema_version, state.revision)
+    if state.revision != 0:
+        raise ValidationError(f'New agent run "{state.run_id}" must start at revision 0.')
+    return _clone_agent_run_state(state)
+
+
+def _prepare_state_update(current: AgentRunState, candidate: AgentRunState) -> AgentRunState:
+    _validate_state_version(candidate.schema_version, candidate.revision)
+    if candidate.schema_version != current.schema_version:
+        raise ValidationError(
+            f'Agent run "{candidate.run_id}" schema_version cannot change during an update.'
+        )
+    if candidate.revision != current.revision:
+        raise ValidationError(
+            f'Agent run "{candidate.run_id}" revision conflict: expected {candidate.revision}, '
+            f"stored revision is {current.revision}. Reload the state before retrying."
+        )
+    if current.status in _TERMINAL_AGENT_RUN_STATUSES:
+        raise ValidationError(
+            f'Agent run "{candidate.run_id}" is terminal with status "{current.status}" and cannot be overwritten.'
+        )
+    updated = _clone_agent_run_state(candidate)
+    updated.revision = current.revision + 1
+    return updated
+
+
+def _copy_persisted_revision(target: AgentRunState, persisted: AgentRunState) -> AgentRunState:
+    target.schema_version = persisted.schema_version
+    target.revision = persisted.revision
+    return _clone_agent_run_state(persisted)
+
+
+def _cancel_state(
+    current: AgentRunState,
+    *,
+    reason: str | None,
+    cancelled_at_ms: int | None,
+) -> AgentRunState:
+    if current.status in _TERMINAL_AGENT_RUN_STATUSES:
+        return _clone_agent_run_state(current)
+    effective_cancelled_at_ms = cancelled_at_ms if cancelled_at_ms is not None else _now_ms()
+    cancelled = _clone_agent_run_state(current)
+    cancelled.status = "cancelled"
+    cancelled.cancellation_reason = reason
+    cancelled.updated_at_ms = effective_cancelled_at_ms
+    cancelled.finished_at_ms = effective_cancelled_at_ms
+    return _prepare_state_update(current, cancelled)
+
+
+def _fail_resume_claim_state(
+    current: AgentRunState,
+    *,
+    claim_token: str,
+    reason: str,
+    failed_at_ms: int | None,
+) -> AgentRunState | None:
+    raw_claim = current.metadata.get("resume_claim")
+    if current.status != "running" or not isinstance(raw_claim, dict):
+        return None
+    if raw_claim.get("claim_token") != claim_token:
+        return None
+    effective_failed_at_ms = failed_at_ms if failed_at_ms is not None else _now_ms()
+    failed = _clone_agent_run_state(current)
+    failed.status = "failed"
+    failed.error = reason
+    failed.updated_at_ms = effective_failed_at_ms
+    failed.finished_at_ms = effective_failed_at_ms
+    failed.metadata = {
+        **failed.metadata,
+        "resume_claim_failure": {
+            "claim_token": claim_token,
+            "failed_at_ms": effective_failed_at_ms,
+            "reason": reason,
+        },
+    }
+    return _prepare_state_update(current, failed)
 
 
 def _usage_from_payload(payload: Any) -> TokenUsage | None:
@@ -194,6 +301,10 @@ def _tool_result_from_payload(payload: Any) -> ToolExecutionResult | None:
 
 
 def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
+    schema_version, revision = _validate_state_version(
+        payload.get("schema_version", AGENT_RUN_STATE_SCHEMA_VERSION),
+        payload.get("revision", 0),
+    )
     steps: list[AgentRunStep] = []
     for raw_step in payload.get("steps") or []:
         if not isinstance(raw_step, dict):
@@ -251,6 +362,7 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
             metadata=_json_metadata_from_payload(item.get("metadata")),
             created_at_ms=item.get("created_at_ms"),
             handoff_path=[str(path_item) for path_item in item.get("handoff_path") or []],
+            tool_fingerprint=item.get("tool_fingerprint"),
         )
         for item in payload.get("pending_approvals") or []
         if isinstance(item, dict)
@@ -265,6 +377,8 @@ def deserialize_agent_run_state(payload: dict[str, Any]) -> AgentRunState:
         agent_name=str(payload.get("agent_name", "")),
         provider=str(payload.get("provider", "")),
         model_id=str(payload.get("model_id", "")),
+        schema_version=schema_version,
+        revision=revision,
         status=payload.get("status", "running"),
         session_id=payload.get("session_id"),
         parent_run_id=payload.get("parent_run_id"),
@@ -321,27 +435,48 @@ def _claim_pending_approval(
 class InMemoryAgentRunStore:
     def __init__(self) -> None:
         self._states: dict[str, AgentRunState] = {}
-        self._resume_claim_lock = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     async def load(self, run_id: str) -> AgentRunState | None:
-        state = self._states.get(run_id)
-        return agent_run_state_from_json(agent_run_state_to_json(state)) if state is not None else None
+        async with self._lock:
+            state = self._states.get(run_id)
+            return _clone_agent_run_state(state) if state is not None else None
 
     async def find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
-        for state in self._states.values():
-            if state.idempotency_key == idempotency_key:
-                return agent_run_state_from_json(agent_run_state_to_json(state))
+        async with self._lock:
+            for state in self._states.values():
+                if state.idempotency_key == idempotency_key:
+                    return _clone_agent_run_state(state)
         return None
 
     async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
-        return [
-            agent_run_state_from_json(agent_run_state_to_json(state))
-            for state in self._states.values()
-            if state.parent_run_id == parent_run_id
-        ]
+        async with self._lock:
+            return [
+                _clone_agent_run_state(state)
+                for state in self._states.values()
+                if state.parent_run_id == parent_run_id
+            ]
 
-    async def save(self, state: AgentRunState) -> None:
-        self._states[state.run_id] = agent_run_state_from_json(agent_run_state_to_json(state))
+    async def save(self, state: AgentRunState) -> AgentRunState:
+        async with self._lock:
+            current = self._states.get(state.run_id)
+            persisted = _prepare_new_state(state) if current is None else _prepare_state_update(current, state)
+            self._states[state.run_id] = persisted
+            return _copy_persisted_revision(state, persisted)
+
+    async def claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
+        if not state.idempotency_key:
+            raise ValidationError("claim_idempotency_key(...) requires state.idempotency_key.")
+        async with self._lock:
+            existing = next(
+                (item for item in self._states.values() if item.idempotency_key == state.idempotency_key),
+                None,
+            )
+            if existing is not None:
+                return _clone_agent_run_state(existing)
+            stored = _prepare_new_state(state)
+            self._states[state.run_id] = stored
+            return _copy_persisted_revision(state, stored)
 
     async def claim_pending_approval(
         self,
@@ -351,11 +486,11 @@ class InMemoryAgentRunStore:
         claim_token: str,
         claimed_at_ms: int,
     ) -> AgentRunState | None:
-        async with self._resume_claim_lock:
+        async with self._lock:
             state = self._states.get(run_id)
             if state is None:
                 return None
-            claimed = agent_run_state_from_json(agent_run_state_to_json(state))
+            claimed = _clone_agent_run_state(state)
             if not _claim_pending_approval(
                 claimed,
                 approval_id,
@@ -363,8 +498,57 @@ class InMemoryAgentRunStore:
                 claimed_at_ms=claimed_at_ms,
             ):
                 return None
-            self._states[run_id] = agent_run_state_from_json(agent_run_state_to_json(claimed))
-            return claimed
+            persisted = _prepare_state_update(state, claimed)
+            self._states[run_id] = persisted
+            return _clone_agent_run_state(persisted)
+
+    async def cancel_run(
+        self,
+        run_id: str,
+        *,
+        reason: str | None = None,
+        cancelled_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        async with self._lock:
+            current = self._states.get(run_id)
+            if current is None:
+                return None
+            cancelled = _cancel_state(current, reason=reason, cancelled_at_ms=cancelled_at_ms)
+            if cancelled.revision != current.revision:
+                self._states[run_id] = cancelled
+            return _clone_agent_run_state(cancelled)
+
+    async def fail_resume_claim(
+        self,
+        run_id: str,
+        *,
+        claim_token: str,
+        reason: str,
+        failed_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        async with self._lock:
+            current = self._states.get(run_id)
+            if current is None:
+                return None
+            failed = _fail_resume_claim_state(
+                current,
+                claim_token=claim_token,
+                reason=reason,
+                failed_at_ms=failed_at_ms,
+            )
+            if failed is None:
+                return None
+            self._states[run_id] = failed
+            return _clone_agent_run_state(failed)
+
+
+def _state_from_storage_row(row: Any) -> AgentRunState:
+    state = agent_run_state_from_json(row[0])
+    if len(row) >= 3 and (state.schema_version != int(row[1]) or state.revision != int(row[2])):
+        raise ValidationError(
+            f'Agent run "{state.run_id}" has inconsistent schema_version or revision columns.'
+        )
+    return state
 
 
 class SQLiteAgentRunStore:
@@ -382,13 +566,41 @@ class SQLiteAgentRunStore:
                     idempotency_key TEXT,
                     parent_run_id TEXT,
                     state_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL DEFAULT 1,
+                    revision INTEGER NOT NULL DEFAULT 0,
                     updated_at_ms INTEGER NOT NULL,
                     PRIMARY KEY (namespace, run_id)
                 )
                 """
             )
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(zhivex_agent_runs)").fetchall()}
+            if "schema_version" not in columns:
+                connection.execute(
+                    "ALTER TABLE zhivex_agent_runs ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+                )
+            if "revision" not in columns:
+                connection.execute("ALTER TABLE zhivex_agent_runs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+            duplicates = connection.execute(
+                """
+                SELECT namespace, idempotency_key
+                FROM zhivex_agent_runs
+                WHERE idempotency_key IS NOT NULL
+                GROUP BY namespace, idempotency_key
+                HAVING COUNT(*) > 1
+                LIMIT 1
+                """
+            ).fetchone()
+            if duplicates is not None:
+                raise ValidationError(
+                    "Cannot migrate the SQLite agent run store: duplicate idempotency keys exist "
+                    f'in namespace "{duplicates[0]}". Resolve duplicates before reopening the store.'
+                )
             connection.execute(
-                "CREATE INDEX IF NOT EXISTS zhivex_agent_runs_idempotency_idx ON zhivex_agent_runs (namespace, idempotency_key)"
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS zhivex_agent_runs_idempotency_unique
+                ON zhivex_agent_runs (namespace, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                """
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS zhivex_agent_runs_parent_idx ON zhivex_agent_runs (namespace, parent_run_id)"
@@ -397,58 +609,211 @@ class SQLiteAgentRunStore:
         finally:
             connection.close()
 
+    async def fail_resume_claim(
+        self,
+        run_id: str,
+        *,
+        claim_token: str,
+        reason: str,
+        failed_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND run_id = ?
+                """,
+                (self._namespace, run_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return None
+            current = _state_from_storage_row(row)
+            failed = _fail_resume_claim_state(
+                current,
+                claim_token=claim_token,
+                reason=reason,
+                failed_at_ms=failed_at_ms,
+            )
+            if failed is None:
+                connection.rollback()
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE zhivex_agent_runs
+                SET state_json = ?, schema_version = ?, revision = ?, updated_at_ms = ?
+                WHERE namespace = ? AND run_id = ? AND revision = ?
+                """,
+                (
+                    agent_run_state_to_json(failed),
+                    failed.schema_version,
+                    failed.revision,
+                    failed.updated_at_ms or 0,
+                    self._namespace,
+                    run_id,
+                    current.revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValidationError(f'Agent run "{run_id}" changed while failing its resume claim.')
+            connection.commit()
+            return failed
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     async def load(self, run_id: str) -> AgentRunState | None:
         connection = sqlite3.connect(self._path)
         try:
             row = connection.execute(
-                "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND run_id = ?",
+                "SELECT state_json, schema_version, revision FROM zhivex_agent_runs WHERE namespace = ? AND run_id = ?",
                 (self._namespace, run_id),
             ).fetchone()
         finally:
             connection.close()
-        return agent_run_state_from_json(row[0]) if row else None
+        return _state_from_storage_row(row) if row else None
 
     async def find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
         connection = sqlite3.connect(self._path)
         try:
             row = connection.execute(
-                "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND idempotency_key = ?",
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND idempotency_key = ?
+                """,
                 (self._namespace, idempotency_key),
             ).fetchone()
         finally:
             connection.close()
-        return agent_run_state_from_json(row[0]) if row else None
+        return _state_from_storage_row(row) if row else None
 
     async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
         connection = sqlite3.connect(self._path)
         try:
             rows = connection.execute(
-                "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND parent_run_id = ? ORDER BY updated_at_ms",
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND parent_run_id = ?
+                ORDER BY updated_at_ms
+                """,
                 (self._namespace, parent_run_id),
             ).fetchall()
         finally:
             connection.close()
-        return [agent_run_state_from_json(row[0]) for row in rows]
+        return [_state_from_storage_row(row) for row in rows]
 
-    async def save(self, state: AgentRunState) -> None:
-        payload = agent_run_state_to_json(state)
+    async def save(self, state: AgentRunState) -> AgentRunState:
         connection = sqlite3.connect(self._path)
         try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND run_id = ?
+                """,
+                (self._namespace, state.run_id),
+            ).fetchone()
+            if row is None:
+                persisted = _prepare_new_state(state)
+                connection.execute(
+                    """
+                    INSERT INTO zhivex_agent_runs
+                        (namespace, run_id, idempotency_key, parent_run_id, state_json,
+                         schema_version, revision, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self._namespace,
+                        persisted.run_id,
+                        persisted.idempotency_key,
+                        persisted.parent_run_id,
+                        agent_run_state_to_json(persisted),
+                        persisted.schema_version,
+                        persisted.revision,
+                        persisted.updated_at_ms or 0,
+                    ),
+                )
+            else:
+                current = _state_from_storage_row(row)
+                persisted = _prepare_state_update(current, state)
+                cursor = connection.execute(
+                    """
+                    UPDATE zhivex_agent_runs
+                    SET idempotency_key = ?, parent_run_id = ?, state_json = ?,
+                        schema_version = ?, revision = ?, updated_at_ms = ?
+                    WHERE namespace = ? AND run_id = ? AND revision = ?
+                    """,
+                    (
+                        persisted.idempotency_key,
+                        persisted.parent_run_id,
+                        agent_run_state_to_json(persisted),
+                        persisted.schema_version,
+                        persisted.revision,
+                        persisted.updated_at_ms or 0,
+                        self._namespace,
+                        persisted.run_id,
+                        current.revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValidationError(f'Agent run "{state.run_id}" changed during save.')
+            connection.commit()
+            return _copy_persisted_revision(state, persisted)
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    async def claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
+        if not state.idempotency_key:
+            raise ValidationError("claim_idempotency_key(...) requires state.idempotency_key.")
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND idempotency_key = ?
+                """,
+                (self._namespace, state.idempotency_key),
+            ).fetchone()
+            if row is not None:
+                connection.commit()
+                return _state_from_storage_row(row)
+            persisted = _prepare_new_state(state)
             connection.execute(
                 """
                 INSERT INTO zhivex_agent_runs
-                    (namespace, run_id, idempotency_key, parent_run_id, state_json, updated_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(namespace, run_id)
-                DO UPDATE SET
-                    idempotency_key = excluded.idempotency_key,
-                    parent_run_id = excluded.parent_run_id,
-                    state_json = excluded.state_json,
-                    updated_at_ms = excluded.updated_at_ms
+                    (namespace, run_id, idempotency_key, parent_run_id, state_json,
+                     schema_version, revision, updated_at_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self._namespace, state.run_id, state.idempotency_key, state.parent_run_id, payload, state.updated_at_ms or 0),
+                (
+                    self._namespace,
+                    persisted.run_id,
+                    persisted.idempotency_key,
+                    persisted.parent_run_id,
+                    agent_run_state_to_json(persisted),
+                    persisted.schema_version,
+                    persisted.revision,
+                    persisted.updated_at_ms or 0,
+                ),
             )
             connection.commit()
+            return _copy_persisted_revision(state, persisted)
+        except BaseException:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
@@ -464,31 +829,103 @@ class SQLiteAgentRunStore:
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT state_json FROM zhivex_agent_runs WHERE namespace = ? AND run_id = ?",
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
+                WHERE namespace = ? AND run_id = ?
+                """,
                 (self._namespace, run_id),
             ).fetchone()
             if row is None:
                 connection.rollback()
                 return None
-            state = agent_run_state_from_json(row[0])
+            current = _state_from_storage_row(row)
+            claimed = _clone_agent_run_state(current)
             if not _claim_pending_approval(
-                state,
+                claimed,
                 approval_id,
                 claim_token=claim_token,
                 claimed_at_ms=claimed_at_ms,
             ):
                 connection.rollback()
                 return None
-            connection.execute(
+            persisted = _prepare_state_update(current, claimed)
+            cursor = connection.execute(
                 """
                 UPDATE zhivex_agent_runs
-                SET state_json = ?, updated_at_ms = ?
+                SET state_json = ?, schema_version = ?, revision = ?, updated_at_ms = ?
+                WHERE namespace = ? AND run_id = ? AND revision = ?
+                """,
+                (
+                    agent_run_state_to_json(persisted),
+                    persisted.schema_version,
+                    persisted.revision,
+                    persisted.updated_at_ms or 0,
+                    self._namespace,
+                    run_id,
+                    current.revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return None
+            connection.commit()
+            return persisted
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    async def cancel_run(
+        self,
+        run_id: str,
+        *,
+        reason: str | None = None,
+        cancelled_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT state_json, schema_version, revision
+                FROM zhivex_agent_runs
                 WHERE namespace = ? AND run_id = ?
                 """,
-                (agent_run_state_to_json(state), state.updated_at_ms or 0, self._namespace, run_id),
+                (self._namespace, run_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return None
+            current = _state_from_storage_row(row)
+            cancelled = _cancel_state(current, reason=reason, cancelled_at_ms=cancelled_at_ms)
+            if cancelled.revision == current.revision:
+                connection.commit()
+                return cancelled
+            cursor = connection.execute(
+                """
+                UPDATE zhivex_agent_runs
+                SET state_json = ?, schema_version = ?, revision = ?, updated_at_ms = ?
+                WHERE namespace = ? AND run_id = ? AND revision = ?
+                """,
+                (
+                    agent_run_state_to_json(cancelled),
+                    cancelled.schema_version,
+                    cancelled.revision,
+                    cancelled.updated_at_ms or 0,
+                    self._namespace,
+                    run_id,
+                    current.revision,
+                ),
             )
+            if cursor.rowcount != 1:
+                raise ValidationError(f'Agent run "{run_id}" changed during cancellation.')
             connection.commit()
-            return state
+            return cancelled
+        except BaseException:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
@@ -504,29 +941,86 @@ class PostgresAgentRunStore:
         except Exception as error:
             raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
         connection = await asyncpg.connect(self._dsn)
-        await connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self._table} (
-                run_id TEXT PRIMARY KEY,
-                idempotency_key TEXT,
-                parent_run_id TEXT,
-                state_json JSONB NOT NULL,
-                updated_at_ms BIGINT NOT NULL
-            )
-            """
-        )
-        await connection.execute(f"CREATE INDEX IF NOT EXISTS {self._table}_idempotency_idx ON {self._table} (idempotency_key)")
-        await connection.execute(f"CREATE INDEX IF NOT EXISTS {self._table}_parent_idx ON {self._table} (parent_run_id)")
+        try:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"zhivex-agent-run-schema:{self._table}",
+                )
+                await connection.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self._table} (
+                        run_id TEXT PRIMARY KEY,
+                        idempotency_key TEXT,
+                        parent_run_id TEXT,
+                        state_json JSONB NOT NULL,
+                        schema_version INTEGER NOT NULL DEFAULT 1,
+                        revision BIGINT NOT NULL DEFAULT 0,
+                        updated_at_ms BIGINT NOT NULL
+                    )
+                    """
+                )
+                await connection.execute(
+                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1"
+                )
+                await connection.execute(
+                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
+                )
+                duplicate = await connection.fetchrow(
+                    f"""
+                    SELECT idempotency_key
+                    FROM {self._table}
+                    WHERE idempotency_key IS NOT NULL
+                    GROUP BY idempotency_key
+                    HAVING COUNT(*) > 1
+                    LIMIT 1
+                    """
+                )
+                if duplicate is not None:
+                    raise ValidationError(
+                        "Cannot migrate the Postgres agent run store: duplicate idempotency keys exist. "
+                        "Resolve duplicates before reconnecting."
+                    )
+                await connection.execute(
+                    f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table}_idempotency_unique
+                    ON {self._table} (idempotency_key)
+                    WHERE idempotency_key IS NOT NULL
+                    """
+                )
+                await connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS {self._table}_parent_idx ON {self._table} (parent_run_id)"
+                )
+        except BaseException:
+            await connection.close()
+            raise
         return connection
+
+    @staticmethod
+    def _state_from_row(row: Any) -> AgentRunState:
+        payload = row["state_json"]
+        state = deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+        try:
+            schema_version = int(row["schema_version"])
+            revision = int(row["revision"])
+        except (KeyError, TypeError):
+            return state
+        if state.schema_version != schema_version or state.revision != revision:
+            raise ValidationError(
+                f'Agent run "{state.run_id}" has inconsistent schema_version or revision columns.'
+            )
+        return state
 
     async def load(self, run_id: str) -> AgentRunState | None:
         connection = await self._connect()
         try:
-            row = await connection.fetchrow(f"SELECT state_json FROM {self._table} WHERE run_id = $1", run_id)
+            row = await connection.fetchrow(
+                f"SELECT state_json, schema_version, revision FROM {self._table} WHERE run_id = $1",
+                run_id,
+            )
             if row is None:
                 return None
-            payload = row["state_json"]
-            return deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+            return self._state_from_row(row)
         finally:
             await connection.close()
 
@@ -534,13 +1028,12 @@ class PostgresAgentRunStore:
         connection = await self._connect()
         try:
             row = await connection.fetchrow(
-                f"SELECT state_json FROM {self._table} WHERE idempotency_key = $1",
+                f"SELECT state_json, schema_version, revision FROM {self._table} WHERE idempotency_key = $1",
                 idempotency_key,
             )
             if row is None:
                 return None
-            payload = row["state_json"]
-            return deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+            return self._state_from_row(row)
         finally:
             await connection.close()
 
@@ -548,37 +1041,113 @@ class PostgresAgentRunStore:
         connection = await self._connect()
         try:
             rows = await connection.fetch(
-                f"SELECT state_json FROM {self._table} WHERE parent_run_id = $1 ORDER BY updated_at_ms",
+                f"""
+                SELECT state_json, schema_version, revision
+                FROM {self._table}
+                WHERE parent_run_id = $1
+                ORDER BY updated_at_ms
+                """,
                 parent_run_id,
             )
-            states: list[AgentRunState] = []
-            for row in rows:
-                payload = row["state_json"]
-                states.append(deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload)))
-            return states
+            return [self._state_from_row(row) for row in rows]
         finally:
             await connection.close()
 
-    async def save(self, state: AgentRunState) -> None:
+    async def save(self, state: AgentRunState) -> AgentRunState:
         connection = await self._connect()
         try:
-            await connection.execute(
-                f"""
-                INSERT INTO {self._table} (run_id, idempotency_key, parent_run_id, state_json, updated_at_ms)
-                VALUES ($1, $2, $3, $4::jsonb, $5)
-                ON CONFLICT(run_id)
-                DO UPDATE SET
-                    idempotency_key = excluded.idempotency_key,
-                    parent_run_id = excluded.parent_run_id,
-                    state_json = excluded.state_json,
-                    updated_at_ms = excluded.updated_at_ms
-                """,
-                state.run_id,
-                state.idempotency_key,
-                state.parent_run_id,
-                agent_run_state_to_json(state),
-                state.updated_at_ms or 0,
-            )
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT state_json, schema_version, revision
+                    FROM {self._table}
+                    WHERE run_id = $1
+                    FOR UPDATE
+                    """,
+                    state.run_id,
+                )
+                if row is None:
+                    persisted = _prepare_new_state(state)
+                    await connection.execute(
+                        f"""
+                        INSERT INTO {self._table}
+                            (run_id, idempotency_key, parent_run_id, state_json,
+                             schema_version, revision, updated_at_ms)
+                        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+                        """,
+                        persisted.run_id,
+                        persisted.idempotency_key,
+                        persisted.parent_run_id,
+                        agent_run_state_to_json(persisted),
+                        persisted.schema_version,
+                        persisted.revision,
+                        persisted.updated_at_ms or 0,
+                    )
+                else:
+                    current = self._state_from_row(row)
+                    persisted = _prepare_state_update(current, state)
+                    status = await connection.execute(
+                        f"""
+                        UPDATE {self._table}
+                        SET idempotency_key = $1, parent_run_id = $2, state_json = $3::jsonb,
+                            schema_version = $4, revision = $5, updated_at_ms = $6
+                        WHERE run_id = $7 AND revision = $8
+                        """,
+                        persisted.idempotency_key,
+                        persisted.parent_run_id,
+                        agent_run_state_to_json(persisted),
+                        persisted.schema_version,
+                        persisted.revision,
+                        persisted.updated_at_ms or 0,
+                        persisted.run_id,
+                        current.revision,
+                    )
+                    if status != "UPDATE 1":
+                        raise ValidationError(f'Agent run "{state.run_id}" changed during save.')
+            return _copy_persisted_revision(state, persisted)
+        finally:
+            await connection.close()
+
+    async def claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
+        if not state.idempotency_key:
+            raise ValidationError("claim_idempotency_key(...) requires state.idempotency_key.")
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                # Transaction-scoped advisory locks avoid a schema migration
+                # while making the SDK claim path atomic across workers.
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    state.idempotency_key,
+                )
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT state_json, schema_version, revision
+                    FROM {self._table}
+                    WHERE idempotency_key = $1
+                    LIMIT 1
+                    """,
+                    state.idempotency_key,
+                )
+                if row is not None:
+                    return self._state_from_row(row)
+                persisted = _prepare_new_state(state)
+                await connection.execute(
+                    f"""
+                    INSERT INTO {self._table}
+                        (run_id, idempotency_key, parent_run_id, state_json,
+                         schema_version, revision, updated_at_ms)
+                    VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+                    """,
+                    persisted.run_id,
+                    persisted.idempotency_key,
+                    persisted.parent_run_id,
+                    agent_run_state_to_json(persisted),
+                    persisted.schema_version,
+                    persisted.revision,
+                    persisted.updated_at_ms or 0,
+                )
+            return _copy_persisted_revision(state, persisted)
         finally:
             await connection.close()
 
@@ -594,27 +1163,136 @@ class PostgresAgentRunStore:
         try:
             async with connection.transaction():
                 row = await connection.fetchrow(
-                    f"SELECT state_json FROM {self._table} WHERE run_id = $1 FOR UPDATE",
+                    f"""
+                    SELECT state_json, schema_version, revision
+                    FROM {self._table}
+                    WHERE run_id = $1
+                    FOR UPDATE
+                    """,
                     run_id,
                 )
                 if row is None:
                     return None
-                payload = row["state_json"]
-                state = deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+                current = self._state_from_row(row)
+                claimed = _clone_agent_run_state(current)
                 if not _claim_pending_approval(
-                    state,
+                    claimed,
                     approval_id,
                     claim_token=claim_token,
                     claimed_at_ms=claimed_at_ms,
                 ):
                     return None
-                await connection.execute(
-                    f"UPDATE {self._table} SET state_json = $1::jsonb, updated_at_ms = $2 WHERE run_id = $3",
-                    agent_run_state_to_json(state),
-                    state.updated_at_ms or 0,
+                persisted = _prepare_state_update(current, claimed)
+                status = await connection.execute(
+                    f"""
+                    UPDATE {self._table}
+                    SET state_json = $1::jsonb, schema_version = $2, revision = $3, updated_at_ms = $4
+                    WHERE run_id = $5 AND revision = $6
+                    """,
+                    agent_run_state_to_json(persisted),
+                    persisted.schema_version,
+                    persisted.revision,
+                    persisted.updated_at_ms or 0,
+                    run_id,
+                    current.revision,
+                )
+                if status != "UPDATE 1":
+                    return None
+                return persisted
+        finally:
+            await connection.close()
+
+    async def cancel_run(
+        self,
+        run_id: str,
+        *,
+        reason: str | None = None,
+        cancelled_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT state_json, schema_version, revision
+                    FROM {self._table}
+                    WHERE run_id = $1
+                    FOR UPDATE
+                    """,
                     run_id,
                 )
-                return state
+                if row is None:
+                    return None
+                current = self._state_from_row(row)
+                cancelled = _cancel_state(current, reason=reason, cancelled_at_ms=cancelled_at_ms)
+                if cancelled.revision == current.revision:
+                    return cancelled
+                status = await connection.execute(
+                    f"""
+                    UPDATE {self._table}
+                    SET state_json = $1::jsonb, schema_version = $2, revision = $3, updated_at_ms = $4
+                    WHERE run_id = $5 AND revision = $6
+                    """,
+                    agent_run_state_to_json(cancelled),
+                    cancelled.schema_version,
+                    cancelled.revision,
+                    cancelled.updated_at_ms or 0,
+                    run_id,
+                    current.revision,
+                )
+                if status != "UPDATE 1":
+                    raise ValidationError(f'Agent run "{run_id}" changed during cancellation.')
+                return cancelled
+        finally:
+            await connection.close()
+
+    async def fail_resume_claim(
+        self,
+        run_id: str,
+        *,
+        claim_token: str,
+        reason: str,
+        failed_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT state_json, schema_version, revision
+                    FROM {self._table}
+                    WHERE run_id = $1
+                    FOR UPDATE
+                    """,
+                    run_id,
+                )
+                if row is None:
+                    return None
+                current = self._state_from_row(row)
+                failed = _fail_resume_claim_state(
+                    current,
+                    claim_token=claim_token,
+                    reason=reason,
+                    failed_at_ms=failed_at_ms,
+                )
+                if failed is None:
+                    return None
+                status = await connection.execute(
+                    f"""
+                    UPDATE {self._table}
+                    SET state_json = $1::jsonb, schema_version = $2, revision = $3, updated_at_ms = $4
+                    WHERE run_id = $5 AND revision = $6
+                    """,
+                    agent_run_state_to_json(failed),
+                    failed.schema_version,
+                    failed.revision,
+                    failed.updated_at_ms or 0,
+                    run_id,
+                    current.revision,
+                )
+                if status != "UPDATE 1":
+                    raise ValidationError(f'Agent run "{run_id}" changed while failing its resume claim.')
+                return failed
         finally:
             await connection.close()
 
@@ -636,6 +1314,30 @@ async def get_pending_agent_approvals(store: AgentRunStore, run_id: str) -> list
     return list(state.pending_approvals) if state is not None and state.status == "suspended" else []
 
 
+async def fail_agent_run_resume_claim(
+    store: AgentRunStore,
+    run_id: str,
+    *,
+    claim_token: str,
+    reason: str,
+    now_ms: int | None = None,
+) -> AgentRunState | None:
+    """Atomically fail one known approval-resume claim without retrying its tool."""
+
+    fail_resume_claim = getattr(store, "fail_resume_claim", None)
+    if not callable(fail_resume_claim):
+        raise ValidationError(
+            "Resume-claim reconciliation requires an AgentRunStore with fail_resume_claim(...). "
+            "Use a built-in run store or implement the atomic reconciliation contract."
+        )
+    return await fail_resume_claim(
+        run_id,
+        claim_token=claim_token,
+        reason=reason,
+        failed_at_ms=now_ms,
+    )
+
+
 async def cancel_agent_run(
     store: AgentRunStore,
     run_id: str,
@@ -643,15 +1345,13 @@ async def cancel_agent_run(
     reason: str | None = None,
     now_ms: int | None = None,
 ) -> AgentRunState | None:
-    state = await store.load(run_id)
-    if state is None:
-        return None
-    state.status = "cancelled"
-    state.cancellation_reason = reason
-    state.updated_at_ms = now_ms
-    state.finished_at_ms = now_ms
-    await store.save(state)
-    return state
+    cancel_run = getattr(store, "cancel_run", None)
+    if not callable(cancel_run):
+        raise ValidationError(
+            "Atomic cancellation requires an AgentRunStore with cancel_run(...). "
+            "Use a built-in run store or implement the atomic cancellation contract."
+        )
+    return await cancel_run(run_id, reason=reason, cancelled_at_ms=now_ms)
 
 
 async def cancel_agent_run_tree(
@@ -664,14 +1364,19 @@ async def cancel_agent_run_tree(
     root = await cancel_agent_run(store, run_id, reason=reason, now_ms=now_ms)
     if root is None:
         return AgentRunTreeCancellationResult(root=None)
-    cancelled = [root]
+    cancelled = [root] if root.status == "cancelled" else []
+    visited = {run_id}
 
     async def collect(parent_run_id: str) -> None:
         children = await store.find_by_parent_run_id(parent_run_id)
         for child in children:
+            if child.run_id in visited:
+                continue
+            visited.add(child.run_id)
             cancelled_child = await cancel_agent_run(store, child.run_id, reason=reason, now_ms=now_ms)
             if cancelled_child is not None:
-                cancelled.append(cancelled_child)
+                if cancelled_child.status == "cancelled":
+                    cancelled.append(cancelled_child)
                 await collect(cancelled_child.run_id)
 
     await collect(run_id)

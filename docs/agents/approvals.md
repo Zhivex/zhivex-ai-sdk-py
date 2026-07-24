@@ -29,6 +29,10 @@ Use `get_pending_agent_approvals(store, run_id)` to load approval requests for a
 
 `resume_agent_run(...)` atomically claims the pending approval before executing its tool. The in-memory, SQLite, and Postgres run stores provide this operation; concurrent resume attempts are rejected so they cannot execute the same tool twice. A custom `AgentRunStore` that needs approval resume must also implement `claim_pending_approval(run_id, approval_id, *, claim_token, claimed_at_ms)`. The method must atomically return the claimed `AgentRunState` to one caller and `None` to all competing callers. If a claimed continuation fails, the parent run is marked failed instead of automatically retrying a tool whose side effects may already have happened.
 
+The pending record is bound to a fingerprint of the full tool definition and executor. Changing its schema, permissions, metadata, remote configuration, callable code, closure values, partial arguments, or callable-object public state invalidates the approval. Older pending records without a fingerprint fail closed and must be requested again.
+
+If a model response contains several local tool calls and one can suspend, the runtime executes the batch sequentially. Results completed before the approval boundary are persisted; calls after the suspended call are not started and may be requested again by the model after resume.
+
 The SDK owns the durable run-state queue, event stream, and resume mechanics. Your application still owns user identity, authorization checks, notification delivery, approval UI, and audit retention.
 
 Provider-managed approvals are beta. They currently cover OpenAI and Azure OpenAI remote MCP approval payloads and reuse the same `approval_policy` hook.

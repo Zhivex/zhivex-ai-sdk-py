@@ -18,7 +18,7 @@ from zhivex_ai import KIMI_OFFICIAL_TOOL_URIS, ReasoningConfig, create_kimi, gen
 
 async def main() -> None:
     kimi = create_kimi()
-    model = os.getenv("KIMI_MODEL", "kimi-k2.6")
+    model = os.getenv("KIMI_MODEL", "kimi-k3")
     tools = await kimi.formulas().toolset(["moonshot/web-search:latest", "moonshot/date:latest"])
 
     result = await generate_text(
@@ -26,7 +26,7 @@ async def main() -> None:
         prompt="Use official tools to answer: what is one current Kimi API capability developers should know about?",
         tools=tools,
         max_steps=4,
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="high"),
     )
 
     print("available official tool URIs:", ", ".join(KIMI_OFFICIAL_TOOL_URIS))

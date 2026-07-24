@@ -52,6 +52,33 @@ class DocsOnboardingTests(TestCase):
             self.assertIn(command, examples)
         self.assertIn("## Verification Index", examples)
 
+    def test_agent_guide_links_detailed_guides_and_has_minimal_tool_flow(self) -> None:
+        guide = (ROOT / "docs/AGENTS.md").read_text("utf-8")
+
+        for target in [
+            "./agents/approvals.md",
+            "./agents/durable-state.md",
+            "./agents/tool-registries.md",
+        ]:
+            self.assertIn(target, guide)
+        for symbol in ["AgentRunResult", "AgentStreamResult", "run_agent", "tool"]:
+            self.assertIn(f"`{symbol}", guide)
+        self.assertIn('export OPENAI_API_KEY="your-api-key"', guide)
+
+    def test_filesystem_mcp_examples_are_pinned_scoped_and_policy_gated(self) -> None:
+        sources = [
+            (ROOT / "README.md").read_text("utf-8"),
+            (ROOT / "examples/agents/mcp_tools.py").read_text("utf-8"),
+        ]
+
+        for source in sources:
+            self.assertIn('command="bunx"', source)
+            self.assertIn("@modelcontextprotocol/server-filesystem@2026.7.10", source)
+            self.assertIn("approval_policy=", source)
+            self.assertIn("READ_ONLY_FILESYSTEM_TOOLS", source)
+            self.assertNotIn('command="npx"', source)
+            self.assertNotIn('args=["-y", "@modelcontextprotocol/server-filesystem", "."]', source)
+
     def test_parity_matrix_tracks_required_maturity_columns(self) -> None:
         matrix = (ROOT / "docs/PARITY_MATRIX.md").read_text("utf-8")
         for label in ["Implemented", "Documented", "Offline-tested", "Live-smoked", "Stability"]:

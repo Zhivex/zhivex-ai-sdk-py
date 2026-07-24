@@ -36,13 +36,13 @@ def _resolve_provider() -> tuple[str, Any, str, Any]:
 
     if provider_name == "openai":
         provider = create_openai()
-        model_name = os.getenv("MODEL", "gpt-5.4-mini")
+        model_name = os.getenv("MODEL", "gpt-5.6-terra")
         hosted_search = openai_web_search_tool(search_context_size="high")
         return provider_name, provider, model_name, hosted_search
 
     if provider_name in {"azure", "azure-openai"}:
         provider = create_azure_openai()
-        model_name = os.getenv("MODEL", "gpt-5.4-mini")
+        model_name = os.getenv("MODEL", "gpt-5.6-terra")
         hosted_search = azure_openai_web_search_tool(search_context_size="high")
         return "azure-openai", provider, model_name, hosted_search
 

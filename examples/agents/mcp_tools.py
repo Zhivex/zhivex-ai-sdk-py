@@ -14,7 +14,39 @@ from _bootstrap import load_dotenv_if_available
 
 load_dotenv_if_available()
 
-from zhivex_ai import Agent, create_mcp_tool_registry, create_openai, create_gemini, mcp_stdio_server, run_agent
+from zhivex_ai import (
+    Agent,
+    ApprovalDecision,
+    ToolApprovalRequest,
+    create_gemini,
+    create_mcp_tool_registry,
+    create_openai,
+    mcp_stdio_server,
+    run_agent,
+)
+
+
+READ_ONLY_FILESYSTEM_TOOLS = frozenset(
+    {
+        "directory_tree",
+        "get_file_info",
+        "list_allowed_directories",
+        "list_directory",
+        "list_directory_with_sizes",
+        "read_file",
+        "read_media_file",
+        "read_multiple_files",
+        "read_text_file",
+        "search_files",
+    }
+)
+
+
+async def _approve_read_only_filesystem(request: ToolApprovalRequest) -> ApprovalDecision:
+    remote_name = str(request.tool_metadata.get("mcp_tool_name") or "")
+    if request.tool_source == "mcp" and remote_name in READ_ONLY_FILESYSTEM_TOOLS:
+        return ApprovalDecision(approved=True)
+    return ApprovalDecision(approved=False, reason="This example only allows read-only filesystem MCP tools.")
 
 
 def _resolve_model_factory() -> tuple[Callable[[str], object], str, str]:
@@ -45,8 +77,8 @@ async def main() -> None:
     mcp_tools = await create_mcp_tool_registry(
         mcp_stdio_server(
             name="fs",
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+            command="bunx",
+            args=["@modelcontextprotocol/server-filesystem@2026.7.10", str(EXAMPLES_ROOT)],
         )
     )
     try:
@@ -54,15 +86,16 @@ async def main() -> None:
         agent = Agent(
             name="assistant",
             instructions=(
-                "Use filesystem tools when needed. "
-                "If the user asks to list files in the project, search recursively when helpful."
+                "Use only read-only filesystem tools when needed. "
+                "The configured MCP root is the repository examples directory."
             ),
             model=model_factory(model_name),
             tools=mcp_tools,
+            approval_policy=_approve_read_only_filesystem,
         )
 
         print(f"Using provider={provider_name} model={model_name}")
-        result = await run_agent(agent=agent, prompt="List the Python files in the current directory.")
+        result = await run_agent(agent=agent, prompt="List the Python files in the allowed examples directory.")
         print(result.text)
     finally:
         await mcp_tools.aclose()

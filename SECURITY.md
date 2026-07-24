@@ -13,6 +13,7 @@ Use the repository private advisory flow or the maintainer security channel used
 - Use environment variables only as a process boundary, not as an audit store.
 - Apply `create_redaction_policy(...)` before logging prompts, tool payloads, provider payloads, approval records, or trace summaries.
 - Treat provider response bodies in errors as sensitive unless your app has already redacted and classified them.
+- Checkpoint persistence strips configured remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. It does not make prompts, generated text, or arbitrary business data non-sensitive.
 
 ## Data Retention
 
@@ -37,8 +38,11 @@ Local tools run inside your application process. A tool can read data, write dat
 - keep approval queues, role checks, escalation, and audit records in app-owned storage
 - require human approval for tools that can mutate systems or disclose tenant data
 - make destructive tools idempotent and auditable
+- use `ToolExecutionContext.idempotency_key` for downstream writes and reconcile `ToolExecutionOutcomeUnknown` before retrying a timed-out operation
 
 Do not expose broad shell, filesystem, deployment, or HTTP request tools to untrusted prompts without an application sandbox and approval gate.
+
+A timeout cannot prove that a remote request, worker thread, or external system rolled back. The agent loop stops on `ToolExecutionOutcomeUnknown`; applications must inspect the downstream system using the supplied idempotency key before choosing whether to retry.
 
 ## Packaged Skills
 
@@ -61,6 +65,8 @@ Remote MCP servers and provider-hosted tools can move execution outside your pro
 - Prefer allowlisted MCP servers and pinned server configuration.
 - Scope MCP credentials to the minimum tenant, project, and action set.
 - Review tool schemas before allowing provider-managed approvals.
+- Treat MCP annotations as untrusted hints. Every discovered MCP tool requires approval by default, including tools annotated with `readOnlyHint=true`; annotations never grant trust.
+- Only bypass approval with an application-owned exact-name allowlist (`trusted_tools={...}`) after authenticating and reviewing the pinned MCP server and tool. HTTP `remote_tool(...)` follows the same fail-closed default; `requires_approval=False` is an explicit application trust decision.
 - Persist provider approval requests and user decisions when a hosted tool can access remote data.
 - Disable or gate remote MCP, computer use, code execution, file search, and toolsets for tenants that have not accepted those risks.
 - Keep request IDs, session IDs, run IDs, and provider response IDs in audit records.

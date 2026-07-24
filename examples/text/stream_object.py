@@ -13,7 +13,7 @@ class Recipe(BaseModel):
 async def main() -> None:
     provider = create_openai()
     result = stream_object(
-        model=provider("gpt-5.4-mini"),
+        model=provider("gpt-5.6-terra"),
         prompt="Return a tiny JSON recipe with title and servings.",
         schema=Recipe,
     )

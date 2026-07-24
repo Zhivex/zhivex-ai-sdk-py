@@ -66,28 +66,37 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
 
     async def test_default_model_catalog_tracks_reference_models(self) -> None:
         expected = [
+            ("openai", "gpt-5.6-sol", {"reasoning", "tools", "vision"}),
+            ("openai", "gpt-5.6-terra", {"reasoning", "tools", "vision"}),
+            ("openai", "gpt-5.6-luna", {"speed", "tools", "vision"}),
             ("openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
             ("openai", "gpt-5.4-mini", {"speed", "tools"}),
             ("openai", "gpt-image-2", {"vision"}),
             ("openai", "gpt-realtime-2.1", {"audio", "speed"}),
+            ("azure-openai", "gpt-5.6-sol", {"reasoning", "tools", "vision"}),
+            ("azure-openai", "gpt-5.6-terra", {"reasoning", "tools", "vision"}),
+            ("azure-openai", "gpt-5.6-luna", {"speed", "tools", "vision"}),
             ("azure-openai", "gpt-5.5", {"reasoning", "tools", "vision"}),
             ("azure-openai", "gpt-chat-latest", {"chat", "tools"}),
             ("azure-openai", "gpt-image-2", {"vision"}),
             ("azure-openai", "gpt-realtime-2.1", {"audio", "speed"}),
             ("azure-openai", "text-embedding-3-large", {"embedding", "retrieval"}),
             ("anthropic", "claude-fable-5", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-mythos-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3.5-flash", {"speed", "tools", "vision"}),
+            ("gemini", "gemini-omni-flash-preview", {"audio", "speed", "tools", "vision"}),
             ("gemini", "gemini-3.1-flash-lite", {"speed", "tools", "vision"}),
             ("gemini", "gemini-3.5-live-translate-preview", {"audio", "translation", "realtime"}),
             ("gemini", "gemini-3.1-flash-live-preview", {"audio", "speed", "vision"}),
             ("gemini", "gemini-3.1-flash-tts-preview", {"audio"}),
             ("gemini", "gemini-3.1-flash-image", {"vision"}),
+            ("gemini", "gemini-3.1-flash-lite-image", {"speed", "vision"}),
             ("gemini", "gemini-3-pro-image", {"reasoning", "vision"}),
-            ("gemini", "veo-3.1-lite-generate-preview", {"speed", "vision"}),
+            ("gemini", "veo-3.1-fast-generate-preview", {"speed", "vision"}),
             ("gemini", "lyria-3-pro-preview", {"audio"}),
             ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
             ("vertex", "gemini-3.5-flash", {"speed", "tools", "vision"}),
@@ -96,18 +105,20 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("vertex", "gemini-3.1-flash-tts-preview", {"audio"}),
             ("vertex", "gemini-3.1-flash-image", {"vision"}),
             ("vertex", "gemini-3-pro-image", {"reasoning", "vision"}),
-            ("vertex", "veo-3.1-lite-generate-preview", {"speed", "vision"}),
+            ("vertex", "veo-3.1-fast-generate-preview", {"speed", "vision"}),
             ("vertex", "lyria-3-pro-preview", {"audio"}),
             ("bedrock", "anthropic.claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-5", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.7-max", {"reasoning", "tools"}),
+            ("qwen", "qwen3.7-max-2026-06-08", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.7-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.6-plus", {"reasoning", "tools", "vision"}),
             ("qwen", "text-embedding-v4", {"embedding", "retrieval"}),
             ("qwen", "qwen3-asr-flash", {"audio", "speed"}),
             ("qwen", "qwen3-tts-instruct-flash", {"audio"}),
+            ("kimi", "kimi-k3", {"reasoning", "tools", "vision"}),
             ("kimi", "kimi-k2.6", {"reasoning", "tools", "vision"}),
         ]
 
@@ -122,6 +133,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(default_model_catalog.find("vertex", "gemini-flash-latest").model_id, "gemini-3.5-flash")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("vertex", "gemini-3.1-flash-lite-preview").model_id, "gemini-3.1-flash-lite")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("openai", "gpt-realtime").model_id, "gpt-realtime-2.1")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("openai", "gpt-5.6").model_id, "gpt-5.6-sol")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("azure-openai", "gpt-5.6").model_id, "gpt-5.6-sol")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("openai", "gpt-image-1.5").model_id, "gpt-image-2")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("azure-openai", "chat-latest").model_id, "gpt-chat-latest")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("azure-openai", "gpt-realtime").model_id, "gpt-realtime-2.1")  # type: ignore[union-attr]
@@ -130,6 +143,10 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(default_model_catalog.find("anthropic", "claude-opus-4-7").model_id, "claude-opus-4-8")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id, "claude-haiku-4-5-20251001")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-max-2026-05-20").model_id, "qwen3.7-max")  # type: ignore[union-attr]
+        self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-max-2026-06-08").model_id, "qwen3.7-max-2026-06-08")  # type: ignore[union-attr]
+        self.assertIsNone(default_model_catalog.find("qwen", "qwen3.7-max-2026-05-17"))
+        self.assertIsNone(default_model_catalog.find("anthropic", "claude-sonnet-4-20250514"))
+        self.assertIsNone(default_model_catalog.find("gemini", "imagen-4.0-generate-001"))
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.7-plus-2026-05-26").model_id, "qwen3.7-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.6-plus-2026-04-02").model_id, "qwen3.6-plus")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3.5-plus-2026-04-20").model_id, "qwen3.5-plus")  # type: ignore[union-attr]

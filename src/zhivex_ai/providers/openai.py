@@ -372,6 +372,15 @@ def openai_apply_patch_tool(**extra: Any) -> HostedToolDefinition:
     return openai_hosted_tool("apply_patch", name="apply_patch", tool_class="code-execution", **extra)
 
 
+def openai_programmatic_tool_calling_tool(**extra: Any) -> HostedToolDefinition:
+    return openai_hosted_tool(
+        "programmatic_tool_calling",
+        name="programmatic_tool_calling",
+        tool_class="code-execution",
+        **extra,
+    )
+
+
 def openai_computer_use_tool(
     *,
     environment: str | None = None,
@@ -569,6 +578,9 @@ def openai_response_options(
     truncation: str | dict[str, Any] | None = None,
     user: str | None = None,
     safety_identifier: str | None = None,
+    reasoning: dict[str, Any] | None = None,
+    prompt_cache_options: dict[str, Any] | None = None,
+    multi_agent: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     resolved_previous_response_id = previous_response_id or get_openai_response_id(previous_response)
@@ -586,6 +598,9 @@ def openai_response_options(
             "truncation": deepcopy(truncation),
             "user": user,
             "safety_identifier": safety_identifier,
+            "reasoning": _copy_dict(reasoning),
+            "prompt_cache_options": _copy_dict(prompt_cache_options),
+            "multi_agent": _copy_dict(multi_agent),
             **deepcopy(extra),
         }
     )

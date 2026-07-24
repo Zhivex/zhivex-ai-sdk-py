@@ -21,25 +21,74 @@ Related documents:
 
 ### Added
 
-- Added current catalog guidance for OpenAI GPT Realtime 2.1, Azure OpenAI `gpt-chat-latest`, Anthropic Claude Sonnet 5, and stable Gemini/Vertex `gemini-3.1-flash-lite`.
+- None.
 
 ### Changed
 
-- Updated Anthropic Sonnet 5 reasoning support to use the adaptive-thinking `ReasoningConfig(effort=...)` path.
-- Clarified that GPT-5.6 is not promoted into default OpenAI catalog guidance while official availability remains limited preview.
+- None.
 
 ### Fixed
 
-- Raised known-vulnerable optional/development and CI tooling floors, including `setuptools>=83.0.0`, and added a dependency-audit release gate.
-- Split package building from trusted publishing so only protected publish jobs receive PyPI OIDC permission, with GitHub Actions pinned to immutable commits.
-- Release evidence now records the source commit, working-tree state, tool versions, and SHA256 digests for built artifacts.
-- Required local-tool approvals now fail closed when no `approval_policy` is configured.
-- Approval resume now atomically claims pending work in the in-memory, SQLite, and Postgres run stores, preventing concurrent workers from executing the same approved tool twice.
-- Packaged-skill registry installs now require explicit remote-code trust, HTTPS/same-origin artifacts, bounded downloads and extraction, safe archive paths, and an installed-content checksum; generated agent tools also require approval for code execution, while skill permissions are documented as guardrails rather than an OS sandbox.
-- Provider-returned download URLs now reject legacy numeric/private hosts and Qwen audio downloads are constrained to the configured provider host or Alibaba Cloud domains.
-- HTTP response and UI-message request limits are enforced incrementally while data is read instead of after an unbounded buffer allocation.
-- The production FastAPI agent example now fails closed on authentication/tenant/model configuration and applies tenant-scoped storage, bounded inputs, sanitized gateway attempts, and rate limiting.
-- Hardened beta skill packages with explicit remote-code trust, HTTPS-only remote registries outside loopback, bounded downloads/extraction, archive and package-path validation, lockfile content verification, and entrypoint imports covered by the declared network policy.
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.12.0
+
+### Added
+
+- Added current catalog guidance for OpenAI/Azure GPT-5.6 Sol/Terra/Luna, restricted-access Anthropic Claude Mythos 5, Gemini Omni Flash and Flash-Lite Image, multimodal Qwen3.7 Max, and Kimi K3.
+- Added beta `openai_programmatic_tool_calling_tool()` plus callable-tool `output_schema` and `allowed_callers` mapping, including replay-safe `program`, nested `caller`, function-output, and `program_output` handling.
+- Added beta `anthropic_web_fetch_tool()` with the current Anthropic web-fetch contract.
+- Added a `0.12.0` release plan focused on current provider contracts and model guidance.
+- Added a production-oriented agent onboarding guide, explicit stable exports for agent results/streams, tools, handoffs, Qwen, and Kimi, plus strict live-smoke and install-from-artifact release gates.
+- Added an opt-in strict agent-first live smoke that executes `run_agent(...)`, validates a real local tool call/result loop, and redacts configured secrets from failure output.
+- Added isolated Postgres integration coverage for complete agent persistence plus concurrent idempotency and approval claims.
+- Added versioned, revisioned `AgentRunState` persistence and explicit stale approval-resume claim reconciliation with `fail_agent_run_resume_claim(...)`.
+- Added `AgentRunCancelled`, raised when an operator cancellation atomically wins against an active worker.
+- Added `AgentEventDeliveryError`, which identifies the run/event and whether durable terminal state was already committed when an application callback failed.
+- Added `ToolExecutionOutcomeUnknown` and idempotency/deadline fields on `ToolExecutionContext` so timed-out external operations are explicit and reconcilable.
+
+### Changed
+
+- Bumped the package version to `0.12.0` while keeping the package in Beta.
+- Updated Qwen Responses reasoning to send all seven supported `reasoning.effort` values instead of deprecated `enable_thinking`.
+- Updated Qwen Responses to use Alibaba Cloud Model Studio's current `/compatible-mode/v1/responses` path, validate Web Extractor/tool-choice constraints before requests, and document regional Batch model limits.
+- Updated Anthropic hosted-tool defaults to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`; expanded adaptive-thinking and mid-conversation system-message rules for current model families.
+- Updated Kimi K3 to its distinct always-on reasoning contract with `reasoning_effort=low|high|max`, multimodal inputs, strict structured output, sampling validation, and reasoning-content continuation.
+- Updated recommended OpenAI examples to GPT-5.6 Terra while keeping older catalog entries available for compatibility.
+- Agent safety policies now apply configured redaction, execution options, and step/tool budgets to the actual runtime instead of acting only as descriptive helpers.
+- Remote HTTP and MCP tools now require approval by default; only an explicit HTTP opt-out or an exact MCP `trusted_tools` allowlist entry grants trust.
+- Tool timeouts now stop agent execution instead of allowing the model to continue after a side effect whose outcome is uncertain.
+- Workflow suspension is represented explicitly and `fail_fast` cancels cooperative sibling tasks instead of letting pending branches continue.
+- Built-in run stores now enforce compare-and-swap updates, atomic cancellation, terminal-state immutability, and unique non-null idempotency keys.
+
+### Fixed
+
+- Corrected current Gemini/Veo, Qwen snapshot, retired Anthropic Sonnet, and deprecated Imagen catalog guidance.
+- Fixed Qwen mixed text/image Responses inputs to emit `input_text` alongside `input_image`.
+- Fixed Qwen TTS downloads by upgrading allowlisted official signed HTTP URLs to HTTPS before the existing SSRF/host validation, without permitting untrusted hosts.
+- Fixed Qwen live agent smoke schemas to use closed Pydantic objects and accept the exact success token with or without its optional final period.
+- Preserved provider metadata on tool execution results so nested programmatic calls keep their `caller` linkage through serialization and replay.
+- Made idempotency-key acquisition atomic in built-in run stores and restored the original persisted session/run identity when a key is reused.
+- Bound durable approvals to a fingerprint of the complete tool definition and executor state, and reject legacy or changed tools before side effects run.
+- Prevented a late worker completion from overwriting a run that an operator already cancelled.
+- Prevented event callback failures from rewriting an already committed terminal run, and persist an explicit failed run when delivery fails before the terminal commit.
+- Preflighted approval-claim recovery capabilities before executing resumed tools and reconciled a parent claim when its resumed child is cancelled.
+- Kept the base custom `AgentRunStore` protocol source-compatible; atomic idempotency, cancellation, approval, and reconciliation methods are capability contracts required only when those features are used.
+- Preserved completed tool results when a later call in the same model response suspends for approval; approval-capable batches execute sequentially so later side effects cannot race ahead.
+- Redacted remote/MCP credentials, sensitive URLs, provider options, and raw responses from persisted checkpoints and checkpoint events.
+- Accumulated usage, steps, tool results, artifacts, provider/model identity, and wall-clock limits across direct handoffs.
+- Propagated MCP `isError` results as tool failures, moved blocking synchronous tools off the event loop, and made absent approval-policy decisions fail closed.
+- Hardened release workflows to verify exact-version wheel/sdist metadata, tag ancestry, optional extras, Postgres dependencies, strict smoke execution, Twine checks, and PyPI/TestPyPI pre-publish gates.
+- Blocked PyPI/TestPyPI Trusted Publisher jobs on a protected, installed-wheel agent tool smoke against at least one configured real provider.
+- Raised optional API/MCP and development `click` floors to exclude the affected 8.3.2 release reported by the release security gate.
 
 ### Deprecated
 
@@ -55,6 +104,7 @@ Related documents:
 
 - Added durable human-in-the-loop agent approvals with `ApprovalDecision.require_human(...)`, persisted `PendingApproval` records, `get_pending_agent_approvals(...)`, and `resume_agent_run(...)`.
 - Added `UIMessageToolApprovalChunk` so `to_ui_message_stream(...)` can preserve agent approval requests for frontend/SSE consumers.
+- Added current catalog guidance for OpenAI GPT Realtime 2.1, Azure OpenAI `gpt-chat-latest`, Anthropic Claude Sonnet 5, and stable Gemini/Vertex `gemini-3.1-flash-lite`.
 - Added a `0.11.0` release plan focused on production agent apps.
 
 ### Changed
@@ -63,12 +113,24 @@ Related documents:
 - Added `stream_agent(..., idempotency_key=...)` parity with `run_agent(...)` for retry-safe streaming agent APIs backed by run stores.
 - Promoted the local-tool approval lifecycle types and helpers into the documented stable surface when backed by the production run-store contract.
 - Clarified production agent docs around suspended runs, pending approvals, and the distinction between `resume_agent(...)` and `resume_agent_run(...)`.
+- Updated Anthropic Sonnet 5 reasoning support to use the adaptive-thinking `ReasoningConfig(effort=...)` path.
+- Clarified that GPT-5.6 is not promoted into default OpenAI catalog guidance while official availability remains limited preview.
 
 ### Fixed
 
 - Preserved serialized `AgentRunStep.messages` when deserializing stored run state so suspended runs retain enough context for approval resume and audit.
 - Covered durable approval denial/resume behavior so rejected pending approvals persist as denied tool results and clear the pending queue.
 - Normalized all Gemini callable-tool schemas before sending `functionDeclarations`, so strict Pydantic schemas with `additionalProperties: false` work in live agent tool loops.
+- Raised known-vulnerable optional/development and CI tooling floors, including `setuptools>=83.0.0`, and added a dependency-audit release gate.
+- Split package building from trusted publishing so only protected publish jobs receive PyPI OIDC permission, with GitHub Actions pinned to immutable commits.
+- Release evidence now records the source commit, working-tree state, tool versions, and SHA256 digests for built artifacts.
+- Required local-tool approvals now fail closed when no `approval_policy` is configured.
+- Approval resume now atomically claims pending work in the in-memory, SQLite, and Postgres run stores, preventing concurrent workers from executing the same approved tool twice.
+- Packaged-skill registry installs now require explicit remote-code trust, HTTPS/same-origin artifacts, bounded downloads and extraction, safe archive paths, and an installed-content checksum; generated agent tools also require approval for code execution, while skill permissions are documented as guardrails rather than an OS sandbox.
+- Provider-returned download URLs now reject legacy numeric/private hosts and Qwen audio downloads are constrained to the configured provider host or Alibaba Cloud domains.
+- HTTP response and UI-message request limits are enforced incrementally while data is read instead of after an unbounded buffer allocation.
+- The production FastAPI agent example now fails closed on authentication/tenant/model configuration and applies tenant-scoped storage, bounded inputs, sanitized gateway attempts, and rate limiting.
+- Hardened beta skill packages with explicit remote-code trust, HTTPS-only remote registries outside loopback, bounded downloads/extraction, archive and package-path validation, lockfile content verification, and entrypoint imports covered by the declared network policy.
 
 ### Deprecated
 
