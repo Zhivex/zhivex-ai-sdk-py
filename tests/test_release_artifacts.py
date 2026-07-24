@@ -235,5 +235,5 @@ class ReleaseArtifactToolingTests(TestCase):
         for workflow in [publish, test_publish]:
             self.assertIn("fetch-depth: 0", workflow)
             self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main', workflow)
-            self.assertIn("PYTHON=python make release-check", workflow)
+            self.assertIn("make PYTHON=python release-check", workflow)
             self.assertIn(".[dev,postgres,mcp,api,otel,docx]", workflow)

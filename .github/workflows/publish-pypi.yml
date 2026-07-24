@@ -54,7 +54,7 @@ jobs:
         run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev,postgres,mcp,api,otel,docx]"
 
       - name: Run release gates
-        run: PYTHON=python make release-check
+        run: make PYTHON=python release-check
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
