@@ -24,6 +24,8 @@ Tier-1 setup details, env vars, and smoke commands live in [providers/tier-1.md]
 
 DeepSeek is deferred for Python GA. Ollama, Bedrock, and OpenRouter remain available according to their support-matrix tier, but they are not part of the current tier-1 portable production promise.
 
+Direct Anthropic Messages support includes the fixed `claude-opus-5` ID. This does not imply Opus 5 support through the current Bedrock Converse adapter; model-specific thinking, tool, and service-tier limits are documented in the tier-1 guide.
+
 ## Local Setup
 
 For a single provider, fill only that provider's variables in `.env` and scope smoke:

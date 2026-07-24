@@ -85,6 +85,8 @@ When you want fallback routing in the API layer:
 
 The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. Anthropic and vLLM are now part of the tier-1 text-generation story as well.
 
+For direct Anthropic Opus 5 routes, use the fixed `claude-opus-5` ID and let adaptive thinking remain the default unless the endpoint deliberately selects a supported effort. Do not configure non-default sampling, assistant prefill, server-side Web Fetch, or Priority Tier for this model. Keep Bedrock routing separate because the current Bedrock Converse adapter does not claim Opus 5.
+
 For the strongest compatibility story, prefer tier-1 providers for the API paths you want to treat as part of your long-term contract.
 
 For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than vLLM custom endpoints. Text, streaming, structured output/tools, embeddings, transcription, and realtime ASR are supported through the OpenAI-compatible server when the served model/task supports them; custom endpoints such as tokenize, rerank, classify, and score should stay behind app-owned code if needed.

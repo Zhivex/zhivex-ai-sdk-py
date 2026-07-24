@@ -83,6 +83,7 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("azure-openai", "text-embedding-3-large", {"embedding", "retrieval"}),
             ("anthropic", "claude-fable-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-mythos-5", {"reasoning", "tools", "vision"}),
+            ("anthropic", "claude-opus-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-opus-4-8", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),

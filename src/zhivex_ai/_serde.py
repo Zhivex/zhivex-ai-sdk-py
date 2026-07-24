@@ -266,6 +266,7 @@ def deserialize_content_part(payload: dict[str, Any]) -> Any:
         return CodeExecutionResultPart(
             output=str(payload.get("output", "")),
             outcome=payload.get("outcome"),
+            provider_metadata=dict(payload.get("provider_metadata") or {}),
         )
     raise TypeError(f"Unsupported content part type: {part_type}")
 

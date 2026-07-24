@@ -739,6 +739,9 @@ def stream_text(
                         finish_reason = event.finish_reason
                         provider_finish_reason = event.provider_finish_reason
                         usage = event.usage
+                        if finish_reason == "refusal":
+                            text_buffer = ""
+                            assistant_parts = [part for part in assistant_parts if part.type != "text"]
 
                 response_messages = [ModelMessage(role="assistant", parts=assistant_parts)] if assistant_parts else []
                 response = GenerateResult(

@@ -185,7 +185,7 @@ def _contract_cases() -> list[ProviderContractCase]:
         ),
         ProviderContractCase(
             provider_name="anthropic",
-            model_id="claude-sonnet-5",
+            model_id="claude-opus-5",
             create_provider=lambda fetch: create_anthropic(api_key="test", fetch=fetch),
             response_family="anthropic",
             expected_request_marker="/messages",

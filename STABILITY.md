@@ -96,7 +96,7 @@ The current tier-1 provider story for the stable surface is:
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
 
-Anthropic is included in the tier-1 set for text-generation API paths. Current adaptive-thinking, mid-conversation system-message, web search/fetch, and code-execution behavior is provider-native and model/version dependent. Embeddings, transcription, and speech remain outside the current Anthropic provider surface.
+Anthropic is included in the tier-1 set for text-generation API paths. The stable factory supports direct `claude-opus-5` Messages calls with model-specific adaptive-thinking, effort, tool-loop replay, refusal, and mid-conversation system-section validation. Hosted web search/code execution and raw server-side fallback remain provider-native beta behavior; Opus 5 Web Fetch, Priority Tier, assistant prefill, and Opus 5 through the current Bedrock Converse adapter are not claimed. Embeddings, transcription, and speech remain outside the current Anthropic provider surface.
 
 Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai(...)` supports either API key authentication or Microsoft Entra ID token/provider authentication. Its native Responses, Conversations, and File Search store lifecycle clients are beta provider-specific surfaces exposed through `provider.native` / the bundle helper methods, not additions to the stable portable contract.
 
