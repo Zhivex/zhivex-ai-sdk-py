@@ -49,6 +49,7 @@ Related documents:
 ### Changed
 
 - Promoted DeepSeek to the tier-1 portable provider set while keeping unsupported vision, files, embeddings, audio, moderation, and hosted-tool surfaces explicit.
+- Bumped the package version to `0.13.0` for the DeepSeek provider release.
 
 ### Fixed
 
