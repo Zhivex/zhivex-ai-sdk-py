@@ -35,6 +35,6 @@ Legend:
 
 ## GA Boundary
 
-Python GA should include the stable public API surface, tier-1 provider story, agent core runtime, gateway contracts, production API patterns, and release/install verification. DeepSeek is deferred from Python GA. vLLM remains a tier-1 Python provider for SDK primitives exposed by its OpenAI-compatible server.
+Python GA should include the stable public API surface, tier-1 provider story, agent core runtime, gateway contracts, production API patterns, and release/install verification. DeepSeek now participates in the tier-1 portable provider contract for text, streaming, structured output, tools, and reasoning. vLLM remains a tier-1 Python provider for SDK primitives exposed by its OpenAI-compatible server.
 
 The SDK orchestrates. Applications own business policy, durable vertical storage, approval UI/authorization, compliance systems, and provider selection policy.

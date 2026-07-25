@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import GatewayConfig, GatewayError, GatewayImageAttachment, GatewayMessage, GatewayModelTarget, create_gateway
 from zhivex_ai.errors import ProviderHTTPError
+from zhivex_ai.gateway import supports_vision_input
 from zhivex_ai.messages import create_text_message
 from zhivex_ai.providers.base import ProviderAdapter
 from zhivex_ai.types import GenerateResult, ModelCapabilities, ModelGenerateInput, StreamFinishEvent, StreamTextDeltaEvent, TokenUsage
@@ -130,6 +131,10 @@ class Payload(BaseModel):
 
 
 class GatewayTests(IsolatedAsyncioTestCase):
+    def test_deepseek_gateway_targets_are_text_only(self) -> None:
+        self.assertFalse(supports_vision_input("deepseek", "deepseek-v4-flash"))
+        self.assertFalse(supports_vision_input("deepseek", "deepseek-v4-pro"))
+
     async def test_gateway_falls_back_to_second_provider(self) -> None:
         gateway = create_gateway(
             GatewayConfig(

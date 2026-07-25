@@ -142,6 +142,7 @@ files = [
   "src/zhivex_ai/providers/anthropic.py",
   "src/zhivex_ai/providers/azure_openai.py",
   "src/zhivex_ai/providers/base.py",
+  "src/zhivex_ai/providers/deepseek.py",
   "src/zhivex_ai/providers/gemini.py",
   "src/zhivex_ai/providers/openai.py",
   "src/zhivex_ai/providers/vertex.py",

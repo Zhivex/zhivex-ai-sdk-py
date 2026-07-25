@@ -14,6 +14,7 @@ from zhivex_ai import (
     create_anthropic,
     create_azure_openai,
     create_bedrock,
+    create_deepseek,
     create_gemini,
     create_kimi,
     create_ollama,
@@ -46,6 +47,7 @@ class ProviderSupportTests(TestCase):
                 create_gemini(api_key="test"),
                 create_vertex(access_token="test", project_id="project"),
                 create_bedrock(client=_FakeBedrockClient()),
+                create_deepseek(api_key="test"),
                 create_openrouter(api_key="test"),
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
@@ -63,6 +65,7 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["gemini"], ("portable", True))
         self.assertEqual(tiers["vertex"], ("portable", True))
         self.assertEqual(tiers["bedrock"], ("native-only", False))
+        self.assertEqual(tiers["deepseek"], ("portable", True))
         self.assertEqual(tiers["openrouter"], ("native-only", False))
         self.assertEqual(tiers["qwen"], ("portable", True))
         self.assertEqual(tiers["kimi"], ("portable", True))
@@ -74,6 +77,8 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["vllm"].realtime)
         self.assertTrue(native["vllm"].transcription)
         self.assertFalse(native["kimi"].responses)
+        self.assertFalse(native["deepseek"].embeddings)
+        self.assertFalse(native["deepseek"].files)
         self.assertTrue(native["openai"].images)
         self.assertTrue(native["openai"].uploads)
         self.assertTrue(native["openai"].moderations)
@@ -116,6 +121,8 @@ class ProviderSupportTests(TestCase):
         self.assertFalse(native["qwen"].file_search)
         self.assertEqual(agent["kimi"].support_tier, "tier-b")
         self.assertTrue(agent["kimi"].toolsets)
+        self.assertEqual(agent["deepseek"].support_tier, "tier-b")
+        self.assertTrue(agent["deepseek"].tool_choice_none)
         self.assertTrue(native["bedrock"].tools)
         self.assertEqual(agent["bedrock"].support_tier, "tier-b")
         self.assertTrue(agent["bedrock"].tool_choice_none)
@@ -125,9 +132,11 @@ class ProviderSupportTests(TestCase):
         self.assertIn("- `openai`", markdown)
         self.assertIn("- `vertex`", markdown)
         self.assertIn("- `vllm`", markdown)
+        self.assertIn("- `deepseek`", markdown)
         self.assertIn("### Portable Support", markdown)
         self.assertIn("| openai | portable | Yes |", markdown)
         self.assertIn("| vllm | portable | Yes |", markdown)
+        self.assertIn("| deepseek | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
         self.assertIn("### Native Extras", markdown)
         self.assertIn(
@@ -141,6 +150,7 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| bedrock | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
         self.assertIn("| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |", markdown)
         self.assertIn("| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |", markdown)
+        self.assertIn("| deepseek | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(
@@ -150,13 +160,27 @@ class ProviderSupportTests(TestCase):
                 create_anthropic(api_key="test"),
                 create_gemini(api_key="test"),
                 create_vertex(access_token="test", project_id="project"),
+                create_deepseek(api_key="test"),
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
                 create_vllm(api_key="test"),
             ]
         )
 
-        self.assertEqual(TIER_1_PROVIDERS, ("openai", "anthropic", "azure-openai", "gemini", "vertex", "qwen", "kimi", "vllm"))
+        self.assertEqual(
+            TIER_1_PROVIDERS,
+            (
+                "openai",
+                "anthropic",
+                "azure-openai",
+                "gemini",
+                "vertex",
+                "qwen",
+                "kimi",
+                "deepseek",
+                "vllm",
+            ),
+        )
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))

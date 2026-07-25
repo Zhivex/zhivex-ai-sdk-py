@@ -22,7 +22,7 @@ test-core:
 	$(PYTHON) -m pytest tests/test_core.py tests/test_gateway.py tests/test_runtime.py tests/test_transport.py tests/test_http.py tests/test_catalog_and_middleware.py -q
 
 test-providers:
-	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_kimi_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_hosted_tools.py tests/test_realtime.py -q
+	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_deepseek_provider.py tests/test_kimi_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_hosted_tools.py tests/test_realtime.py -q
 
 test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q

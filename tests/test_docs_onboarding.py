@@ -83,7 +83,7 @@ class DocsOnboardingTests(TestCase):
         matrix = (ROOT / "docs/PARITY_MATRIX.md").read_text("utf-8")
         for label in ["Implemented", "Documented", "Offline-tested", "Live-smoked", "Stability"]:
             self.assertIn(label, matrix)
-        self.assertIn("DeepSeek is deferred from Python GA", matrix)
+        self.assertIn("DeepSeek now participates in the tier-1 portable provider contract", matrix)
         self.assertIn("vLLM remains a tier-1 Python provider", matrix)
         data = json.loads((ROOT / "docs/parity_matrix.json").read_text("utf-8"))
         self.assertEqual(data["columns"], ["implemented", "documented", "offline_tested", "live_smoked", "stability"])

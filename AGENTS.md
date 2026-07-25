@@ -53,7 +53,7 @@ This repo has a deliberately narrow stable surface.
 
 Stable APIs currently center on:
 
-- tier-1 provider factories: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, vLLM
+- tier-1 provider factories: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, vLLM
 - foundation primitives: text, streaming, structured output, embeddings, grounded text
 - agent runtime: `Agent`, `run_agent`, `stream_agent`, `resume_agent`
 - gateway contracts

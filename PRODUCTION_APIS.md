@@ -35,7 +35,7 @@ For production-facing API servers:
 - bind authenticated identities to a tenant-owned data partition; never trust a tenant header by itself
 - enforce request-body, field-length, concurrency, and rate limits before invoking a provider
 - import supported APIs from `zhivex_ai`
-- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM
+- prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, and vLLM
 - validate request bodies with Pydantic
 - pass `timeout_ms` explicitly from the API layer into SDK calls
 - map SDK exceptions into stable HTTP error responses
@@ -83,11 +83,13 @@ When you want fallback routing in the API layer:
 - return the selected provider and model in the JSON response
 - treat routing as application policy, not client policy
 
-The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. Anthropic and vLLM are now part of the tier-1 text-generation story as well.
+The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. DeepSeek can participate in text-only routes through `create_deepseek()`; gateway vision requests skip it rather than dropping image inputs.
 
 For direct Anthropic Opus 5 routes, use the fixed `claude-opus-5` ID and let adaptive thinking remain the default unless the endpoint deliberately selects a supported effort. Do not configure non-default sampling, assistant prefill, server-side Web Fetch, or Priority Tier for this model. Keep Bedrock routing separate because the current Bedrock Converse adapter does not claim Opus 5.
 
 For the strongest compatibility story, prefer tier-1 providers for the API paths you want to treat as part of your long-term contract.
+
+For DeepSeek-backed APIs, pin a current V4 model ID and let the adapter own thinking/tool compatibility. Do not expose arbitrary `provider_options` to clients, and do not route image, embedding, audio, moderation, or hosted-tool workloads to DeepSeek because those surfaces are outside this SDK's DeepSeek contract.
 
 For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than vLLM custom endpoints. Text, streaming, structured output/tools, embeddings, transcription, and realtime ASR are supported through the OpenAI-compatible server when the served model/task supports them; custom endpoints such as tokenize, rerank, classify, and score should stay behind app-owned code if needed.
 

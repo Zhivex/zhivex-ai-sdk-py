@@ -17,6 +17,7 @@ DOCUMENTED_STABLE_EXPORTS = {
     "create_openai",
     "create_anthropic",
     "create_azure_openai",
+    "create_deepseek",
     "create_gemini",
     "create_kimi",
     "create_qwen",

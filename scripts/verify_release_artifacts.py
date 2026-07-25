@@ -147,6 +147,7 @@ def _smoke_code(expected_version: str) -> str:
             Agent,
             SequentialAgent,
             WorkflowStep,
+            create_deepseek,
             create_mock_language_model,
             create_text_message,
             generate_text,
@@ -157,8 +158,11 @@ def _smoke_code(expected_version: str) -> str:
 
         assert metadata.version("zhivex-ai-sdk") == {expected_version!r}
         assert "Agent" in zhivex_ai.__all__
+        assert "create_deepseek" in zhivex_ai.__all__
         assert "generate_text" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
+        deepseek = create_deepseek(api_key="artifact-smoke-key")
+        assert deepseek("deepseek-v4-flash").provider == "deepseek"
 
         async def main():
             model = create_mock_language_model(responses=[GenerateResult(text="hello", finish_reason="stop")])

@@ -78,6 +78,7 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             run_live_smoke._run_ollama,
             run_live_smoke._run_qwen,
             run_live_smoke._run_kimi,
+            run_live_smoke._run_deepseek,
             run_live_smoke._run_vllm,
         ]
 
@@ -196,6 +197,32 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             result = await run_live_smoke._run_qwen()
 
         self.assertEqual(result, ("qwen", True, "ok: qwen3.7-plus, region=intl", False))
+
+    async def test_deepseek_smoke_disables_thinking_for_exact_token_check(self) -> None:
+        provider = MagicMock()
+        provider.return_value = object()
+        response = GenerateResult(
+            text="DEEPSEEK_SMOKE_OK.",
+            messages=[create_text_message("assistant", "DEEPSEEK_SMOKE_OK.")],
+            finish_reason="stop",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "DEEPSEEK_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_deepseek", return_value=provider),
+            patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)) as generate,
+        ):
+            result = await run_live_smoke._run_deepseek()
+
+        self.assertEqual(result, ("deepseek", True, "ok: deepseek-v4-flash", False))
+        self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
 
     async def test_agent_tool_smoke_rejects_a_marker_embedded_in_extra_text(self) -> None:
         model = create_mock_language_model(

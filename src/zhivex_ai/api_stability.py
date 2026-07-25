@@ -74,6 +74,7 @@ STABLE_EXPORTS = frozenset(
         "create_agent_run_snapshot",
         "create_anthropic",
         "create_azure_openai",
+        "create_deepseek",
         "create_gateway",
         "create_gemini",
         "create_kimi",
@@ -526,6 +527,7 @@ _CATEGORY_BY_MODULE = {
     "providers.azure_openai": "provider",
     "providers.base": "provider",
     "providers.bedrock": "provider",
+    "providers.deepseek": "provider",
     "providers.gemini": "provider",
     "providers.kimi": "provider",
     "providers.ollama": "provider",
@@ -546,6 +548,7 @@ _CATEGORY_BY_MODULE = {
 
 _NOTES_BY_EXPORT = {
     "create_bedrock": "native-only provider",
+    "create_deepseek": "tier-1 provider; native provider options remain beta",
     "create_kimi": "tier-1 provider; native extras remain beta",
     "create_ollama": "compatibility provider",
     "create_openrouter": "native-only provider",

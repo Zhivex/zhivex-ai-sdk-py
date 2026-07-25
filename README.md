@@ -85,7 +85,7 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
 
-For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
+For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
@@ -103,6 +103,7 @@ These providers back the stable surface for production API work in this SDK toda
 - `vertex`
 - `qwen`
 - `kimi`
+- `deepseek`
 - `vllm`
 
 ### Portable Support
@@ -112,6 +113,7 @@ These providers back the stable surface for production API work in this SDK toda
 | anthropic | portable | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No |
 | azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
+| deepseek | portable | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No |
 | gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | kimi | portable | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No |
 | ollama | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
@@ -128,6 +130,7 @@ These providers back the stable surface for production API work in this SDK toda
 | anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | azure-openai | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No |
 | bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No |
+| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes |
 | kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No |
 | ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
@@ -144,6 +147,7 @@ These providers back the stable surface for production API work in this SDK toda
 | anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |
 | azure-openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
 | bedrock | tier-b | Yes | No | No | No | No | No | No | No |
+| deepseek | tier-b | Yes | No | No | No | No | No | No | No |
 | gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 | kimi | tier-b | Yes | No | No | No | No | No | No | Yes |
 | ollama | tier-c | No | No | No | No | No | No | No | No |
@@ -168,7 +172,7 @@ Tool support now follows the same rule everywhere:
 - Claude Opus 5, Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` sections on the Anthropic native path when they follow Anthropic's placement rules. Opus 5 does not support assistant prefill or server-side Web Fetch. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}` and the adapter adds its required beta header.
 - Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason` and `stop_details`; collected partial streaming text is discarded after a refusal. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`. Anthropic server-side fallback remains a beta raw `provider_options` escape hatch.
 - Anthropic hosted-tool helpers now default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. `anthropic_mcp_server()` keeps its compatibility default; opt into current MCP with `version="current"` when the target account/model supports it.
-- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, and vLLM now participate in the tier-1 portable text-generation contract.
+- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, and vLLM now participate in the tier-1 portable text-generation contract.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
@@ -180,6 +184,8 @@ Tool support now follows the same rule everywhere:
 - Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client. Web Extractor requires Web Search; reasoning-enabled requests must leave `tool_choice` on `auto` rather than force a required or named tool. Batch model availability is regional: Singapore currently documents the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
 - Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
 - Kimi native support includes K3 (`kimi-k3`) with always-on reasoning, `reasoning_effort` values `low`/`high`/`max`, native vision, callable tools and strict structured output. K2.6/K2.5 retain their separate `thinking` contract. Moonshot Files, Batch, token estimation and the beta `provider.formulas()` client remain available; embeddings, speech, and transcription are not claimed.
+- DeepSeek uses its official Chat Completions API for portable text generation, streaming, JSON structured output, callable tools, and V4 thinking. `create_deepseek()` reads `DEEPSEEK_API_KEY`, optionally `DEEPSEEK_BASE_URL`, and otherwise targets `https://api.deepseek.com`.
+- The current DeepSeek catalog entries are `deepseek-v4-flash` and `deepseek-v4-pro`. The adapter rejects retired `deepseek-chat` / `deepseek-reasoner` IDs, preserves `reasoning_content` across tool loops, maps portable reasoning effort, and fails fast on combinations that DeepSeek thinking does not accept. Vision, files, embeddings, audio, moderation, and hosted tools are not claimed.
 - Ollama defaults to `base_url="http://localhost:11434/v1"` and `api_key="ollama"` for local compatibility setups. Use `provider.native.*` for Ollama examples and override `OLLAMA_API_KEY` only when you front it with a proxy or remote gateway that requires auth.
 
 ## Installation
@@ -1076,6 +1082,7 @@ The package currently exposes:
 - `create_openrouter()`
 - `create_qwen()`
 - `create_kimi()`
+- `create_deepseek()`
 - `create_ollama()`
 
 Every factory now returns a `ProviderBundle`.
@@ -1100,7 +1107,7 @@ Native usage:
 
 Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
 
-OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot uses its own native Chat Completions adapter because the official Kimi API documents `/v1/chat/completions`, Files, Batch, token estimation, and Formulas as the current production surfaces.
+OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot and DeepSeek use dedicated Chat Completions adapters so their reasoning, tool replay, streaming, and error semantics remain faithful to their official APIs.
 
 Azure OpenAI supports API key authentication and Microsoft Entra ID authentication through the versionless `/openai/v1` route. API key usage reads `AZURE_OPENAI_API_KEY` plus `AZURE_OPENAI_ENDPOINT`; Entra ID usage passes a token or token provider explicitly and is mutually exclusive with API keys.
 
@@ -1219,6 +1226,29 @@ batch = await kimi.batches().create(
 tokens = await kimi.tokens().count(model_id="kimi-k3", prompt="hello")
 tools = await kimi.formulas().toolset(["moonshot/web-search:latest"])
 ```
+
+DeepSeek V4 usage:
+
+```python
+import asyncio
+
+from zhivex_ai import ReasoningConfig, create_deepseek, generate_text
+
+
+async def main() -> None:
+    deepseek = create_deepseek()  # DEEPSEEK_API_KEY
+    result = await generate_text(
+        model=deepseek("deepseek-v4-flash"),
+        prompt="Explain the portable DeepSeek integration in one sentence.",
+        reasoning=ReasoningConfig(effort="high"),
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+DeepSeek thinking is enabled by default for V4. Portable `temperature`, `top_p`, or forced `tool_choice` requests automatically select non-thinking mode unless reasoning was explicitly requested; explicitly combining thinking with an incompatible option fails before network dispatch. Strict callable tools and assistant prefix completion use DeepSeek's beta route automatically. See `examples/text/deepseek_native.py` for text and structured-output usage.
 
 Local Ollama usage follows the same native escape hatch:
 
@@ -1625,7 +1655,7 @@ The example pins the MCP server package, limits its filesystem root, and denies 
 
 See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
-- Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py)
+- Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py), [deepseek_native.py](./examples/text/deepseek_native.py)
 - Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
 - Local vLLM: [vllm_text.py](./examples/text/vllm_text.py)
 - Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
@@ -1645,13 +1675,14 @@ export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
 export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
+export ZHIVEX_SMOKE_DEEPSEEK_MODEL=deepseek-v4-flash
 export ZHIVEX_SMOKE_VLLM_MODEL=your-vllm-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: it requires a real `run_agent(...)` loop to call a local nonce-validation tool exactly once, consume its result, and finish successfully. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider smoke runs from the exact verified wheel before the Trusted Publisher job can start. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: it requires a real `run_agent(...)` loop to call a local nonce-validation tool exactly once, consume its result, and finish successfully. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider smoke runs from the exact verified wheel before the Trusted Publisher job can start. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`. DeepSeek smoke uses `DEEPSEEK_API_KEY` and `ZHIVEX_SMOKE_DEEPSEEK_MODEL`, with optional `DEEPSEEK_BASE_URL` or `ZHIVEX_SMOKE_DEEPSEEK_BASE_URL`.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

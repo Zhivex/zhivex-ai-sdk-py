@@ -26,6 +26,7 @@ The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by 
 - Do not rename, remove, or repurpose public stable exports without a deprecation path.
 - Keep top-level imports from `zhivex_ai` as the primary public entrypoint.
 - Update `src/zhivex_ai/api_stability.py` and its drift tests whenever `zhivex_ai.__all__` changes.
+- New stable provider factories are additive public API changes and must land with provider contracts, support metadata, docs, examples, and artifact-install verification. `create_deepseek` follows that policy.
 
 ## Deprecation workflow
 

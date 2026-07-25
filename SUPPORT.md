@@ -26,6 +26,7 @@ Related documents:
 - Beta workflow agents cover declarative sequential, parallel, and loop orchestration with shared `session.state`, app-owned resume, structured output validation, document artifacts, replay, and evaluation as documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md); CLI/UI/deploy automation is intentionally outside this beta surface.
 - Beta Google native clients cover Gemini/Vertex image, video, music/audio, batch, interaction, and Gemini explicit context-cache workflows where the official Google endpoints expose them. The catalog tracks current Gemini 3.5 Flash plus Gemini 3.5 Live Translate, Gemini 3.1 live, image, TTS, Veo, and Lyria reference IDs. Preview Google models remain subject to Google availability, quota, and deprecation windows.
 - Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Portable Kimi is tier-1 for text, streaming, structured output, and callable tools.
+- DeepSeek is tier-1 for text generation, streaming, JSON structured output, callable tools, and reasoning through its official Chat Completions API. Provider-specific strict-tool/prefix beta routing is supported, while vision, files, embeddings, audio, moderation, and hosted tools are outside the current contract.
 - vLLM is supported as a tier-1 provider for SDK primitives exposed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR support depends on the model/task served by vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the SDK support contract.
 - Tier-1 provider claims are backed by generated support metadata, shared offline contract tests, provider-specific tests, and optional live smoke documentation in [docs/providers/tier-1.md](./docs/providers/tier-1.md).
 - The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
@@ -53,6 +54,7 @@ The current tier-1 providers for the stable production API story are:
 - Vertex
 - Qwen
 - Kimi/Moonshot
+- DeepSeek
 - vLLM
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. The catalog tracks Claude Opus 5, Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8. Opus 5 uses adaptive thinking by default, supports portable effort through `max`, and can disable thinking only through effort `high`; manual budgets and non-default sampling fail before dispatch. Opus 5, Fable 5, Mythos 5, and Opus 4.8 accept valid intermediate system sections. Opus 5 does not support assistant prefill, server-side Web Fetch, or Priority Tier through this integration. Native hosted helpers otherwise default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. Anthropic refusals preserve provider details and normalize to `finish_reason="refusal"`; embeddings, transcription, and speech remain unavailable.
@@ -67,11 +69,11 @@ Qwen is tier-1 for portable text generation, streaming, structured output, calla
 
 Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through the official Chat Completions API. `kimi-k3` is the current catalog reference: it is multimodal, always reasons, accepts `reasoning_effort` values `low`, `high`, or `max`, and rejects incompatible K2 thinking/sampling choices. K2.6/K2.5 keep their legacy `thinking` contract. Files, Batch, token estimation, and Formulas remain beta native clients; portable embeddings, speech, and transcription are not claimed.
 
+DeepSeek is tier-1 for portable text generation, streaming, JSON structured output, callable tools, and reasoning through Chat Completions. The catalog tracks current `deepseek-v4-flash` and `deepseek-v4-pro`; retired `deepseek-chat` and `deepseek-reasoner` IDs fail before dispatch. The adapter preserves `reasoning_content` for tool replay, maps portable reasoning effort, retains provider-specific usage metadata, and routes strict tools or prefix completion to DeepSeek's beta base URL when requested. Vision, files, embeddings, audio, moderation, and hosted tools are not claimed.
+
 vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
 
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.
-
-DeepSeek is deferred and is not part of the tier-1 provider contract.
 
 ## Upgrade expectations
 
