@@ -19,6 +19,7 @@ from zhivex_ai import (  # noqa: E402
     ToolChoiceName,
     create_anthropic,
     create_azure_openai,
+    create_deepseek,
     create_gemini,
     create_kimi,
     create_openai,
@@ -230,6 +231,13 @@ def _contract_cases() -> list[ProviderContractCase]:
             # separately in the provider suite.
             model_id="kimi-k2",
             create_provider=lambda fetch: create_kimi(api_key="test", fetch=fetch),
+            response_family="chat",
+            expected_request_marker="/chat/completions",
+        ),
+        ProviderContractCase(
+            provider_name="deepseek",
+            model_id="deepseek-v4-flash",
+            create_provider=lambda fetch: create_deepseek(api_key="test", fetch=fetch),
             response_family="chat",
             expected_request_marker="/chat/completions",
         ),

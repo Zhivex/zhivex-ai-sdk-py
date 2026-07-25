@@ -19,7 +19,7 @@ Related documents:
 
 These APIs are the supported public contract for application code and production integrations:
 
-- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_vllm`
+- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_deepseek`, `create_vllm`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
@@ -92,6 +92,7 @@ The current tier-1 provider story for the stable surface is:
 - Vertex
 - Qwen
 - Kimi/Moonshot
+- DeepSeek
 - vLLM
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
@@ -103,6 +104,8 @@ Azure OpenAI is tier-1 for the portable production surface. `create_azure_openai
 Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings through the current `/compatible-mode/v1` route. Its hosted tools, raw Responses settings, Files, region-dependent Batch behavior, ASR, and TTS surfaces remain beta provider-specific paths exposed through `provider.native` / bundle helper methods.
 
 Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. K3 `reasoning_effort`, K2 thinking controls, Files, Batch, token estimation, and Formulas remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
+
+DeepSeek is tier-1 for portable text generation, streaming, JSON structured output, callable tools, and reasoning through its Chat Completions API. The stable factory targets the current `deepseek-v4-flash` and `deepseek-v4-pro` model contract, preserves reasoning state across tool loops, and rejects retired model IDs or incompatible thinking options before dispatch. Strict-tool and prefix beta routing plus raw `provider_options` remain provider-specific beta/experimental behavior; vision, files, embeddings, audio, moderation, and hosted tools are not claimed.
 
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 

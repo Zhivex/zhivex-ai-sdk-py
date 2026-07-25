@@ -19,8 +19,10 @@ from zhivex_ai import (  # noqa: E402
     Agent,
     AudioInput,
     LanguageModel,
+    ReasoningConfig,
     create_anthropic,
     create_azure_openai,
+    create_deepseek,
     create_gemini,
     create_kimi,
     create_ollama,
@@ -47,6 +49,7 @@ _SUPPORTED_PROVIDERS = {
     "ollama",
     "qwen",
     "kimi",
+    "deepseek",
     "vllm",
 }
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
@@ -504,6 +507,37 @@ async def _run_kimi() -> tuple[str, bool, str, bool]:
     return ("kimi", True, f"ok: {model}{suffix}", agent_ran)
 
 
+async def _run_deepseek() -> tuple[str, bool, str, bool]:
+    model = os.getenv("ZHIVEX_SMOKE_DEEPSEEK_MODEL")
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    base_url = os.getenv("ZHIVEX_SMOKE_DEEPSEEK_BASE_URL") or os.getenv("DEEPSEEK_BASE_URL")
+    if not api_key or not model:
+        return (
+            "deepseek",
+            False,
+            "skip: set DEEPSEEK_API_KEY and ZHIVEX_SMOKE_DEEPSEEK_MODEL",
+            False,
+        )
+    provider = create_deepseek(api_key=api_key, base_url=base_url)
+    language_model = provider(model)
+    result = await generate_text(
+        model=language_model,
+        prompt="Reply with exactly DEEPSEEK_SMOKE_OK.",
+        reasoning=ReasoningConfig(effort="none"),
+        max_tokens=20,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if not _matches_smoke_token(result.text, "DEEPSEEK_SMOKE_OK"):
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
+    if agent_ran:
+        await _run_agent_tool_smoke(provider="deepseek", model=language_model)
+    suffix = ", agent-tool=ok" if agent_ran else ""
+    return ("deepseek", True, f"ok: {model}{suffix}", agent_ran)
+
+
 async def _run_vllm() -> tuple[str, bool, str, bool]:
     model = os.getenv("ZHIVEX_SMOKE_VLLM_MODEL")
     base_url = os.getenv("ZHIVEX_SMOKE_VLLM_BASE_URL", "http://localhost:8000/v1")
@@ -555,6 +589,8 @@ async def main() -> int:
         checks.append(_run_qwen)
     if _want("kimi", selected):
         checks.append(_run_kimi)
+    if _want("deepseek", selected):
+        checks.append(_run_deepseek)
     if _want("vllm", selected):
         checks.append(_run_vllm)
 

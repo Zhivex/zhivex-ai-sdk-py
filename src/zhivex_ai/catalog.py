@@ -153,6 +153,16 @@ default_model_catalog = create_model_catalog(
             cost_per_1k_tokens=4,
             recommended_for=["reasoning", "tools", "vision"],
         ),
+        ModelCatalogEntry(
+            "deepseek",
+            "deepseek-v4-pro",
+            recommended_for=["chat", "reasoning", "tools"],
+        ),
+        ModelCatalogEntry(
+            "deepseek",
+            "deepseek-v4-flash",
+            recommended_for=["chat", "speed", "reasoning", "tools"],
+        ),
         ModelCatalogEntry("openrouter", "openai/gpt-5.4-mini", aliases=["openai/gpt-4o-mini"], recommended_for=["chat", "tools"]),
         ModelCatalogEntry("bedrock", "anthropic.claude-opus-4-8", aliases=["anthropic.claude-opus-4-6"], recommended_for=["reasoning", "tools", "vision"]),
         ModelCatalogEntry("bedrock", "anthropic.claude-sonnet-5", recommended_for=["chat", "reasoning", "tools", "vision"]),

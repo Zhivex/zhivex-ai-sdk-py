@@ -21,11 +21,12 @@ Related documents:
 
 ### Added
 
-- None.
+- Added stable `create_deepseek()` support for current DeepSeek V4 Chat Completions, including text generation, streaming, JSON structured output, callable tools, reasoning controls, replay-safe `reasoning_content`, provider usage metadata, and retry/error handling.
+- Added DeepSeek tier-1 contracts, gateway routing metadata, model catalog entries, live and installed-wheel smoke coverage, release workflow configuration, and runnable examples.
 
 ### Changed
 
-- None.
+- Promoted DeepSeek to the tier-1 portable provider set while keeping unsupported vision, files, embeddings, audio, moderation, and hosted-tool surfaces explicit.
 
 ### Fixed
 

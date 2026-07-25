@@ -12,7 +12,17 @@ from .generate_text import generate_text, stream_text
 from .types import FinishReason, ModelMessage, TokenUsage
 
 GatewayProviderId = Literal[
-    "openai", "anthropic", "gemini", "vertex", "qwen", "kimi", "bedrock", "ollama", "azure-openai", "openrouter"
+    "openai",
+    "anthropic",
+    "gemini",
+    "vertex",
+    "qwen",
+    "kimi",
+    "deepseek",
+    "bedrock",
+    "ollama",
+    "azure-openai",
+    "openrouter",
 ]
 GatewayRoutingMode = Literal["speed", "balanced", "quality"]
 GatewayTaskIntent = Literal["chat", "reasoning", "tool-heavy"]
@@ -102,6 +112,8 @@ def supports_vision_input(provider: GatewayProviderId, model_id: str) -> bool:
         return "embedding" not in model
     if provider == "bedrock":
         return "nova" in model or "claude-3" in model or "claude-4" in model
+    if provider == "deepseek":
+        return False
     return True
 
 

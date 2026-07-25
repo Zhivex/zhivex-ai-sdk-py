@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (  # noqa: E402
     create_anthropic,
     create_azure_openai,
+    create_deepseek,
     create_gemini,
     create_kimi,
     create_openai,
@@ -49,6 +50,8 @@ def _configured_runs() -> list[tuple[str, Callable[[], Any], str]]:
         runs.append(("qwen", create_qwen, os.environ["ZHIVEX_EXAMPLE_QWEN_MODEL"]))
     if (os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY")) and os.getenv("ZHIVEX_EXAMPLE_KIMI_MODEL"):
         runs.append(("kimi", create_kimi, os.environ["ZHIVEX_EXAMPLE_KIMI_MODEL"]))
+    if os.getenv("DEEPSEEK_API_KEY") and os.getenv("ZHIVEX_EXAMPLE_DEEPSEEK_MODEL"):
+        runs.append(("deepseek", create_deepseek, os.environ["ZHIVEX_EXAMPLE_DEEPSEEK_MODEL"]))
     if os.getenv("ZHIVEX_EXAMPLE_VLLM_MODEL"):
         runs.append(("vllm", create_vllm, os.environ["ZHIVEX_EXAMPLE_VLLM_MODEL"]))
     return runs

@@ -312,6 +312,7 @@ _MODULE_EXPORTS = {
     ),
     "providers.base": ("ProviderBundle", "PortableProviderNamespace"),
     "providers.bedrock": ("create_bedrock",),
+    "providers.deepseek": ("create_deepseek",),
     "providers.gemini": (
         "create_gemini",
         "gemini_code_execution_tool",
@@ -738,6 +739,7 @@ __all__ = [
     "create_bedrock",
     "create_cached_generate_middleware",
     "create_circuit_breaker_middleware",
+    "create_deepseek",
     "create_file_generate_cache",
     "create_gateway",
     "create_gemini",

@@ -25,13 +25,14 @@ export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
 export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
+export ZHIVEX_SMOKE_DEEPSEEK_MODEL=deepseek-v4-flash
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_VLLM_MODEL=your-local-vllm-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,vllm`.
+It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,vllm`.
 Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable, such as `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
@@ -217,6 +218,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 | `agents/small_business_loan_agent.py` | offline | dev env | `.venv/bin/python examples/agents/small_business_loan_agent.py` | `make test-examples` |
 | `agents/hr_candidate_selection_agent.py` | offline | dev env | `.venv/bin/python examples/agents/hr_candidate_selection_agent.py` | `make test-examples` |
 | `text/tier1_providers.py` | live optional | one tier-1 provider credential and model env | `.venv/bin/python examples/text/tier1_providers.py` | `ZHIVEX_SMOKE_PROVIDERS=openai make smoke` |
+| `text/deepseek_native.py` | live optional | `DEEPSEEK_API_KEY`; optional `DEEPSEEK_MODEL` | `.venv/bin/python examples/text/deepseek_native.py` | `ZHIVEX_SMOKE_PROVIDERS=deepseek make smoke` |
 | `integrations/fastapi_chat_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_chat_api:app --reload` | manual HTTP smoke |
 | `integrations/fastapi_streaming_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_streaming_api:app --reload` | manual streaming smoke |
 | `integrations/fastapi_gateway_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_gateway_api:app --reload` | manual HTTP smoke |
@@ -233,6 +235,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - `ollama_text.py` shows the recommended local path for Ollama: `create_ollama(...)` plus `provider.native.language_model(...)`.
 - `vllm_text.py` shows the recommended local path for vLLM's OpenAI-compatible server: `create_vllm(...)` plus the portable `provider("model-id")` path.
 - `kimi_native.py` shows the native Kimi/Moonshot Chat Completions path plus Files, Batch, token estimation, and image/video input examples. Kimi also participates in the portable tier-1 text/tool contract through `provider("model-id")`; it expects `MOONSHOT_API_KEY` or `KIMI_API_KEY`.
+- `deepseek_native.py` shows current DeepSeek V4 reasoning and JSON structured output through the dedicated Chat Completions adapter. DeepSeek also participates in the portable tier-1 text/tool contract and expects `DEEPSEEK_API_KEY`.
 - `qwen_native.py` shows the native Qwen/Alibaba Cloud Model Studio path for hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS. Qwen also participates in the portable tier-1 text/tool contract through `provider("model-id")`; it expects `DASHSCOPE_API_KEY` or `QWEN_API_KEY`.
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `small_business_loan_agent.py` is an offline reference app for regulated, multi-step workflows: the SDK handles orchestration, repair/resume, approvals, traces, and replay, while the example keeps credit rules, pricing, persistence, and approval UI as application-owned components behind replaceable interfaces.

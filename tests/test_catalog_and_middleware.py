@@ -121,6 +121,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("qwen", "qwen3-tts-instruct-flash", {"audio"}),
             ("kimi", "kimi-k3", {"reasoning", "tools", "vision"}),
             ("kimi", "kimi-k2.6", {"reasoning", "tools", "vision"}),
+            ("deepseek", "deepseek-v4-pro", {"chat", "reasoning", "tools"}),
+            ("deepseek", "deepseek-v4-flash", {"chat", "speed", "reasoning", "tools"}),
         ]
 
         for provider, model_id, recommended in expected:
@@ -154,6 +156,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(default_model_catalog.find("qwen", "text-embedding-v3").model_id, "text-embedding-v4")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3-asr-flash-2026-02-10").model_id, "qwen3-asr-flash")  # type: ignore[union-attr]
         self.assertEqual(default_model_catalog.find("qwen", "qwen3-tts-instruct-flash-2026-01-26").model_id, "qwen3-tts-instruct-flash")  # type: ignore[union-attr]
+        self.assertIsNone(default_model_catalog.find("deepseek", "deepseek-chat"))
+        self.assertIsNone(default_model_catalog.find("deepseek", "deepseek-reasoner"))
 
     async def test_cached_middleware_avoids_duplicate_generate_calls(self) -> None:
         model = CountingModel()
