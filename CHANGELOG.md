@@ -21,6 +21,28 @@ Related documents:
 
 ### Added
 
+- None.
+
+### Changed
+
+- None.
+
+### Fixed
+
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.13.0
+
+### Added
+
 - Added stable `create_deepseek()` support for current DeepSeek V4 Chat Completions, including text generation, streaming, JSON structured output, callable tools, reasoning controls, replay-safe `reasoning_content`, provider usage metadata, and retry/error handling.
 - Added DeepSeek tier-1 contracts, gateway routing metadata, model catalog entries, live and installed-wheel smoke coverage, release workflow configuration, and runnable examples.
 
