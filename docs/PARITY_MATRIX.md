@@ -22,6 +22,7 @@ Legend:
 | Gateway fallback | Yes | Yes | Yes | provider-dependent | stable |
 | Tier-1 provider adapters | Yes | Yes | Yes | optional | stable provider story |
 | Agent core runtime | Yes | Yes | Yes | provider-dependent | stable |
+| Typed agent DX (deps, outputs, hooks, middleware) | Yes | Yes | Yes | provider-dependent | stable |
 | Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
 | Durable human approvals | Yes | Yes | Yes | provider-dependent | stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |

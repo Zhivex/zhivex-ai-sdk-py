@@ -97,6 +97,11 @@ For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than v
 
 For agent-backed API servers, keep application policy outside the SDK:
 
+- construct authenticated, tenant-scoped clients in the request/worker layer and pass them through `deps=`
+- supply dependencies again when resuming a suspended run; they are intentionally not persisted
+- use `output_type` for response-shape validation, while keeping regulated decisions and business policy in application-owned services
+- keep lifecycle hooks bounded and redacted; use approval policy for authorization and `AgentObserver` for tracing
+
 - use `idempotency_key` for retryable user actions
 - attach memory/checkpoint stores when sessions need recovery
 - attach run stores when you need replay, snapshots, cancellation records, or pending approvals

@@ -1,11 +1,11 @@
 # Agent Runtime Guide
 
-The agent runtime is the production-oriented orchestration layer for stateful assistants, tools, handoffs, approvals, persistence, replay, and traces.
+The agent runtime is the production-oriented orchestration layer for typed, stateful assistants, tools, handoffs, approvals, persistence, replay, and traces.
 
 Use the public imports from `zhivex_ai`:
 
 ```python
-from zhivex_ai import Agent, AgentRunResult, AgentStreamResult, run_agent, stream_agent
+from zhivex_ai import Agent, AgentContext, AgentRunResult, AgentStreamResult, run_agent, stream_agent
 ```
 
 ## Stable Core
@@ -13,6 +13,8 @@ from zhivex_ai import Agent, AgentRunResult, AgentStreamResult, run_agent, strea
 The stable core is:
 
 - `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunResult`, and `AgentStreamResult`
+- generic `Agent[DepsT, OutputT]`, `AgentContext[DepsT]`, `ToolExecutionContext[DepsT]`, and typed `result.output`
+- dynamic instructions, lifecycle `AgentHooks`, and `AgentMiddleware`
 - local `tool(...)` definitions, tool execution contracts, `ToolRegistry`, and direct `handoff_to(...)` results
 - `run_agent(...)`, `stream_agent(...)`, `resume_agent(...)`, and `resume_agent_run(...)`
 - session helpers such as `create_agent_session(...)` and `load_agent_session(...)`
@@ -69,6 +71,99 @@ asyncio.run(main())
 ```
 
 Use an application-owned adapter instead of the inline callable when the tool reads a database or external service. Add `requires_approval=True` before allowing a tool to write data or trigger an external side effect.
+
+## Typed Context And Outputs
+
+`Agent[DepsT, OutputT]` connects application dependencies to dynamic instructions and local tools, and connects `output_type` to `AgentRunResult[OutputT]`:
+
+```python
+from dataclasses import dataclass
+from pydantic import BaseModel
+
+from zhivex_ai import Agent, AgentContext, ToolExecutionContext, run_agent, tool
+
+
+@dataclass
+class Deps:
+    tenant_id: str
+    repository: object
+
+
+class Decision(BaseModel):
+    approved: bool
+    reason: str
+
+
+async def instructions(context: AgentContext[Deps]) -> str:
+    tenant_id = context.deps.tenant_id if context.deps else "unknown"
+    return f"Review requests for tenant {tenant_id}."
+
+
+async def lookup(input: dict[str, str], context: ToolExecutionContext[Deps]) -> dict[str, str]:
+    if context.deps is None:
+        raise RuntimeError("Missing dependencies.")
+    return {"tenant_id": context.deps.tenant_id, "application_id": input["application_id"]}
+
+
+agent: Agent[Deps, Decision] = Agent(
+    name="reviewer",
+    model=model,
+    instructions=instructions,
+    output_type=Decision,
+    tools={
+        "lookup": tool(
+            name="lookup",
+            description="Load one application.",
+            schema={"type": "object", "properties": {"application_id": {"type": "string"}}},
+            execute=lookup,
+        )
+    },
+)
+result = await run_agent(agent=agent, prompt="Review A-42.", deps=deps)
+decision = result.output
+```
+
+Instructions may be a string or a sync/async callable accepting `AgentContext`; two-argument callables can also accept the current `Agent`. They resolve once per agent segment, after session memory and dependencies are available. The resolved system message is not retained in the session transcript.
+
+`output_mode="auto"` selects native structured output when the current model advertises it and a prompted JSON Schema fallback otherwise. Set `"native"` to fail closed on models without native support, or `"prompted"` to force the fallback. Output guardrails run before parsing. Invalid JSON or schema values fail the run; suspended and stopped-on-handoff results have `output=None`. Raw `result.text` remains available.
+
+The root agent owns the output contract for the full run. A terminal agent reached through direct handoff is instructed and validated against the root `output_type`. All direct-handoff agents share the same dependency type for that run. A native subagent invoked as a tool starts a child run whose own agent defines its output contract.
+
+Dependencies are process-local capabilities and may contain clients or credentials. The runtime excludes them from reprs, serialized tool contexts, checkpoints, traces, metadata, and `AgentRunState`. Supply `deps=` again to `resume_agent(...)` or `resume_agent_run(...)`; do not use dependencies as durable state.
+
+`stream_agent(...).collect()` returns the same typed `AgentRunResult`. Experimental realtime agents use prompted typed output and reject `output_mode="native"`.
+
+## Lifecycle Hooks And Run Middleware
+
+Subclass `AgentHooks` and override only the callbacks you need:
+
+- `on_agent_start` / `on_agent_end`
+- `on_model_start` / `on_model_end`
+- `on_tool_start` / `on_tool_end` / `on_tool_error`
+- `on_approval`
+- `on_handoff`
+- `on_error`
+
+Attach hooks to `Agent(..., hooks=[...])`, `AgentRuntime(hooks=[...])`, or one call through `run_agent(..., hooks=[...])`. Entry callbacks run from runtime/call hooks to agent hooks; completion and error callbacks unwind in reverse. Model hooks cover each physical `LanguageModel.generate(...)` or completed `LanguageModel.stream(...)` call. Realtime connect/event traffic does not emit model hooks.
+
+Hooks observe lifecycle decisions but do not authorize tools, replace `AgentEvent`, or create spans. Approval policy remains authoritative, `AgentEvent` remains the ordered stream/history contract, and `AgentObserver` remains the tracing boundary. Hook failures propagate through the surrounding lifecycle: agent/model hook failures fail the run, while tool hook failures use the normal tool-error path. Keep hooks bounded and idempotent.
+
+Run middleware wraps the complete root run:
+
+```python
+from zhivex_ai import AgentRunRequest
+
+
+async def tenant_boundary(request: AgentRunRequest, call_next):
+    if request.deps is None:
+        raise PermissionError("Missing tenant dependencies.")
+    return await call_next(request)
+
+
+result = await run_agent(agent=agent, prompt="Review A-42.", deps=deps, middleware=[tenant_boundary])
+```
+
+Runtime middleware is outermost, then call middleware, then agent middleware. Middleware may update the request and must call `call_next(request)` exactly once unless it intentionally returns a cached `AgentRunResult`. Agent middleware applies to a root run; lifecycle run-hooks propagate to direct handoffs and child subagent runs.
 
 ## Next Steps
 

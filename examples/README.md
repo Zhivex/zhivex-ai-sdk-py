@@ -79,6 +79,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/text/structured_output.py
 .venv/bin/python examples/text/native_hosted_tools.py
 .venv/bin/python examples/agents/agent_basic.py
+.venv/bin/python examples/agents/typed_agent.py
 .venv/bin/python examples/agents/stream_agent.py
 .venv/bin/python examples/agents/platform_parity.py
 .venv/bin/python examples/agents/multi_agent_handoff.py
@@ -123,6 +124,7 @@ Suggested order if you are new to the SDK:
 
 ```bash
 .venv/bin/python examples/agents/agent_basic.py
+.venv/bin/python examples/agents/typed_agent.py
 .venv/bin/python examples/agents/stream_agent.py
 .venv/bin/python examples/agents/resume_agent.py
 .venv/bin/python examples/agents/messages_and_tools.py

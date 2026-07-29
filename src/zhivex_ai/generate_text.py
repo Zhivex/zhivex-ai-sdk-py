@@ -280,7 +280,7 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             if idempotency_prefix
             else call.id or f"{call.name}:tool-call"
         )
-        context = ToolExecutionContext(
+        context: ToolExecutionContext[Any] = ToolExecutionContext(
             tool_name=call.name,
             tool_call_id=call.id,
             idempotency_key=idempotency_key,

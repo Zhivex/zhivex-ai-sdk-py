@@ -10,6 +10,7 @@ Use the repository private advisory flow or the maintainer security channel used
 
 - Store provider API keys, cloud credentials, MCP bearer tokens, database DSNs, and webhook secrets in your secret manager.
 - Never put secrets in prompts, tool inputs, agent metadata, trace artifacts, approval records, or example fixtures.
+- Pass request-scoped clients and credentials through `deps=` only when necessary. Agent and tool contexts hide dependencies from their repr and the SDK does not serialize them, but application hooks and middleware can still access the live object; never log, trace, or copy `context.deps` into durable state.
 - Use environment variables only as a process boundary, not as an audit store.
 - Apply `create_redaction_policy(...)` before logging prompts, tool payloads, provider payloads, approval records, or trace summaries.
 - Treat provider response bodies in errors as sensitive unless your app has already redacted and classified them.

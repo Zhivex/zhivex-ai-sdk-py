@@ -1,15 +1,39 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from .embed import embed, embed_content, embed_content_many, embed_many
 from .generate_object import generate_object, stream_object
 from .generate_text import generate_text, stream_text
 
+if TYPE_CHECKING:
+    from .agent import (
+        Agent as Agent,
+        AgentContext as AgentContext,
+        AgentHooks as AgentHooks,
+        AgentMiddleware as AgentMiddleware,
+        AgentMiddlewareNext as AgentMiddlewareNext,
+        AgentObserver as AgentObserver,
+        AgentRunRequest as AgentRunRequest,
+        AgentRunResult as AgentRunResult,
+        AgentStreamResult as AgentStreamResult,
+        DynamicInstructions as DynamicInstructions,
+        resume_agent as resume_agent,
+        resume_agent_run as resume_agent_run,
+        run_agent as run_agent,
+        stream_agent as stream_agent,
+    )
+    from .types import ToolExecutionContext as ToolExecutionContext
+
 _MODULE_EXPORTS = {
     "agent": (
         "Agent",
         "AgentContext",
+        "AgentHooks",
+        "AgentMiddleware",
+        "AgentMiddlewareNext",
+        "AgentObserver",
         "AgentCheckpoint",
         "AgentCheckpointEvent",
         "AgentDelegationFinishEvent",
@@ -34,6 +58,7 @@ _MODULE_EXPORTS = {
         "AgentMemoryState",
         "AgentRegistry",
         "AgentRunResult",
+        "AgentRunRequest",
         "AgentRunStartEvent",
         "AgentStreamResult",
         "AgentSession",
@@ -46,6 +71,7 @@ _MODULE_EXPORTS = {
         "AgentTraceSegment",
         "AgentRuntime",
         "ApprovalDecision",
+        "DynamicInstructions",
         "GuardrailResult",
         "GuardrailTripwireTriggered",
         "InputGuardrail",
@@ -517,6 +543,10 @@ _MODULE_EXPORTS = {
 __all__ = [
     "Agent",
     "AgentContext",
+    "AgentHooks",
+    "AgentMiddleware",
+    "AgentMiddlewareNext",
+    "AgentObserver",
     "AgentCheckpoint",
     "AgentCheckpointEvent",
     "AgentDelegationFinishEvent",
@@ -541,6 +571,7 @@ __all__ = [
     "AgentMemoryState",
     "AgentRegistry",
     "AgentRunResult",
+    "AgentRunRequest",
     "AgentEventDeliveryError",
     "AgentRunCancelled",
     "AgentRunStartEvent",
@@ -556,6 +587,7 @@ __all__ = [
     "AgentTrace",
     "AgentTraceSegment",
     "ApprovalDecision",
+    "DynamicInstructions",
     "AgentCapabilities",
     "AgentSupportTier",
     "AnyToolDefinition",

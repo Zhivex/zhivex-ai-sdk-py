@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.13.0"
+version = "0.14.0"
 description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
 readme = "README.md"
 license = { text = "MIT" }
@@ -147,6 +147,7 @@ files = [
   "src/zhivex_ai/providers/openai.py",
   "src/zhivex_ai/providers/vertex.py",
   "src/zhivex_ai/providers/vllm.py",
+  "tests/typecheck_agent_dx.py",
 ]
 check_untyped_defs = true
 disallow_untyped_defs = false

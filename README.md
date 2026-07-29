@@ -53,7 +53,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 
 ## Highlights
 
-- Agent runtime with executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
+- Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
 - Declarative workflow agents with `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `session.state`, `output_key`, and templated step inputs
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
@@ -871,6 +871,45 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Typed agent applications can keep request-scoped services out of prompts and durable state while validating the terminal result:
+
+```python
+from dataclasses import dataclass
+from pydantic import BaseModel
+
+from zhivex_ai import Agent, AgentContext, create_openai, run_agent
+
+
+@dataclass
+class Deps:
+    tenant_id: str
+
+
+class Decision(BaseModel):
+    approved: bool
+    reason: str
+
+
+def instructions(context: AgentContext[Deps]) -> str:
+    tenant = context.deps.tenant_id if context.deps else "unknown"
+    return f"Evaluate the request for tenant {tenant}. Return a concise decision."
+
+
+openai = create_openai()
+agent: Agent[Deps, Decision] = Agent(
+    name="reviewer",
+    model=openai("gpt-5.6-terra"),
+    instructions=instructions,
+    output_type=Decision,
+)
+
+result = await run_agent(agent=agent, prompt="Review application A-42.", deps=Deps("bank-ar"))
+print(result.output.approved if result.output else None)
+print(result.text)  # Raw text remains available for compatibility.
+```
+
+`output_mode="auto"` uses native structured output when the active model supports it and a schema-guided prompted fallback otherwise. `stream_agent(...).collect()` returns the same typed result. The root agent's `output_type` governs the final response after direct handoffs.
+
 If you want Gemini research with provider-native web search in an agent run, put the agent on a native Gemini model first:
 
 ```python
@@ -1403,6 +1442,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, declarative workflows, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
 
 - `Agent(...)`
+- `AgentContext`, `AgentHooks`, `AgentMiddleware`, `AgentRunRequest`
 - `AgentRuntime(...)`
 - `AgentRegistry(...)`
 - `ToolRegistry(...)`
@@ -1448,7 +1488,7 @@ The stable agent slice covers the run/result/stream lifecycle, local tools, dire
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
-This layer is intended for stateful, tool-using, multi-agent assistants where you want executable handoffs, native subagent tools, shared sessions, transcript + summary memory, approval hooks, durable pending approvals, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+This layer is intended for stateful, tool-using, multi-agent assistants where you want typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, shared sessions, transcript + summary memory, durable pending approvals, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
 
 For production semantics, persistence, approvals, tool registries, event ordering, and recovery guidance, see [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).
 
