@@ -140,11 +140,17 @@ def _smoke_code(expected_version: str) -> str:
     return textwrap.dedent(
         f"""
         import asyncio
+        from dataclasses import dataclass
         from importlib import metadata, resources
 
         import zhivex_ai
+        from pydantic import BaseModel
         from zhivex_ai import (
             Agent,
+            AgentContext,
+            AgentHooks,
+            AgentMiddleware,
+            AgentRunRequest,
             SequentialAgent,
             WorkflowStep,
             create_deepseek,
@@ -158,6 +164,9 @@ def _smoke_code(expected_version: str) -> str:
 
         assert metadata.version("zhivex-ai-sdk") == {expected_version!r}
         assert "Agent" in zhivex_ai.__all__
+        assert "AgentHooks" in zhivex_ai.__all__
+        assert "AgentMiddleware" in zhivex_ai.__all__
+        assert "AgentRunRequest" in zhivex_ai.__all__
         assert "create_deepseek" in zhivex_ai.__all__
         assert "generate_text" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
@@ -215,6 +224,53 @@ def _smoke_code(expected_version: str) -> str:
             assert tool_executions == [{{"nonce": "artifact-smoke"}}]
             assert len(run.tool_results) == 1
             assert run.tool_results[0].output == {{"nonce": "artifact-smoke", "validated": True}}
+
+            @dataclass
+            class Deps:
+                tenant: str
+
+            class Decision(BaseModel):
+                approved: bool
+
+            lifecycle = []
+
+            class Hooks(AgentHooks):
+                async def on_agent_start(self, context, agent):
+                    lifecycle.append(("start", context.deps.tenant))
+
+                async def on_agent_end(self, context, agent, result):
+                    lifecycle.append(("end", result.output.approved))
+
+            def instructions(context: AgentContext[Deps]):
+                return f"Review for tenant {{context.deps.tenant}}."
+
+            async def require_deps(request, call_next):
+                assert request.deps is not None
+                return await call_next(request)
+
+            typed_agent: Agent[Deps, Decision] = Agent(
+                name="typed",
+                model=create_mock_language_model(
+                    responses=[
+                        GenerateResult(
+                            text='{{"approved":true}}',
+                            messages=[create_text_message("assistant", '{{"approved":true}}')],
+                            finish_reason="stop",
+                        )
+                    ]
+                ),
+                instructions=instructions,
+                output_type=Decision,
+                hooks=[Hooks()],
+            )
+            typed = await run_agent(
+                agent=typed_agent,
+                prompt="go",
+                deps=Deps(tenant="artifact"),
+                middleware=[require_deps],
+            )
+            assert typed.output == Decision(approved=True)
+            assert lifecycle == [("start", "artifact"), ("end", True)]
 
             workflow = SequentialAgent(
                 name="release_smoke",

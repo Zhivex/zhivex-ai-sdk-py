@@ -39,6 +39,37 @@ Related documents:
 
 - None.
 
+## 0.14.0
+
+### Added
+
+- Added generic `Agent[DepsT, OutputT]`, `AgentContext[DepsT]`, `ToolExecutionContext[DepsT]`, and typed `AgentRunResult.output` / `AgentStreamResult.collect()` contracts.
+- Added sync or async dynamic agent instructions resolved once per agent segment with access to run dependencies and session context.
+- Added agent-level structured outputs through `output_type`, with native provider schemas when available and schema-guided prompted fallback otherwise.
+- Added stable `AgentHooks` lifecycle callbacks for agents, physical model calls, tools, approvals, handoffs, and terminal errors.
+- Added stable agent run middleware through `AgentMiddleware`, `AgentRunRequest`, and runtime-, call-, or agent-level middleware stacks.
+- Added top-level static typing declarations and a consumer mypy contract so documented `zhivex_ai` imports preserve generic inference.
+
+### Changed
+
+- Promoted `AgentContext` to the stable public surface and exported `AgentObserver` to match the stable runtime signatures that already accepted it.
+- Propagated application-owned dependencies across tools, direct handoffs, native subagent tools, streaming, idempotent reuse, approval resume, and experimental realtime runs without serializing them into durable state.
+- Defined the root agent's `output_type` as the output contract for the complete run, including terminal responses produced after handoffs.
+- Bumped the package version to `0.14.0` while keeping the package in Beta.
+
+### Fixed
+
+- Dynamic system instructions are removed from stored session transcripts using the exact string resolved for that segment.
+- Idempotent run reuse revalidates the stored text against the root typed-output contract instead of returning an untyped-only result.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.13.0
 
 ### Added

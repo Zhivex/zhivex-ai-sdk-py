@@ -33,7 +33,12 @@ DOCUMENTED_STABLE_EXPORTS = {
     "embed_content",
     "embed_content_many",
     "Agent",
+    "AgentContext",
+    "AgentHooks",
     "AgentHandoff",
+    "AgentMiddleware",
+    "AgentMiddlewareNext",
+    "AgentObserver",
     "AgentRegistry",
     "AgentReplayEvent",
     "AgentReplayResult",
@@ -41,6 +46,7 @@ DOCUMENTED_STABLE_EXPORTS = {
     "AgentSession",
     "AgentChildRun",
     "AgentRunResult",
+    "AgentRunRequest",
     "AgentEventDeliveryError",
     "AgentRunCancelled",
     "AgentRunSnapshot",
@@ -54,6 +60,7 @@ DOCUMENTED_STABLE_EXPORTS = {
     "AgentSkillSkippedEvent",
     "AgentToolApprovalEvent",
     "ApprovalDecision",
+    "DynamicInstructions",
     "PendingApproval",
     "ToolApprovalRequest",
     "ToolDefinition",
@@ -172,7 +179,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.13.0"', pyproject)
+        self.assertIn('version = "0.14.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

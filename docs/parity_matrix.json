@@ -67,6 +67,14 @@
       "stability": "stable"
     },
     {
+      "area": "Typed agent DX (deps, outputs, hooks, middleware)",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "provider-dependent",
+      "stability": "stable"
+    },
+    {
       "area": "Agent run stores and replay",
       "implemented": "yes",
       "documented": "yes",

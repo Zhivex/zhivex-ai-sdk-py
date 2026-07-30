@@ -27,6 +27,7 @@ The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by 
 - Keep top-level imports from `zhivex_ai` as the primary public entrypoint.
 - Update `src/zhivex_ai/api_stability.py` and its drift tests whenever `zhivex_ai.__all__` changes.
 - New stable provider factories are additive public API changes and must land with provider contracts, support metadata, docs, examples, and artifact-install verification. `create_deepseek` follows that policy.
+- Additive fields on `Agent`, `AgentContext`, `AgentRunRequest`, `AgentRunResult`, and `ToolExecutionContext` must preserve existing positional construction and string-only `result.text` behavior. Generic typing and `result.output` are additive in `0.14.0`.
 
 ## Deprecation workflow
 
@@ -42,7 +43,7 @@ When a stable API needs to change:
 
 Beta APIs are intended for early adoption with documented change management. The packaged-skill layer, in-memory and SQLite agent run stores, native subagent tools, declarative workflow agents, evaluation helpers, trace artifacts, redaction policies, budget guards, and UI approval chunks follow this beta policy.
 
-The current beta-only areas are narrower than the full agent story. Middleware helpers and model catalog helpers remain beta. The agent runtime, session helpers, agent skills, MCP helpers, MCP-backed registries, Postgres-backed agent stores, run-state serialization, cancellation, replay, run-snapshot helpers, and durable local-tool approval resume are now part of the documented stable surface and follow the stable-surface rules above.
+The current beta-only areas are narrower than the full agent story. Foundation model middleware helpers and model catalog helpers remain beta. The agent runtime—including typed context/output contracts, dynamic instructions, lifecycle hooks, run middleware, and the observer protocol—session helpers, agent skills, MCP helpers, MCP-backed registries, Postgres-backed agent stores, run-state serialization, cancellation, replay, run-snapshot helpers, and durable local-tool approval resume are now part of the documented stable surface and follow the stable-surface rules above.
 
 `AgentRunStore.save(...)` remains compatible with implementations returning `None`; built-in stores return the authoritative persisted state and revision. Atomic capabilities such as `claim_idempotency_key(...)`, `claim_pending_approval(...)`, `cancel_run(...)`, and `fail_resume_claim(...)` are checked only when the corresponding feature is used. Custom production stores must implement those operations transactionally to enable those features.
 

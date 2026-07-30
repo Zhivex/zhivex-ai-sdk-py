@@ -24,7 +24,8 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Agent runtime: `Agent`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunResult`, `AgentStreamResult`, `AgentHandoff`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `handoff_to`, `create_agent_session`, `load_agent_session`
+- Agent runtime: `Agent`, `AgentContext`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunRequest`, `AgentRunResult`, `AgentStreamResult`, `AgentHandoff`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `handoff_to`, `create_agent_session`, `load_agent_session`
+- Agent extension contracts: `AgentHooks`, `AgentMiddleware`, `AgentMiddlewareNext`, `AgentObserver`, `DynamicInstructions`
 - Agent tools: `ToolRegistry`, `ToolDefinition`, `ToolSet`, `ToolExecutionContext`, `ToolExecutionOptions`, `ToolExecutionResult`, `ToolExecutionError`, `tool`
 - Agent run state and replay: `AgentRunStore`, `AgentRunState`, `AgentRunStatus`, `AgentRunStep`, `AgentChildRun`, `PostgresAgentRunStore`, `create_postgres_agent_run_store`, `serialize_agent_run_state`, `deserialize_agent_run_state`, `agent_run_state_to_json`, `agent_run_state_from_json`, `cancel_agent_run`, `cancel_agent_run_tree`, `AgentRunTreeCancellationResult`, `AgentRunSnapshot`, `create_agent_run_snapshot`, `AgentReplayEvent`, `AgentReplayResult`, `replay_agent_run`
 - Durable agent approvals: `ApprovalDecision`, `ToolApprovalRequest`, `AgentToolApprovalEvent`, `PendingApproval`, `get_pending_agent_approvals`

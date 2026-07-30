@@ -12,7 +12,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from functools import lru_cache, partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
 from ._http import default_fetch
@@ -28,6 +28,7 @@ from ._serde import (
     serialize_tool_execution_context,
 )
 from .errors import AgentEventDeliveryError, AgentRunCancelled, ProviderHTTPError, ToolExecutionSuspended, ValidationError
+from .generate_object import _parse_object, _resolve_object_mode
 from .agent_state import (
     AgentChildRun,
     AgentRunState,
@@ -40,11 +41,13 @@ from .agent_state import (
 )
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message, is_callable_tool_definition, provider_data_part, serialize_json_value, tool_result_part
+from .schema import create_schema_adapter
 from .skills import SkillArtifact, SkillDefinition, SkillRegistry, SkillSet
 from .types import (
     AnyToolDefinition,
     AudioFrame,
     FinishReason,
+    GenerateResult,
     GenerateTextOutput,
     GenerateTextStep,
     JsonValue,
@@ -69,6 +72,7 @@ from .types import (
     StreamTextDeltaEvent,
     StreamToolCallEvent,
     StreamToolResultEvent,
+    StructuredOutputConfig,
     ToolChoiceName,
     ToolDefinition,
     ToolExecutionContext,
@@ -90,6 +94,9 @@ if TYPE_CHECKING:
 HANDOFF_MARKER = "__zhivex_agent_handoff__"
 SUMMARY_MARKER = "Conversation summary:\n"
 _POSTGRES_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+AgentDepsT = TypeVar("AgentDepsT")
+AgentOutputT = TypeVar("AgentOutputT")
 
 
 def _now_ms() -> int:
@@ -261,7 +268,7 @@ def _strip_runtime_system_messages(messages: list[ModelMessage], instructions: s
 
 
 async def _maybe_await(value: Any) -> Any:
-    if asyncio.iscoroutine(value):
+    if inspect.isawaitable(value):
         return await value
     return value
 
@@ -398,13 +405,133 @@ class AgentHandoff:
 
 
 @dataclass(slots=True)
-class AgentContext:
+class AgentContext(Generic[AgentDepsT]):
     run_id: str
     session_id: str
     agent_name: str
     memory_summary: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     handoff_path: list[str] = field(default_factory=list)
+    deps: AgentDepsT | None = field(default=None, repr=False, compare=False)
+    session: AgentSession | None = field(default=None, repr=False, compare=False)
+
+
+DynamicInstructions: TypeAlias = Callable[..., str | None | Awaitable[str | None]]
+
+
+class AgentHooks:
+    """No-op lifecycle hooks that applications can override selectively."""
+
+    async def on_agent_start(self, context: AgentContext[Any], agent: Agent[Any, Any]) -> None:
+        pass
+
+    async def on_agent_end(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        result: AgentRunResult[Any],
+    ) -> None:
+        pass
+
+    async def on_model_start(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        input: ModelGenerateInput,
+    ) -> None:
+        pass
+
+    async def on_model_end(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        result: GenerateResult | None,
+    ) -> None:
+        pass
+
+    async def on_tool_start(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        definition: ToolDefinition,
+        input: Any,
+        tool_context: ToolExecutionContext[Any],
+    ) -> None:
+        pass
+
+    async def on_tool_end(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        definition: ToolDefinition,
+        input: Any,
+        tool_context: ToolExecutionContext[Any],
+        output: Any,
+    ) -> None:
+        pass
+
+    async def on_tool_error(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        definition: ToolDefinition,
+        input: Any,
+        tool_context: ToolExecutionContext[Any],
+        error: Exception,
+    ) -> None:
+        pass
+
+    async def on_handoff(
+        self,
+        context: AgentContext[Any],
+        source_agent: Agent[Any, Any],
+        target_agent: Agent[Any, Any],
+        handoff: AgentHandoff,
+    ) -> None:
+        pass
+
+    async def on_approval(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        request: ToolApprovalRequest,
+        decision: ApprovalDecision,
+    ) -> None:
+        pass
+
+    async def on_error(
+        self,
+        context: AgentContext[Any],
+        agent: Agent[Any, Any],
+        error: Exception,
+    ) -> None:
+        pass
+
+
+@dataclass(slots=True)
+class AgentRunRequest(Generic[AgentDepsT, AgentOutputT]):
+    """Mutable request passed through agent run middleware."""
+
+    agent: Agent[AgentDepsT, AgentOutputT]
+    session: AgentSession | None = None
+    prompt: str | None = None
+    messages: list[ModelMessage] | None = None
+    deps: AgentDepsT | None = field(default=None, repr=False, compare=False)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+AgentMiddlewareNext: TypeAlias = Callable[
+    [AgentRunRequest[Any, Any]],
+    Awaitable["AgentRunResult[Any]"],
+]
+
+
+class AgentMiddleware(Protocol):
+    def __call__(
+        self,
+        request: AgentRunRequest[Any, Any],
+        call_next: AgentMiddlewareNext,
+    ) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 
 @dataclass(slots=True)
@@ -1055,13 +1182,18 @@ async def create_mcp_tool_registry(
 
 
 @dataclass(slots=True)
-class Agent:
+class Agent(Generic[AgentDepsT, AgentOutputT]):
     name: str
     model: LanguageModel | RealtimeModel
-    instructions: str | None = None
+    instructions: (
+        str
+        | Callable[[AgentContext[AgentDepsT]], str | None | Awaitable[str | None]]
+        | Callable[[AgentContext[AgentDepsT], Agent[AgentDepsT, AgentOutputT]], str | None | Awaitable[str | None]]
+        | None
+    ) = None
     tools: ToolSet | ToolRegistry = field(default_factory=dict)
     skills: SkillSet | SkillRegistry = field(default_factory=dict)
-    subagents: dict[str, "Agent"] = field(default_factory=dict)
+    subagents: dict[str, "Agent[AgentDepsT, Any]"] = field(default_factory=dict)
     memory: AgentMemory | None = None
     checkpoint_store: AgentCheckpointStore | None = None
     run_store: AgentRunStore | None = None
@@ -1071,6 +1203,162 @@ class Agent:
     tool_execution: ToolExecutionOptions | None = None
     run_limits: RunLimits = field(default_factory=RunLimits)
     metadata: dict[str, Any] = field(default_factory=dict)
+    output_type: type[AgentOutputT] | None = None
+    output_mode: Literal["auto", "native", "prompted"] = "auto"
+    output_name: str | None = None
+    output_description: str | None = None
+    hooks: list[AgentHooks] = field(default_factory=list)
+    middleware: list[AgentMiddleware] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.output_mode not in {"auto", "native", "prompted"}:
+            raise ValidationError('Agent.output_mode must be "auto", "native", or "prompted".')
+
+
+async def _resolve_agent_instructions(
+    agent: Agent[Any, Any],
+    context: AgentContext[Any],
+) -> str | None:
+    instructions = agent.instructions
+    if instructions is None or isinstance(instructions, str):
+        return instructions
+    dynamic = cast(Callable[..., Any], instructions)
+    try:
+        signature = inspect.signature(dynamic)
+    except (TypeError, ValueError):
+        value = dynamic(context)
+    else:
+        positional = [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        accepts_varargs = any(
+            parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            for parameter in signature.parameters.values()
+        )
+        value = dynamic(context, agent) if accepts_varargs or len(positional) >= 2 else dynamic(context)
+    resolved = await _maybe_await(value)
+    if resolved is not None and not isinstance(resolved, str):
+        raise TypeError("Dynamic agent instructions must return str or None.")
+    return cast(str | None, resolved)
+
+
+def _resolve_agent_structured_output(
+    agent: Agent[Any, Any],
+    *,
+    model: LanguageModel | RealtimeModel | None = None,
+) -> tuple[StructuredOutputConfig | None, str | None]:
+    if agent.output_type is None:
+        return None, None
+    output_model = model or agent.model
+    if not hasattr(output_model, "capabilities"):
+        raise ValidationError("Typed outputs require a language model with declared capabilities.")
+    output_mode = _resolve_object_mode(
+        agent.output_mode,
+        bool(output_model.capabilities.structured_output),
+    )
+    if output_mode == "native":
+        return (
+            StructuredOutputConfig(
+                schema=agent.output_type,
+                mode="native",
+                name=agent.output_name,
+                description=agent.output_description,
+            ),
+            None,
+        )
+    schema = create_schema_adapter(agent.output_type).json_schema()
+    details = [
+        "Return only valid JSON matching this JSON Schema:",
+        json.dumps(schema, sort_keys=True, separators=(",", ":")),
+    ]
+    if agent.output_name:
+        details.insert(0, f"Structured output name: {agent.output_name}.")
+    if agent.output_description:
+        details.insert(0, f"Structured output description: {agent.output_description}")
+    return None, "\n".join(details)
+
+
+def _parse_agent_output(agent: Agent[Any, Any], text: str) -> Any:
+    if agent.output_type is None:
+        return text
+    return _parse_object(text, agent.output_type)
+
+
+async def _call_agent_hooks(
+    hooks: Iterable[AgentHooks],
+    method_name: str,
+    *args: Any,
+    reverse: bool = False,
+) -> None:
+    ordered = list(hooks)
+    if reverse:
+        ordered.reverse()
+    for hooks_instance in ordered:
+        method = getattr(hooks_instance, method_name)
+        await _maybe_await(method(*args))
+
+
+async def _call_error_hooks_preserving(
+    hooks: Iterable[AgentHooks],
+    context: AgentContext[Any],
+    agent: Agent[Any, Any],
+    error: Exception,
+) -> None:
+    try:
+        await _call_agent_hooks(hooks, "on_error", context, agent, error, reverse=True)
+    except Exception as hook_error:
+        error.add_note(f"Agent on_error hook also failed: {hook_error}")
+
+
+class _LifecycleLanguageModel:
+    def __init__(
+        self,
+        model: LanguageModel,
+        *,
+        agent: Agent[Any, Any],
+        context: AgentContext[Any],
+        hooks: list[AgentHooks],
+    ) -> None:
+        self._model = model
+        self._agent = agent
+        self._context = context
+        self._hooks = hooks
+        self.provider = model.provider
+        self.model_id = model.model_id
+        self.capabilities = model.capabilities
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
+        result = await self._model.generate(input)
+        await _call_agent_hooks(
+            self._hooks,
+            "on_model_end",
+            self._context,
+            self._agent,
+            result,
+            reverse=True,
+        )
+        return result
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[Any]:
+        await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
+        events = await self._model.stream(input)
+
+        async def generator() -> AsyncIterable[Any]:
+            async for event in events:
+                yield event
+            await _call_agent_hooks(
+                self._hooks,
+                "on_model_end",
+                self._context,
+                self._agent,
+                None,
+                reverse=True,
+            )
+
+        return generator()
 
 
 @dataclass(slots=True)
@@ -1316,7 +1604,7 @@ class AgentTrace:
 
 
 @dataclass(slots=True)
-class AgentRunResult:
+class AgentRunResult(Generic[AgentOutputT]):
     run_id: str
     agent_name: str
     session: AgentSession
@@ -1333,6 +1621,7 @@ class AgentRunResult:
     orchestration_path: list[str] = field(default_factory=list)
     resumed_from_checkpoint: AgentCheckpoint | None = None
     state: AgentRunState | None = None
+    output: AgentOutputT | None = None
 
 
 class InMemoryAgentMemory:
@@ -2104,15 +2393,19 @@ def _build_run_messages(
     prompt: str | None,
     messages: list[ModelMessage] | None,
     active_skills: list[SkillDefinition] | None = None,
+    instructions: str | None = None,
+    structured_output_instructions: str | None = None,
 ) -> list[ModelMessage]:
     if prompt is not None and messages is not None:
         raise ValidationError('Pass either "prompt" or "messages", but not both.')
 
     built: list[ModelMessage] = []
-    if agent.instructions:
-        built.append(create_text_message("system", agent.instructions))
+    if instructions:
+        built.append(create_text_message("system", instructions))
     for active_skill in active_skills or []:
         built.append(create_text_message("system", _skill_system_message(active_skill)))
+    if structured_output_instructions:
+        built.append(create_text_message("system", structured_output_instructions))
     if session.summary:
         built.append(create_text_message("system", f"{SUMMARY_MARKER}{session.summary}"))
     built.extend(_context_messages(session, agent.memory))
@@ -2855,7 +3148,12 @@ class AgentObserver(Protocol):
     def start_span(self, name: str, attributes: dict[str, Any] | None = None) -> Any: ...
 
 
-def _agent_run_result_from_state(state: AgentRunState, fallback_session: AgentSession) -> AgentRunResult:
+def _agent_run_result_from_state(
+    state: AgentRunState,
+    fallback_session: AgentSession,
+    *,
+    agent: Agent[Any, Any],
+) -> AgentRunResult[Any]:
     raw_path = state.metadata.get("orchestration_path")
     orchestration_path = (
         [str(item) for item in raw_path]
@@ -2883,6 +3181,7 @@ def _agent_run_result_from_state(state: AgentRunState, fallback_session: AgentSe
         tool_results=list(state.tool_results),
         orchestration_path=orchestration_path,
         state=state,
+        output=_parse_agent_output(agent, state.output_text) if state.status == "completed" else None,
     )
 
 
@@ -2892,17 +3191,22 @@ class AgentRuntime:
         *,
         registry: AgentRegistry | None = None,
         observer: AgentObserver | None = None,
+        hooks: Iterable[AgentHooks] | None = None,
+        middleware: Iterable[AgentMiddleware] | None = None,
     ) -> None:
         self._registry = registry or AgentRegistry()
         self._observer = observer
+        self._hooks = list(hooks or [])
+        self._middleware = list(middleware or [])
 
     async def run(
         self,
         *,
-        agent: Agent,
+        agent: Agent[AgentDepsT, AgentOutputT],
         session: AgentSession | None = None,
         prompt: str | None = None,
         messages: list[ModelMessage] | None = None,
+        deps: AgentDepsT | None = None,
         tools: ToolSet | ToolRegistry | None = None,
         skills: SkillSet | SkillRegistry | None = None,
         tool_choice: str | ToolChoiceName | None = None,
@@ -2921,7 +3225,89 @@ class AgentRuntime:
         live_stream: bool = False,
         parent_run_id: str | None = None,
         idempotency_key: str | None = None,
-    ) -> AgentRunResult:
+        hooks: Iterable[AgentHooks] | None = None,
+        middleware: Iterable[AgentMiddleware] | None = None,
+    ) -> AgentRunResult[AgentOutputT]:
+        request = AgentRunRequest(
+            agent=agent,
+            session=session,
+            prompt=prompt,
+            messages=messages,
+            deps=deps,
+            metadata={"parent_run_id": parent_run_id, "idempotency_key": idempotency_key},
+        )
+        resolved_middleware = [*self._middleware, *list(middleware or []), *agent.middleware]
+
+        async def call_at(
+            index: int,
+            current: AgentRunRequest[Any, Any],
+        ) -> AgentRunResult[Any]:
+            if index >= len(resolved_middleware):
+                return await self._run_impl(
+                    agent=current.agent,
+                    session=current.session,
+                    prompt=current.prompt,
+                    messages=current.messages,
+                    deps=current.deps,
+                    tools=tools,
+                    skills=skills,
+                    tool_choice=tool_choice,
+                    tool_execution=tool_execution,
+                    max_steps=max_steps,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                    provider_options=provider_options,
+                    timeout_ms=timeout_ms,
+                    max_retries=max_retries,
+                    retry_backoff_ms=retry_backoff_ms,
+                    stop_on_handoff=stop_on_handoff,
+                    emit=emit,
+                    resumed_from_checkpoint=resumed_from_checkpoint,
+                    live_stream=live_stream,
+                    parent_run_id=parent_run_id,
+                    idempotency_key=idempotency_key,
+                    hooks=hooks,
+                )
+
+            async def call_next(next_request: AgentRunRequest[Any, Any]) -> AgentRunResult[Any]:
+                return await call_at(index + 1, next_request)
+
+            result = await _maybe_await(resolved_middleware[index](current, call_next))
+            if not isinstance(result, AgentRunResult):
+                raise TypeError("Agent middleware must return AgentRunResult.")
+            return result
+
+        return cast(AgentRunResult[AgentOutputT], await call_at(0, request))
+
+    async def _run_impl(
+        self,
+        *,
+        agent: Agent[Any, Any],
+        session: AgentSession | None = None,
+        prompt: str | None = None,
+        messages: list[ModelMessage] | None = None,
+        deps: Any = None,
+        tools: ToolSet | ToolRegistry | None = None,
+        skills: SkillSet | SkillRegistry | None = None,
+        tool_choice: str | ToolChoiceName | None = None,
+        tool_execution: ToolExecutionOptions | None = None,
+        max_steps: int | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        reasoning: ReasoningConfig | None = None,
+        provider_options: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        max_retries: int | None = None,
+        retry_backoff_ms: int | None = None,
+        stop_on_handoff: bool = False,
+        emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
+        resumed_from_checkpoint: AgentCheckpoint | None = None,
+        live_stream: bool = False,
+        parent_run_id: str | None = None,
+        idempotency_key: str | None = None,
+        hooks: Iterable[AgentHooks] | None = None,
+    ) -> AgentRunResult[Any]:
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
             state = await agent.memory.load(resolved_session.id)
@@ -2953,7 +3339,11 @@ class AgentRuntime:
                     )
                 claimed_state = await claim_idempotency_key(initial_state)
                 if claimed_state.run_id != run_id:
-                    return _agent_run_result_from_state(claimed_state, resolved_session)
+                    return _agent_run_result_from_state(
+                        claimed_state,
+                        resolved_session,
+                        agent=agent,
+                    )
             else:
                 await agent.run_store.save(initial_state)
         trace = AgentTrace(
@@ -2984,6 +3374,8 @@ class AgentRuntime:
         accumulated_tool_results: list[ToolExecutionResult] = []
         accumulated_artifacts: list[SkillArtifact] = []
         accumulated_usages: list[TokenUsage | None] = []
+        call_hooks = list(hooks or [])
+        run_hooks = [*self._hooks, *call_hooks]
         run_deadline_ms = (
             started_at_ms + agent.run_limits.max_wall_time_ms
             if agent.run_limits.max_wall_time_ms is not None
@@ -2992,12 +3384,14 @@ class AgentRuntime:
         try:
             await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
             while True:
+                effective_hooks = [*run_hooks, *current_agent.hooks]
                 trace.segments.append(AgentTraceSegment(agent_name=current_agent.name, started_at_ms=_now_ms()))
                 await publish(AgentDelegationStartEvent(agent_name=current_agent.name, handoff_depth=handoff_depth))
 
                 async def run_segment() -> AgentRunResult:
                     return await self._run_single(
                         agent=current_agent,
+                        output_agent=agent,
                         session=resolved_session,
                         run_id=run_id,
                         trace=trace,
@@ -3017,6 +3411,9 @@ class AgentRuntime:
                         retry_backoff_ms=retry_backoff_ms,
                         emit=publish,
                         live_stream=live_stream,
+                        deps=deps,
+                        hooks=effective_hooks,
+                        child_hooks=call_hooks,
                     )
 
                 if run_deadline_ms is None:
@@ -3043,6 +3440,24 @@ class AgentRuntime:
                     )
                 )
                 if segment_result.handoff is None or stop_on_handoff:
+                    segment_context = AgentContext(
+                        run_id=run_id,
+                        session_id=resolved_session.id,
+                        agent_name=current_agent.name,
+                        memory_summary=resolved_session.summary,
+                        metadata=dict(current_agent.metadata),
+                        handoff_path=list(trace.orchestration_path),
+                        deps=deps,
+                        session=resolved_session,
+                    )
+                    await _call_agent_hooks(
+                        effective_hooks,
+                        "on_agent_end",
+                        segment_context,
+                        current_agent,
+                        segment_result,
+                        reverse=True,
+                    )
                     final_handoff = segment_result.handoff if stop_on_handoff else None
                     trace.finished_at_ms = _now_ms()
                     output = AgentRunResult(
@@ -3050,6 +3465,7 @@ class AgentRuntime:
                         agent_name=segment_result.agent_name,
                         session=resolved_session,
                         text=segment_result.text,
+                        output=segment_result.output,
                         finish_reason=segment_result.finish_reason,
                         provider_finish_reason=segment_result.provider_finish_reason,
                         usage=_merge_usage(accumulated_usages),
@@ -3105,6 +3521,32 @@ class AgentRuntime:
                         target_agent=next_agent.name,
                     )
                 )
+                handoff_context = AgentContext(
+                    run_id=run_id,
+                    session_id=resolved_session.id,
+                    agent_name=current_agent.name,
+                    memory_summary=resolved_session.summary,
+                    metadata=dict(current_agent.metadata),
+                    handoff_path=list(trace.orchestration_path),
+                    deps=deps,
+                    session=resolved_session,
+                )
+                await _call_agent_hooks(
+                    effective_hooks,
+                    "on_handoff",
+                    handoff_context,
+                    current_agent,
+                    next_agent,
+                    handoff,
+                )
+                await _call_agent_hooks(
+                    effective_hooks,
+                    "on_agent_end",
+                    handoff_context,
+                    current_agent,
+                    segment_result,
+                    reverse=True,
+                )
                 await publish(AgentHandoffEvent(handoff=handoff))
                 current_agent = next_agent
                 trace.orchestration_path.append(next_agent.name)
@@ -3129,22 +3571,7 @@ class AgentRuntime:
                 suspended=suspended,
                 orchestration_path=list(trace.orchestration_path),
             )
-            if agent.run_store is not None:
-                try:
-                    run_state = await _persist_agent_run_state(agent.run_store, run_state)
-                except AgentRunCancelled as error:
-                    await publish(AgentErrorEvent(error=error), durable_state_committed=True)
-                    raise
-            await publish(
-                AgentFinishEvent(
-                    run_id=run_id,
-                    session_id=resolved_session.id,
-                    text="",
-                    finish_reason="tool-calls",
-                ),
-                durable_state_committed=agent.run_store is not None,
-            )
-            return AgentRunResult(
+            suspended_result: AgentRunResult[Any] = AgentRunResult(
                 run_id=run_id,
                 agent_name=current_agent.name,
                 session=resolved_session,
@@ -3159,8 +3586,59 @@ class AgentRuntime:
                 state=run_state,
                 provider_finish_reason=pending.reason,
             )
+            suspended_context = AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=current_agent.name,
+                memory_summary=resolved_session.summary,
+                metadata=dict(current_agent.metadata),
+                handoff_path=list(trace.orchestration_path),
+                deps=deps,
+                session=resolved_session,
+            )
+            await _call_agent_hooks(
+                [*run_hooks, *current_agent.hooks],
+                "on_agent_end",
+                suspended_context,
+                current_agent,
+                suspended_result,
+                reverse=True,
+            )
+            if agent.run_store is not None:
+                try:
+                    run_state = await _persist_agent_run_state(agent.run_store, run_state)
+                except AgentRunCancelled as error:
+                    await publish(AgentErrorEvent(error=error), durable_state_committed=True)
+                    raise
+                suspended_result.state = run_state
+            await publish(
+                AgentFinishEvent(
+                    run_id=run_id,
+                    session_id=resolved_session.id,
+                    text="",
+                    finish_reason="tool-calls",
+                ),
+                durable_state_committed=agent.run_store is not None,
+            )
+            return suspended_result
         except AgentRunCancelled as error:
             trace.finished_at_ms = _now_ms()
+            cancelled_context = AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=current_agent.name,
+                memory_summary=resolved_session.summary,
+                metadata=dict(current_agent.metadata),
+                handoff_path=list(trace.orchestration_path),
+                deps=deps,
+                session=resolved_session,
+            )
+            await _call_error_hooks_preserving(
+                [*run_hooks, *current_agent.hooks],
+                cancelled_context,
+                current_agent,
+                error,
+            )
             await publish(AgentErrorEvent(error=error), durable_state_committed=True)
             raise
         except Exception as error:
@@ -3168,7 +3646,7 @@ class AgentRuntime:
             if isinstance(error, AgentEventDeliveryError) and error.durable_state_committed:
                 raise
             if agent.run_store is not None:
-                failed_result = AgentRunResult(
+                failed_result: AgentRunResult[Any] = AgentRunResult(
                     run_id=run_id,
                     agent_name=current_agent.name,
                     session=resolved_session,
@@ -3199,6 +3677,22 @@ class AgentRuntime:
                     raise cancelled from error
             if isinstance(error, AgentEventDeliveryError):
                 raise
+            error_context = AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=current_agent.name,
+                memory_summary=resolved_session.summary,
+                metadata=dict(current_agent.metadata),
+                handoff_path=list(trace.orchestration_path),
+                deps=deps,
+                session=resolved_session,
+            )
+            await _call_error_hooks_preserving(
+                [*run_hooks, *current_agent.hooks],
+                error_context,
+                current_agent,
+                error,
+            )
             await publish(
                 AgentErrorEvent(error=error),
                 durable_state_committed=agent.run_store is not None,
@@ -3333,6 +3827,7 @@ class AgentRuntime:
         self,
         *,
         agent: Agent,
+        output_agent: Agent[Any, Any],
         session: AgentSession,
         run_id: str,
         trace: AgentTrace,
@@ -3352,6 +3847,9 @@ class AgentRuntime:
         retry_backoff_ms: int | None,
         emit: Callable[[AgentEvent], Awaitable[None]],
         live_stream: bool,
+        deps: Any,
+        hooks: list[AgentHooks],
+        child_hooks: list[AgentHooks],
     ) -> AgentRunResult:
         active_skill_activations, skipped_skills, skill_tools = await _select_active_skills(
             _resolve_skill_registry(agent, skills),
@@ -3361,14 +3859,6 @@ class AgentRuntime:
             messages=messages,
         )
         await _emit_skill_events(active_skills=active_skill_activations, skipped_skills=skipped_skills, emit=emit)
-        built_messages = _build_run_messages(
-            agent=agent,
-            session=session,
-            prompt=prompt,
-            messages=messages,
-            active_skills=[item.skill for item in active_skill_activations],
-        )
-        _persist_active_skills(session, active_skill_activations)
         context = AgentContext(
             run_id=run_id,
             session_id=session.id,
@@ -3379,7 +3869,25 @@ class AgentRuntime:
                 "skills": [item.skill.name for item in active_skill_activations],
             },
             handoff_path=list(trace.orchestration_path),
+            deps=deps,
+            session=session,
         )
+        await _call_agent_hooks(hooks, "on_agent_start", context, agent)
+        resolved_instructions = await _resolve_agent_instructions(agent, context)
+        structured_output, structured_output_instructions = _resolve_agent_structured_output(
+            output_agent,
+            model=agent.model,
+        )
+        built_messages = _build_run_messages(
+            agent=agent,
+            session=session,
+            prompt=prompt,
+            messages=messages,
+            active_skills=[item.skill for item in active_skill_activations],
+            instructions=resolved_instructions,
+            structured_output_instructions=structured_output_instructions,
+        )
+        _persist_active_skills(session, active_skill_activations)
         guarded_input = await self._run_input_guardrails(
             agent=agent,
             run_id=run_id,
@@ -3395,7 +3903,13 @@ class AgentRuntime:
         if agent.subagents:
             registry = registry.merge(
                 {
-                    name: create_subagent_tool(name=name, agent=subagent, parent_run_id=run_id)
+                    name: create_subagent_tool(
+                        name=name,
+                        agent=subagent,
+                        parent_run_id=run_id,
+                        runtime=self,
+                        hooks=child_hooks,
+                    )
                     for name, subagent in agent.subagents.items()
                 }
             )
@@ -3410,6 +3924,13 @@ class AgentRuntime:
             started_at_ms=trace.started_at_ms,
             context=context,
             emit=emit,
+            hooks=hooks,
+        )
+        lifecycle_model = _LifecycleLanguageModel(
+            cast(LanguageModel, agent.model),
+            agent=agent,
+            context=context,
+            hooks=hooks,
         )
         span = self._start_span(
             "zhivex.agent.model",
@@ -3456,6 +3977,7 @@ class AgentRuntime:
                 handoff_path=list(trace.orchestration_path),
             )
             decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
+            await _call_agent_hooks(hooks, "on_approval", context, agent, request, decision)
             await emit(
                 AgentToolApprovalEvent(
                     tool_name=approval.tool_name,
@@ -3523,7 +4045,7 @@ class AgentRuntime:
                             pending_provider_responses.append(await resolve_provider_managed_approval(approval))
 
                     streamed = stream_text(
-                        model=cast(LanguageModel, agent.model),
+                        model=lifecycle_model,
                         messages=conversation_messages,
                         tools=merged_tools or None,
                         tool_choice=cast(Any, tool_choice),
@@ -3536,12 +4058,13 @@ class AgentRuntime:
                         timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
                         max_retries=max_retries,
                         retry_backoff_ms=retry_backoff_ms,
+                        structured_output=structured_output,
                         on_event=handle_stream_event,
                     )
                     result = await streamed.collect()
                 else:
                     result = await generate_text(
-                        model=cast(LanguageModel, agent.model),
+                        model=lifecycle_model,
                         messages=conversation_messages,
                         tools=merged_tools or None,
                         tool_choice=cast(Any, tool_choice),
@@ -3554,6 +4077,7 @@ class AgentRuntime:
                         timeout_ms=_effective_timeout_ms(agent.run_limits, timeout_ms),
                         max_retries=max_retries,
                         retry_backoff_ms=retry_backoff_ms,
+                        structured_output=structured_output,
                     )
 
                 accumulated_steps.extend(result.steps)
@@ -3629,13 +4153,15 @@ class AgentRuntime:
                     await emit(AgentTextDeltaEvent(text_delta=text_delta))
             elif segment_text:
                 await emit(AgentTextDeltaEvent(text_delta=segment_text))
+        handoff = _detect_handoff(accumulated_tool_results)
+        segment_output = None if handoff is not None else _parse_agent_output(output_agent, segment_text)
         transcript = list(session.messages)
         if messages is not None:
             transcript.extend(messages)
         elif prompt is not None:
             transcript.append(create_text_message("user", prompt))
         transcript.extend(persisted_run_messages)
-        session.messages = _strip_runtime_system_messages(transcript, agent.instructions)
+        session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
         if agent.memory is not None and _should_refresh_summary(agent.memory, session):
             summary_span = self._start_span(
                 "zhivex.agent.summary",
@@ -3695,8 +4221,7 @@ class AgentRuntime:
                     for artifact in artifacts
                 ],
             }
-        handoff = _detect_handoff(accumulated_tool_results)
-        return AgentRunResult(
+        segment_result = AgentRunResult(
             run_id=run_id,
             agent_name=agent.name,
             session=session,
@@ -3711,7 +4236,9 @@ class AgentRuntime:
             trace=trace,
             handoff=handoff,
             orchestration_path=list(trace.orchestration_path),
+            output=segment_output,
         )
+        return segment_result
 
     def _wrap_agent_tools(
         self,
@@ -3724,6 +4251,7 @@ class AgentRuntime:
         started_at_ms: int,
         context: AgentContext,
         emit: Callable[[AgentEvent], Awaitable[None]],
+        hooks: list[AgentHooks],
     ) -> ToolSet:
         wrapped: ToolSet = {}
         tool_limit = agent.run_limits.max_tool_calls
@@ -3773,6 +4301,7 @@ class AgentRuntime:
                     trace.approval_count += 1
                     if agent.approval_policy is not None:
                         decision = _normalize_approval_decision(await _maybe_await(agent.approval_policy(request)))
+                    await _call_agent_hooks(hooks, "on_approval", context, agent, request, decision)
                     pending_approval = (
                         _pending_approval_from_request(
                             request,
@@ -3829,6 +4358,7 @@ class AgentRuntime:
                     source=_definition.source,
                     metadata={**context.metadata, **_definition.metadata},
                     handoff_path=list(trace.orchestration_path),
+                    deps=context.deps,
                 )
                 span = self._start_span(
                     "zhivex.agent.tool",
@@ -3841,14 +4371,37 @@ class AgentRuntime:
                 )
                 skill_name = str(_definition.metadata.get("skill_name") or "")
                 skill_entrypoint = str(_definition.metadata.get("skill_entrypoint") or "")
-                if skill_name and skill_entrypoint:
-                    await emit(AgentSkillExecutionStartEvent(skill_name=skill_name, entrypoint=skill_entrypoint))
                 try:
+                    if skill_name and skill_entrypoint:
+                        await emit(AgentSkillExecutionStartEvent(skill_name=skill_name, entrypoint=skill_entrypoint))
+                    await _call_agent_hooks(
+                        hooks,
+                        "on_tool_start",
+                        context,
+                        agent,
+                        _definition,
+                        input,
+                        tool_context,
+                    )
                     result = await registry.execute(_definition, input, tool_context)
                 except Exception as error:
                     if skill_name and skill_entrypoint:
                         await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=False))
                     self._finish_span(span, error=error)
+                    try:
+                        await _call_agent_hooks(
+                            hooks,
+                            "on_tool_error",
+                            context,
+                            agent,
+                            _definition,
+                            input,
+                            tool_context,
+                            error,
+                            reverse=True,
+                        )
+                    except Exception as hook_error:
+                        error.add_note(f"Agent on_tool_error hook also failed: {hook_error}")
                     raise
                 if skill_name and skill_entrypoint:
                     await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=True))
@@ -3875,6 +4428,17 @@ class AgentRuntime:
                                         )
                                     )
                 self._finish_span(span)
+                await _call_agent_hooks(
+                    hooks,
+                    "on_tool_end",
+                    context,
+                    agent,
+                    _definition,
+                    input,
+                    tool_context,
+                    result,
+                    reverse=True,
+                )
                 return result
 
             wrapped[tool_name] = ToolDefinition(
@@ -3920,8 +4484,8 @@ class AgentRuntime:
         span.end(attributes=attributes, error=error)
 
 
-class AgentStreamResult:
-    def __init__(self, runner: asyncio.Task[AgentRunResult], broadcast: _Broadcast) -> None:
+class AgentStreamResult(Generic[AgentOutputT]):
+    def __init__(self, runner: asyncio.Task[AgentRunResult[AgentOutputT]], broadcast: _Broadcast) -> None:
         self._runner = runner
         self._broadcast = broadcast
 
@@ -3936,7 +4500,7 @@ class AgentStreamResult:
 
         return generator()
 
-    async def collect(self) -> AgentRunResult:
+    async def collect(self) -> AgentRunResult[AgentOutputT]:
         return await self._runner
 
 
@@ -3986,8 +4550,13 @@ class _LiveBroadcast:
         return generator()
 
 
-class LiveAgentStreamResult:
-    def __init__(self, runner: asyncio.Task[AgentRunResult], broadcast: _LiveBroadcast, live_session: asyncio.Future[Any]) -> None:
+class LiveAgentStreamResult(Generic[AgentOutputT]):
+    def __init__(
+        self,
+        runner: asyncio.Task[AgentRunResult[AgentOutputT]],
+        broadcast: _LiveBroadcast,
+        live_session: asyncio.Future[Any],
+    ) -> None:
         self._runner = runner
         self._broadcast = broadcast
         self._live_session = live_session
@@ -4023,7 +4592,7 @@ class LiveAgentStreamResult:
     async def aclose(self) -> None:
         await (await self._live_session).aclose()
 
-    async def collect(self) -> AgentRunResult:
+    async def collect(self) -> AgentRunResult[AgentOutputT]:
         return await self._runner
 
 
@@ -4033,10 +4602,22 @@ def create_subagent_tool(
     agent: Agent,
     parent_run_id: str | None = None,
     description: str | None = None,
+    runtime: AgentRuntime | None = None,
+    hooks: Iterable[AgentHooks] | None = None,
 ) -> ToolDefinition:
-    async def execute(input: Any) -> JsonValue:
+    async def execute(
+        input: Any,
+        context: ToolExecutionContext[Any] | None = None,
+    ) -> JsonValue:
         prompt = input.get("prompt") if isinstance(input, dict) else str(input)
-        result = await run_agent(agent=agent, prompt=str(prompt or ""), parent_run_id=parent_run_id)
+        result = await run_agent(
+            agent=agent,
+            prompt=str(prompt or ""),
+            deps=context.deps if context is not None else None,
+            parent_run_id=parent_run_id or (context.run_id if context is not None else None),
+            runtime=runtime,
+            hooks=hooks,
+        )
         child_state = result.state
         if child_state is None:
             child_state = _agent_run_state_from_result(
@@ -4118,10 +4699,11 @@ async def run_agent_group(
 
 def run_agent(
     *,
-    agent: Agent,
+    agent: Agent[AgentDepsT, AgentOutputT],
     session: AgentSession | None = None,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
+    deps: AgentDepsT | None = None,
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
@@ -4140,13 +4722,16 @@ def run_agent(
     observer: AgentObserver | None = None,
     parent_run_id: str | None = None,
     idempotency_key: str | None = None,
-) -> Awaitable[AgentRunResult]:
+    hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
+) -> Awaitable[AgentRunResult[AgentOutputT]]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     return resolved_runtime.run(
         agent=agent,
         session=session,
         prompt=prompt,
         messages=messages,
+        deps=deps,
         tools=tools,
         skills=skills,
         tool_choice=tool_choice,
@@ -4162,15 +4747,18 @@ def run_agent(
         stop_on_handoff=stop_on_handoff,
         parent_run_id=parent_run_id,
         idempotency_key=idempotency_key,
+        hooks=hooks,
+        middleware=middleware,
     )
 
 
 def resume_agent(
     *,
-    agent: Agent,
+    agent: Agent[AgentDepsT, AgentOutputT],
     session_id: str,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
+    deps: AgentDepsT | None = None,
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
@@ -4187,10 +4775,12 @@ def resume_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
-) -> Awaitable[AgentRunResult]:
+    hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
+) -> Awaitable[AgentRunResult[AgentOutputT]]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
 
-    async def runner() -> AgentRunResult:
+    async def runner() -> AgentRunResult[AgentOutputT]:
         resumed_session = await load_agent_session(agent, session_id)
         latest_checkpoint: AgentCheckpoint | None = None
         if agent.checkpoint_store is not None:
@@ -4209,6 +4799,7 @@ def resume_agent(
             session=resumed_session,
             prompt=prompt,
             messages=messages,
+            deps=deps,
             tools=tools,
             skills=skills,
             tool_choice=tool_choice,
@@ -4223,6 +4814,8 @@ def resume_agent(
             retry_backoff_ms=retry_backoff_ms,
             stop_on_handoff=stop_on_handoff,
             resumed_from_checkpoint=latest_checkpoint,
+            hooks=hooks,
+            middleware=middleware,
         )
 
     return runner()
@@ -4245,7 +4838,38 @@ async def _execute_resolved_approval_tool(
     approved: bool,
     reason: str | None,
     tools: ToolSet | ToolRegistry | None,
+    deps: Any = None,
+    hooks: Iterable[AgentHooks] | None = None,
 ) -> ToolExecutionResult:
+    agent_context = AgentContext(
+        run_id=state.run_id,
+        session_id=state.session_id or "",
+        agent_name=state.agent_name,
+        metadata=dict(state.metadata),
+        handoff_path=list(pending.handoff_path),
+        deps=deps,
+    )
+    effective_hooks = list(hooks or [])
+    request = ToolApprovalRequest(
+        run_id=state.run_id,
+        session_id=state.session_id or "",
+        agent_name=state.agent_name,
+        tool_name=pending.name,
+        tool_input=pending.arguments,
+        tool_permissions=list(pending.permissions),
+        tool_source=pending.source,
+        tool_metadata=dict(pending.metadata),
+        context=agent_context,
+        handoff_path=list(pending.handoff_path),
+    )
+    await _call_agent_hooks(
+        effective_hooks,
+        "on_approval",
+        agent_context,
+        agent,
+        request,
+        ApprovalDecision(approved=approved, reason=reason),
+    )
     if not approved:
         return ToolExecutionResult(
             tool_call_id=pending.tool_call_id or pending.id,
@@ -4278,10 +4902,31 @@ async def _execute_resolved_approval_tool(
         source=cast(ToolSource, pending.source),
         metadata=dict(pending.metadata),
         handoff_path=list(pending.handoff_path),
+        deps=deps,
+    )
+    await _call_agent_hooks(
+        effective_hooks,
+        "on_tool_start",
+        agent_context,
+        agent,
+        definition,
+        pending.arguments,
+        context,
     )
     try:
         output = await registry.execute(definition, pending.arguments, context)
     except Exception as error:
+        await _call_agent_hooks(
+            effective_hooks,
+            "on_tool_error",
+            agent_context,
+            agent,
+            definition,
+            pending.arguments,
+            context,
+            error,
+            reverse=True,
+        )
         return ToolExecutionResult(
             tool_call_id=pending.tool_call_id or pending.id,
             tool_name=pending.name,
@@ -4289,6 +4934,17 @@ async def _execute_resolved_approval_tool(
             is_error=True,
             provider_metadata={"approval_id": pending.id, "approval_status": "approved"},
         )
+    await _call_agent_hooks(
+        effective_hooks,
+        "on_tool_end",
+        agent_context,
+        agent,
+        definition,
+        pending.arguments,
+        context,
+        output,
+        reverse=True,
+    )
     return ToolExecutionResult(
         tool_call_id=pending.tool_call_id or pending.id,
         tool_name=pending.name,
@@ -4341,11 +4997,12 @@ def _find_agent_for_resume(root: Agent, agent_name: str, registry: AgentRegistry
 
 def resume_agent_run(
     *,
-    agent: Agent,
+    agent: Agent[AgentDepsT, AgentOutputT],
     run_id: str,
     approval_id: str | None = None,
     approved: bool = True,
     reason: str | None = None,
+    deps: AgentDepsT | None = None,
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
@@ -4363,10 +5020,12 @@ def resume_agent_run(
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
     idempotency_key: str | None = None,
-) -> Awaitable[AgentRunResult]:
+    hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
+) -> Awaitable[AgentRunResult[AgentOutputT]]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
 
-    async def runner() -> AgentRunResult:
+    async def runner() -> AgentRunResult[AgentOutputT]:
         run_store = agent.run_store
         if run_store is None:
             raise ValidationError("resume_agent_run(...) requires agent.run_store.")
@@ -4439,7 +5098,8 @@ def resume_agent_run(
         if pending is None:
             raise ValidationError(f'Pending approval "{selected_pending.id}" was not found on run "{run_id}" after claiming it.')
 
-        async def resume_claimed_run() -> AgentRunResult:
+        async def resume_claimed_run() -> AgentRunResult[AgentOutputT]:
+            approval_hooks = [*resolved_runtime._hooks, *list(hooks or []), *resume_agent_instance.hooks]
             approval_result = await _execute_resolved_approval_tool(
                 agent=resume_agent_instance,
                 state=suspended_state,
@@ -4447,6 +5107,8 @@ def resume_agent_run(
                 approved=approved,
                 reason=reason,
                 tools=tools,
+                deps=deps,
+                hooks=approval_hooks,
             )
             resume_messages = _resume_messages_from_state(suspended_state)
             resume_messages.append(ModelMessage(role="tool", parts=[tool_result_part(approval_result)]))
@@ -4463,6 +5125,7 @@ def resume_agent_run(
                 agent=resume_agent_instance,
                 session=session,
                 messages=resume_messages,
+                deps=deps,
                 tools=tools,
                 skills=skills,
                 tool_choice=tool_choice,
@@ -4478,6 +5141,8 @@ def resume_agent_run(
                 stop_on_handoff=stop_on_handoff,
                 parent_run_id=run_id,
                 idempotency_key=idempotency_key or f"{run_id}:{pending.id}:resume",
+                hooks=hooks,
+                middleware=middleware,
             )
             resumed_at_ms = result.state.updated_at_ms if result.state is not None else _now_ms()
             suspended_state.pending_approvals = [item for item in suspended_state.pending_approvals if item.id != pending.id]
@@ -4534,10 +5199,11 @@ def resume_agent_run(
 
 def stream_agent(
     *,
-    agent: Agent,
+    agent: Agent[AgentDepsT, AgentOutputT],
     session: AgentSession | None = None,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
+    deps: AgentDepsT | None = None,
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
@@ -4555,20 +5221,23 @@ def stream_agent(
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
     idempotency_key: str | None = None,
-) -> AgentStreamResult:
+    hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
+) -> AgentStreamResult[AgentOutputT]:
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     broadcast = _Broadcast(history=[])
 
     async def emit(event: AgentEvent) -> None:
         await broadcast.publish(event)
 
-    async def runner() -> AgentRunResult:
+    async def runner() -> AgentRunResult[AgentOutputT]:
         try:
             return await resolved_runtime.run(
                 agent=agent,
                 session=session,
                 prompt=prompt,
                 messages=messages,
+                deps=deps,
                 tools=tools,
                 skills=skills,
                 tool_choice=tool_choice,
@@ -4585,6 +5254,8 @@ def stream_agent(
                 emit=emit,
                 live_stream=True,
                 idempotency_key=idempotency_key,
+                hooks=hooks,
+                middleware=middleware,
             )
         finally:
             await broadcast.close()
@@ -4594,8 +5265,9 @@ def stream_agent(
 
 def stream_live_agent(
     *,
-    agent: Agent,
+    agent: Agent[AgentDepsT, AgentOutputT],
     session: AgentSession | None = None,
+    deps: AgentDepsT | None = None,
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
@@ -4607,7 +5279,8 @@ def stream_live_agent(
     observer: AgentObserver | None = None,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
-) -> LiveAgentStreamResult:
+    hooks: Iterable[AgentHooks] | None = None,
+) -> LiveAgentStreamResult[AgentOutputT]:
     if not hasattr(agent.model, "connect"):
         raise ValidationError("stream_live_agent() requires an agent.model that supports realtime sessions.")
 
@@ -4621,7 +5294,7 @@ def stream_live_agent(
     async def emit_live(event: RealtimeEvent) -> None:
         await broadcast.publish(event)
 
-    async def runner() -> AgentRunResult:
+    async def runner() -> AgentRunResult[AgentOutputT]:
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
             state = await agent.memory.load(resolved_session.id)
@@ -4649,7 +5322,7 @@ def stream_live_agent(
         registry_instance = _resolve_tool_registry(agent, tools)
         if skill_tools:
             registry_instance = registry_instance.merge(skill_tools)
-        context = AgentContext(
+        context: AgentContext[AgentDepsT] = AgentContext(
             run_id=run_id,
             session_id=resolved_session.id,
             agent_name=agent.name,
@@ -4659,13 +5332,24 @@ def stream_live_agent(
                 "skills": [item.skill.name for item in active_skill_activations],
             },
             handoff_path=list(trace.orchestration_path),
+            deps=deps,
+            session=resolved_session,
         )
+        effective_hooks = [*resolved_runtime._hooks, *list(hooks or []), *agent.hooks]
+        await _call_agent_hooks(effective_hooks, "on_agent_start", context, agent)
+        resolved_instructions = await _resolve_agent_instructions(agent, context)
+        if agent.output_type is not None and agent.output_mode == "native":
+            raise ValidationError("Realtime agents do not support native typed outputs; use output_mode='prompted'.")
+        realtime_output_agent = replace(agent, output_mode="prompted") if agent.output_type is not None else agent
+        _, structured_output_instructions = _resolve_agent_structured_output(realtime_output_agent)
         input_messages = _build_run_messages(
             agent=agent,
             session=resolved_session,
             prompt=prompt,
             messages=messages,
             active_skills=[item.skill for item in active_skill_activations],
+            instructions=resolved_instructions,
+            structured_output_instructions=structured_output_instructions,
         )
         _persist_active_skills(resolved_session, active_skill_activations)
         guarded_input = await resolved_runtime._run_input_guardrails(
@@ -4689,12 +5373,21 @@ def stream_live_agent(
             started_at_ms=trace.started_at_ms,
             context=context,
             emit=emit_agent,
+            hooks=effective_hooks,
         )
-        instruction_base = realtime_config.instructions if realtime_config is not None and realtime_config.instructions is not None else agent.instructions
+        instruction_base = (
+            realtime_config.instructions
+            if realtime_config is not None and realtime_config.instructions is not None
+            else resolved_instructions
+        )
         combined_instructions = instruction_base
-        if active_skill_activations:
+        supplemental_instructions = [
+            *(_skill_system_message(item.skill) for item in active_skill_activations),
+            *([structured_output_instructions] if structured_output_instructions else []),
+        ]
+        if supplemental_instructions:
             combined_instructions = "\n\n".join(
-                [text for text in [instruction_base, *(_skill_system_message(item.skill) for item in active_skill_activations)] if text]
+                [text for text in [instruction_base, *supplemental_instructions] if text]
             )
         live_config = realtime_config or RealtimeSessionConfig(
             instructions=combined_instructions,
@@ -4704,7 +5397,7 @@ def stream_live_agent(
         )
         if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
             live_config = replace(realtime_config, provider_options=provider_options)
-        if realtime_config is not None and active_skill_activations:
+        if realtime_config is not None and supplemental_instructions:
             live_config = replace(live_config, instructions=combined_instructions)
 
         transcript = list(resolved_session.messages)
@@ -4764,7 +5457,7 @@ def stream_live_agent(
                             is_error=True,
                         )
                     else:
-                        call_context = ToolExecutionContext(
+                        call_context: ToolExecutionContext[AgentDepsT] = ToolExecutionContext(
                             tool_name=event.tool_call.name,
                             tool_call_id=event.tool_call.id,
                             run_id=run_id,
@@ -4775,6 +5468,7 @@ def stream_live_agent(
                             source=definition.source,
                             metadata={**context.metadata, **definition.metadata},
                             handoff_path=list(trace.orchestration_path),
+                            deps=deps,
                         )
                         try:
                             output = _invoke_tool_callable(definition.execute, event.tool_call.input, call_context)
@@ -4823,11 +5517,18 @@ def stream_live_agent(
             if not live_session_future.done():
                 live_session_future.set_exception(error)
             await emit_agent(AgentErrorEvent(error=error))
+            await _call_error_hooks_preserving(
+                effective_hooks,
+                context,
+                agent,
+                error,
+            )
             raise
         finally:
             await live_session.aclose()
 
-        resolved_session.messages = _strip_runtime_system_messages(transcript, agent.instructions)
+        parsed_output = _parse_agent_output(agent, last_assistant_text)
+        resolved_session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
         if agent.memory is not None and _should_refresh_summary(agent.memory, resolved_session):
             resolved_session.summary = await agent.memory.summarize(
                 session_id=resolved_session.id,
@@ -4858,7 +5559,7 @@ def stream_live_agent(
             )
         )
         trace.finished_at_ms = _now_ms()
-        result = AgentRunResult(
+        result: AgentRunResult[AgentOutputT] = AgentRunResult(
             run_id=run_id,
             agent_name=agent.name,
             session=resolved_session,
@@ -4869,11 +5570,20 @@ def stream_live_agent(
             tool_results=tool_results,
             trace=trace,
             orchestration_path=list(trace.orchestration_path),
+            output=cast(AgentOutputT, parsed_output),
+        )
+        await _call_agent_hooks(
+            effective_hooks,
+            "on_agent_end",
+            context,
+            agent,
+            result,
+            reverse=True,
         )
         await broadcast.close()
         return result
 
-    async def managed_runner() -> AgentRunResult:
+    async def managed_runner() -> AgentRunResult[AgentOutputT]:
         try:
             return await runner()
         finally:

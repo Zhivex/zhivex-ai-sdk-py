@@ -3,7 +3,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, TypeAlias, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar
 
 JsonPrimitive = str | int | float | bool | None
 JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
@@ -1309,8 +1309,11 @@ class ToolExecutionOptions:
     stop_on_error: bool = False
 
 
+ToolContextDepsT = TypeVar("ToolContextDepsT")
+
+
 @dataclass(slots=True)
-class ToolExecutionContext:
+class ToolExecutionContext(Generic[ToolContextDepsT]):
     tool_name: str
     tool_call_id: str = ""
     idempotency_key: str | None = None
@@ -1323,6 +1326,7 @@ class ToolExecutionContext:
     source: ToolSource = "local"
     metadata: dict[str, Any] = field(default_factory=dict)
     handoff_path: list[str] = field(default_factory=list)
+    deps: ToolContextDepsT | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
