@@ -91,6 +91,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/sequential_workflow.py
 .venv/bin/python examples/agents/parallel_workflow.py
 .venv/bin/python examples/agents/loop_workflow.py
+.venv/bin/python examples/agents/durable_graph_workflow.py
 .venv/bin/python examples/agents/structured_workflow_outputs.py
 .venv/bin/python examples/agents/workflow_resume.py
 .venv/bin/python examples/agents/artifact_document_workflow.py
@@ -138,6 +139,7 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/sequential_workflow.py
 .venv/bin/python examples/agents/parallel_workflow.py
 .venv/bin/python examples/agents/loop_workflow.py
+.venv/bin/python examples/agents/durable_graph_workflow.py
 .venv/bin/python examples/agents/structured_workflow_outputs.py
 .venv/bin/python examples/agents/workflow_resume.py
 .venv/bin/python examples/agents/artifact_document_workflow.py
@@ -213,6 +215,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 
 | Example | Mode | Requirements | Command | Verification |
 | --- | --- | --- | --- | --- |
+| `agents/durable_graph_workflow.py` | offline | dev env | `.venv/bin/python examples/agents/durable_graph_workflow.py` | `make test-examples` |
 | `agents/structured_workflow_outputs.py` | offline | dev env | `.venv/bin/python examples/agents/structured_workflow_outputs.py` | `make test-examples` |
 | `agents/workflow_resume.py` | offline | dev env | `.venv/bin/python examples/agents/workflow_resume.py` | `make test-examples` |
 | `agents/artifact_document_workflow.py` | offline | dev env | `.venv/bin/python examples/agents/artifact_document_workflow.py` | `make test-examples` |
@@ -242,7 +245,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - The new agent runtime is provider-agnostic, but it works best with models that support tools and streaming.
 - `small_business_loan_agent.py` is an offline reference app for regulated, multi-step workflows: the SDK handles orchestration, repair/resume, approvals, traces, and replay, while the example keeps credit rules, pricing, persistence, and approval UI as application-owned components behind replaceable interfaces.
 - `hr_candidate_selection_agent.py` is an offline reference app for human-centered HR workflows: the SDK handles resume intake orchestration, interview steps, recruiter review, fairness checks, traces, and replay, while ATS integrations, hiring policy, and compliance systems stay application-owned.
-- `structured_workflow_outputs.py`, `workflow_resume.py`, `artifact_document_workflow.py`, and `research_report_workflow.py` are focused offline workflow examples for Pydantic validation, app-owned resume, document artifacts, parallel research, report synthesis, and replay.
+- `durable_graph_workflow.py` is the offline v0.15 reference for a validated graph backed by SQLite, process-style reconstruction, explicit interrupt resume, and fork lineage. `structured_workflow_outputs.py`, `workflow_resume.py`, `artifact_document_workflow.py`, and `research_report_workflow.py` retain the earlier declarative-agent patterns for Pydantic validation, application records, document artifacts, parallel research, report synthesis, and replay.
 - `skills.py` shows the provider-agnostic agent-skill runtime, which is separate from the native OpenAI Skills API.
 - `native_hosted_tools.py` is the compact production-style example for mixing local callable tools with provider-managed hosted tools on OpenAI or Azure OpenAI native models.
 - `provider_managed_approvals.py` is the compact production-style example for OpenAI/Azure remote MCP approvals with `stream_agent(...)` and `approval_policy`.

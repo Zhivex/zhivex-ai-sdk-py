@@ -41,11 +41,17 @@ When a stable API needs to change:
 
 ## Beta and experimental expectations
 
-Beta APIs are intended for early adoption with documented change management. The packaged-skill layer, in-memory and SQLite agent run stores, native subagent tools, declarative workflow agents, evaluation helpers, trace artifacts, redaction policies, budget guards, and UI approval chunks follow this beta policy.
+Beta APIs are intended for early adoption with documented change management. The packaged-skill layer, in-memory and SQLite agent run stores, native subagent tools, declarative workflow agents, durable workflow graphs/checkpoints/stores, workflow resume/fork, workflow callback adapters, evaluation helpers, trace artifacts, redaction policies, budget guards, and UI approval chunks follow this beta policy.
 
 The current beta-only areas are narrower than the full agent story. Foundation model middleware helpers and model catalog helpers remain beta. The agent runtime—including typed context/output contracts, dynamic instructions, lifecycle hooks, run middleware, and the observer protocol—session helpers, agent skills, MCP helpers, MCP-backed registries, Postgres-backed agent stores, run-state serialization, cancellation, replay, run-snapshot helpers, and durable local-tool approval resume are now part of the documented stable surface and follow the stable-surface rules above.
 
 `AgentRunStore.save(...)` remains compatible with implementations returning `None`; built-in stores return the authoritative persisted state and revision. Atomic capabilities such as `claim_idempotency_key(...)`, `claim_pending_approval(...)`, `cancel_run(...)`, and `fail_resume_claim(...)` are checked only when the corresponding feature is used. Custom production stores must implement those operations transactionally to enable those features.
+
+The `0.15.0` workflow additions preserve existing `WorkflowStep`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `run_workflow(...)`, and string-output behavior. New `WorkflowStep` fields are additive. `WorkflowStep.max_retries` continues to configure retries inside `run_agent(...)`; complete logical step retries use the separate beta `WorkflowRetryPolicy` contract. An optional functional `executor` is valid only in `WorkflowGraph`; existing declarative workflow agents continue to require an `Agent`.
+
+Durable workflow compatibility is bound to both `definition_version` and the computed definition digest. Resume and fork reject drift rather than re-evaluating a possibly different graph. Applications must choose a new definition version whenever steps, routing conditions, interrupt points, retry behavior, or executor identities change. `0.15.0` does not provide automatic checkpoint migration; an application that migrates durable state must validate it explicitly, preserve source history and lineage, and record the migration outside the normal append sequence.
+
+`WORKFLOW_CHECKPOINT_SCHEMA_VERSION` and `WORKFLOW_ADAPTER_SCHEMA_VERSION` version the beta serialized contracts independently from the package version. Future readers reject unsupported schema versions. Callback-adapter factories for DBOS, Temporal, Prefect, and Restate do not create a compatibility guarantee for those third-party runtimes; only the Zhivex request/outcome envelope is versioned here.
 
 Experimental APIs are intended for evaluation. They should be consumed behind an application-owned abstraction if production teams need to try them before they graduate.
 

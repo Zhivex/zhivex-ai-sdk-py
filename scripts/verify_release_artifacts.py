@@ -152,7 +152,9 @@ def _smoke_code(expected_version: str) -> str:
             AgentMiddleware,
             AgentRunRequest,
             SequentialAgent,
+            WorkflowBuilder,
             WorkflowStep,
+            create_in_memory_workflow_checkpoint_store,
             create_deepseek,
             create_mock_language_model,
             create_text_message,
@@ -169,6 +171,8 @@ def _smoke_code(expected_version: str) -> str:
         assert "AgentRunRequest" in zhivex_ai.__all__
         assert "create_deepseek" in zhivex_ai.__all__
         assert "generate_text" in zhivex_ai.__all__
+        assert "WorkflowGraph" in zhivex_ai.__all__
+        assert "resume_workflow" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
         deepseek = create_deepseek(api_key="artifact-smoke-key")
         assert deepseek("deepseek-v4-flash").provider == "deepseek"
@@ -290,6 +294,27 @@ def _smoke_code(expected_version: str) -> str:
             )
             result = await workflow.run()
             assert result.state["out"] == "workflow-ok"
+
+            graph = (
+                WorkflowBuilder("release_graph")
+                .add_step(
+                    WorkflowStep(
+                        "step",
+                        Agent(
+                            name="graph-worker",
+                            model=create_mock_language_model(
+                                responses=[GenerateResult(text="graph-ok", finish_reason="stop")]
+                            ),
+                        ),
+                        output_key="out",
+                    ),
+                    entrypoint=True,
+                )
+                .build(checkpoint_store=create_in_memory_workflow_checkpoint_store())
+            )
+            graph_result = await graph.run(idempotency_key="artifact-graph")
+            assert graph_result.state["out"] == "graph-ok"
+            assert graph_result.checkpoint.sequence > 0
 
         asyncio.run(main())
         """

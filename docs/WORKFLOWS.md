@@ -1,134 +1,252 @@
-# Workflow Agents
+# Durable Workflow Graphs
 
-Workflow agents are beta orchestration primitives for backend workflows whose shape is known before execution. They are useful when an application needs sequential pipelines, parallel fan-out, bounded refinement loops, replayable traces, and deterministic state handoff between steps.
+Zhivex AI SDK provides beta orchestration primitives for backend workflows whose shape is known before execution. `WorkflowGraph` adds validated DAG execution, persisted routing decisions, append-only checkpoints, explicit interruption and resume, fork lineage, and step-level retry policy to the existing sequential, parallel, and loop agents.
 
-The SDK owns orchestration. The application owns policy, vertical data models, durable business records, approval UI, artifact storage, and external integrations.
+The SDK owns orchestration mechanics. The application continues to own business policy, authorization, vertical records, approval UI, artifact storage, retention, and external integrations.
 
 ## Stability
 
-The workflow surface is beta:
+The complete workflow surface remains beta in `0.15.0`:
 
-- `SequentialAgent`
-- `ParallelAgent`
-- `LoopAgent`
-- `WorkflowStep`
-- `WorkflowRunResult`
-- `WorkflowStepResult`
-- `WorkflowTraceEvent`
-- `run_workflow`
-- `workflow_step`
-- `validate_workflow_expectations`
+- Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
+- Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, and `fork_workflow`
+- Functional graph steps: `WorkflowFunctionContext`, `WorkflowFunctionResult`, and `WorkflowFunctionExecutor`
+- Durable state: checkpoint schema/status aliases, `WorkflowCheckpoint`, `WorkflowNodeCheckpoint`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, serialization helpers, and the in-memory, SQLite, and Postgres workflow checkpoint stores
+- Step retries: `WorkflowRetryPolicy`
+- External runtime contracts: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, and the DBOS, Temporal, Prefect, and Restate callback-adapter factories
 
-Use top-level imports from `zhivex_ai`. Avoid deep imports.
+Use top-level imports from `zhivex_ai`. Avoid deep imports. These APIs may evolve between minor releases and are not part of the stable compatibility contract yet.
 
-## Core Model
+## Choose The Orchestration Model
 
-A workflow is a group of `WorkflowStep` objects. Each step wraps an `Agent` and can read or write `AgentSession.state`.
+Use the smallest model that represents the workflow:
+
+- `SequentialAgent` for a fixed linear pipeline.
+- `ParallelAgent` for one independent fan-out wave.
+- `LoopAgent` for bounded refinement where repetition is intentional.
+- `WorkflowGraph` for branching, fan-out/fan-in, durable transition history, explicit interrupts, resume, or fork.
+
+`WorkflowGraph` is acyclic. Use `LoopAgent` for loops instead of hiding cycles inside a graph definition.
+
+## Build A Graph
 
 ```python
-from zhivex_ai import Agent, SequentialAgent, WorkflowStep
+from zhivex_ai import Agent, WorkflowBuilder, WorkflowStep
 
-workflow = SequentialAgent(
-    name="intake",
-    steps=[
-        WorkflowStep("extract", extractor, prompt="Extract the request", output_key="request"),
-        WorkflowStep("review", reviewer, input_template="Review {request}", output_key="review"),
-    ],
+workflow = (
+    WorkflowBuilder("loan_review", definition_version="2026-07-31")
+    .add_step(
+        WorkflowStep("extract", extractor, prompt="Extract the application", output_key="application"),
+        entrypoint=True,
+    )
+    .add_step(
+        WorkflowStep("risk", risk_agent, input_template="Review {application}", output_key="risk"),
+    )
+    .add_step(
+        WorkflowStep("decide", decision_agent, input_template="Decide from {risk}", output_key="decision"),
+    )
+    .add_edge("extract", "risk")
+    .add_edge("risk", "decide")
+    .build()
 )
 
-result = await workflow.run()
+result = await workflow.run(idempotency_key="loan-123")
 ```
 
-Important fields:
+The builder validates non-empty unique step names, edge identities, references, entrypoints, reachability, globally unique output/metadata keys, positive concurrency, and acyclicity before execution.
 
-- `prompt`: fixed prompt for the step
-- `input_template`: Python format template rendered from `session.state`
-- `output_key`: stores the step text in `session.state`
-- `metadata_key`: stores step metadata such as run id, agent name, text, status, and error
-- `error_policy`: `fail_fast`, `continue`, or `capture`
-- `timeout_ms` and `max_retries`: forwarded to `run_agent(...)`
+Ready nodes execute as a bounded parallel wave. Their declared `output_key`, `metadata_key`, and adapter `state_patch` values are merged before outgoing conditions are evaluated. Set `max_concurrency` on `build(...)` or `WorkflowGraph(...)` to constrain a wave.
 
-## Sequential Workflows
+## Functional Steps
 
-Use `SequentialAgent` when every step depends on the previous state. Steps run in order, and `input_template` can read keys written by earlier steps.
-
-Missing template keys fail the step with `ValidationError`. With the default `fail_fast` policy the workflow stops and returns a failed result. With `continue`, later steps still run. With `capture`, the error is stored under `output_key` as an application-readable error object.
-
-If an agent step suspends for human approval, the step and workflow return `status="suspended"`; the step is not marked complete and later sequential/loop steps do not start. `output_key` is written only after completion, while `metadata_key` retains the suspended run id for the application-owned resume flow.
-
-## Parallel Workflows
-
-Use `ParallelAgent` for fan-out work such as independent research, policy review, or risk analysis. Each step starts from the same base session state. Only explicit `output_key` and `metadata_key` values are merged back into the shared session.
-
-With `fail_fast`, a failed branch cooperatively cancels sibling tasks that have not completed. This prevents further cancel-aware work but cannot undo a side effect already started by a tool or stop synchronous code that ignores cancellation. `capture` preserves each isolated branch result before merging its declared keys.
-
-Parallel `output_key` values must be unique. Duplicate output keys raise `ValidationError` during workflow construction.
-
-## Loop Workflows
-
-Use `LoopAgent` for bounded refinement. It requires `max_iterations > 0` and can stop early with `stop_condition`.
+A graph step can execute an `Agent` or a sync/async Python function. Functional steps are useful for deterministic validation, routing preparation, database reads through injected dependencies, or application-owned activities that do not need a model call:
 
 ```python
-workflow = LoopAgent(
-    name="refine",
-    steps=[WorkflowStep("draft", writer, prompt="Improve the draft", output_key="draft")],
-    max_iterations=3,
-    stop_condition=lambda result: result.state.get("draft") == "done",
+from zhivex_ai import WorkflowFunctionResult, WorkflowStep
+
+async def calculate_risk(context):
+    score = await context.deps.risk_service.score(context.state["application"])
+    return WorkflowFunctionResult(
+        output={"score": score},
+        state_patch={"risk_band": "low" if score < 20 else "review"},
+        metadata={"calculator": "risk-v3"},
+    )
+
+risk_step = WorkflowStep(
+    "calculate_risk",
+    executor=calculate_risk,
+    output_key="risk",
 )
 ```
 
-The stop condition can be sync or async. It receives the current `WorkflowRunResult`.
+`WorkflowFunctionContext` contains workflow/run/step identity, attempt, stable step idempotency key, rendered input, durable state, resume values, and ephemeral `deps`. A function returns a JSON value or `WorkflowFunctionResult`; its output, state patch, and metadata must contain only finite JSON values. Runtime dependencies are never checkpointed.
 
-## Structured Outputs
+Functional executors are supported only by `WorkflowGraph`; existing `SequentialAgent`, `ParallelAgent`, and `LoopAgent` steps still require an `Agent`. Each graph step must define exactly one of `agent` or `executor` unless a callback adapter owns dispatch through `executor_ref`.
 
-Workflow steps store text. For structured workflows, keep schema validation in application code:
+A functional step can be retried by `WorkflowRetryPolicy`, so writes must use `context.idempotency_key` at the destination. Checkpointing cannot make an arbitrary database/API side effect atomic with workflow progress; use destination idempotency, an outbox, or reconciliation.
+
+## Conditional Branches
+
+An edge condition can be synchronous or asynchronous and receives `WorkflowContext`:
 
 ```python
-from pydantic import BaseModel
-
-class Intake(BaseModel):
-    company: str
-    amount: int
-
-result = await workflow.run()
-intake = Intake.model_validate_json(result.state["intake"])
+workflow = (
+    WorkflowBuilder("route")
+    .add_step(WorkflowStep("classify", classifier, output_key="route"), entrypoint=True)
+    .add_step(WorkflowStep("approve", approver, output_key="decision"))
+    .add_step(WorkflowStep("review", reviewer, output_key="review"))
+    .add_edge(
+        "classify",
+        "approve",
+        name="low-risk",
+        condition=lambda context: context.source_output == "low",
+    )
+    .add_edge(
+        "classify",
+        "review",
+        name="manual-review",
+        condition=lambda context: context.source_output != "low",
+    )
+    .build()
+)
 ```
 
-This keeps workflow orchestration portable while allowing each application to own its domain schemas and validation policy.
+Each edge decision is persisted before downstream dispatch. Resume and recovery reuse the recorded boolean instead of evaluating the condition again. Conditions should still be deterministic and side-effect free because their callable identity contributes to the definition digest.
 
-## Resume Pattern
+## Canonical Checkpoints
 
-There is no stable `resume_workflow(...)` API. Resume is app-owned:
+`WorkflowCheckpoint` is the canonical durable workflow record. A new immutable checkpoint is appended for every recorded transition, including start, step start, step finish, retry, routing, interrupt, resume, fork, skip, recovery, and workflow finish.
 
-1. Persist a business record with completed steps and the relevant `session.state`.
-2. Recreate an `AgentSession` with that state.
-3. Build a workflow with only the remaining steps.
-4. Attach an `AgentRunStore` when replay or audit evidence is needed.
+Each checkpoint includes:
 
-This avoids hidden business-policy decisions in the SDK and keeps retries idempotent at the application boundary.
+- workflow name, definition version, and definition digest
+- run, session, parent, checkpoint, sequence, and idempotency identities
+- JSON workflow state and per-node status/output/error metadata
+- persisted edge decisions and currently ready nodes
+- pending interrupt and resume values
+- transition details and fork lineage
 
-## Replay And Evaluation
+Append operations use `expected_sequence` as an optimistic compare-and-swap boundary. A stale writer cannot overwrite or reorder workflow history. `WorkflowRunResult.checkpoint` exposes the canonical latest checkpoint; `state_snapshot` remains an `AgentRunState` projection for the existing replay and observability path.
 
-Attach `run_store` to `SequentialAgent`, `ParallelAgent`, or `LoopAgent` to persist the workflow state snapshot. Use `replay_agent_run(result.state_snapshot)` to inspect the run without calling providers again.
+Checkpoint stores have different operational guarantees:
 
-Use `validate_workflow_expectations(...)` with `AgentEvaluationExpectations` for deterministic checks:
+- `create_in_memory_workflow_checkpoint_store()` is deterministic and concurrency-safe inside one process, but it does not survive process exit.
+- `create_sqlite_workflow_checkpoint_store(path, namespace=...)` persists append-only history on one local filesystem and survives worker reconstruction. Coordinate filesystem ownership and backup outside the SDK.
+- `create_postgres_workflow_checkpoint_store(dsn, table_prefix=...)` uses the optional `postgres` extra and transactional sequence/idempotency constraints for shared workers. Validate it against the deployment database before production use.
+
+Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming.
+
+## Interrupt And Resume
+
+Declare safe interruption boundaries before or after a node:
 
 ```python
-from zhivex_ai import AgentEvaluationExpectations, validate_workflow_expectations
+from zhivex_ai import WorkflowBuilder, resume_workflow
 
-failures = validate_workflow_expectations(
-    result,
-    AgentEvaluationExpectations(
-        workflow_steps=["extract", "review"],
-        state_contains=["request", "review"],
+workflow = (
+    WorkflowBuilder("publishing", definition_version="1")
+    .add_step(WorkflowStep("draft", writer, output_key="draft"), entrypoint=True)
+    .add_step(WorkflowStep("publish", publisher, output_key="published"))
+    .add_edge("draft", "publish")
+    .interrupt_after("draft", reason="Human review")
+    .build(checkpoint_store=checkpoint_store)
+)
+
+suspended = await workflow.run(idempotency_key="publication-42")
+pending = suspended.checkpoint.pending_interrupt
+
+resumed = await resume_workflow(
+    workflow,
+    suspended.run_id,
+    interrupt_id=pending.interrupt_id,
+    resume_value={"approved": True, "reviewer": "user-7"},
+    state_updates={"approval_record_id": "approval-99"},
+)
+```
+
+The caller must acknowledge the exact pending `interrupt_id`. A reconstructed worker must rebuild the same workflow definition and attach the same persistent checkpoint store. Resume fails closed when the workflow name, `definition_version`, or computed definition digest differs.
+
+When a graph node is suspended by a local-tool approval, `resume_workflow(...)` also accepts `approval_id`, `approved`, `reason`, and `node_name`; it delegates the child continuation to the stable agent approval-resume contract. Runtime `deps` are never serialized and must be supplied again.
+
+Interrupts occur at declared workflow boundaries or when a node explicitly suspends through the agent/adapter contract. They do not forcibly preempt synchronous code or undo an external side effect already in progress.
+
+## Fork From A Checkpoint
+
+Fork creates a new run from a selected immutable checkpoint:
+
+```python
+from zhivex_ai import fork_workflow
+
+forked = await fork_workflow(
+    workflow,
+    source_run_id,
+    checkpoint_id=selected_checkpoint_id,
+    state_updates={"scenario": "conservative"},
+    idempotency_key="loan-123-conservative",
+)
+```
+
+The fork records `forked_from_run_id` and `forked_from_checkpoint_id`, retains completed/skipped node history from the selected point, resets running or suspended work to pending, and creates a new run id. Declared interrupts can trigger again on the fork and require explicit acknowledgement.
+
+Fork does not roll back external effects produced before the selected checkpoint. Side-effecting tools and activities need application-owned idempotency keys, reconciliation, and compensation policy.
+
+## Step Retries And Idempotency
+
+`WorkflowStep.max_retries` keeps its existing meaning: it configures model/provider retries inside one `run_agent(...)` invocation. Use `WorkflowRetryPolicy` when the complete logical workflow step may be attempted again:
+
+```python
+from zhivex_ai import WorkflowRetryPolicy, WorkflowStep
+
+step = WorkflowStep(
+    "risk",
+    risk_agent,
+    output_key="risk",
+    retry_policy=WorkflowRetryPolicy(
+        max_attempts=3,
+        backoff_ms=250,
+        max_backoff_ms=2_000,
     ),
 )
 ```
+
+Without `retry_if`, step retries are limited to retryable `ProviderHTTPError` failures. A custom sync or async predicate can opt into other errors. The logical step idempotency identity remains stable across attempts and is propagated to agent tool execution, but the application must use it when deduplicating writes. Do not retry an operation whose external outcome is unknown unless the destination supports idempotency or reconciliation.
+
+## External Runtime Adapter Contracts
+
+The adapter layer defines JSON envelopes and callback boundaries for dispatching a graph step through an application-owned workflow engine integration:
+
+- `WorkflowStepRequest` carries definition/run/node identities, stable step idempotency key, checkpoint id, state revision, input, state, metadata, and correlation ids.
+- `WorkflowStepOutcome` returns completed, failed, suspended, or cancelled status plus JSON output, state patch, metadata, error, suspension, and child-run identity.
+- `WorkflowStepExecutorRegistry` resolves only an explicitly registered `executor_ref` and matching definition digest.
+- `CallbackWorkflowAdapter` supports sync or async dispatch callbacks.
+
+`create_dbos_workflow_adapter(...)`, `create_temporal_workflow_adapter(...)`, `create_prefect_workflow_adapter(...)`, and `create_restate_workflow_adapter(...)` create dependency-free callback contracts with conservative capability metadata. They are not embedded engine clients, workers, schedulers, or certified integrations. The application must install, configure, operate, and integration-test the selected engine, then implement the callback with that engine's real activity/task API.
+
+## Recovery And Operational Boundaries
+
+- Re-entering `WorkflowGraph.run(...)` with the same workflow idempotency key returns a terminal or suspended result. If the latest checkpoint is still `running`, the call fails closed by default.
+- After an operator or lease/reconciliation process confirms that the previous worker is no longer active, call `run(..., idempotency_key=..., recover_running=True)`. The graph appends a `workflow-recovered` transition and resets recorded running nodes to pending. Never enable this while the previous worker may still commit work.
+- Recovery can re-dispatch a node whose external outcome is unknown. Every agent tool, functional executor, and callback activity that writes externally must deduplicate with its stable logical step idempotency key or reconcile before retrying.
+- Definition version and digest drift fail closed. `0.15.0` does not provide an automatic checkpoint migration engine; migration is an explicit application operation with its own audit record.
+- SQLite and Postgres stores keep append-only checkpoint history. Retention, archival, encryption, tenant authorization, backups, and deletion remain deployment responsibilities.
+- Checkpoints may contain prompts, model output, approval values, and business state. Treat them as sensitive records and avoid placing secrets in workflow state or metadata.
+- Adapter callbacks, local tools, and agent nodes can produce external effects. Durable orchestration is not a distributed transaction.
+
+## Existing Workflow Agents
+
+The existing declarative agents remain supported and beta:
+
+- `SequentialAgent` runs steps in order.
+- `ParallelAgent` isolates a fan-out wave and merges only declared output/metadata keys.
+- `LoopAgent` runs bounded refinement with `max_iterations` and an optional stop condition.
+
+They preserve their existing `WorkflowStep` fields and error policies. Attach an `AgentRunStore` for their final replay projection. Use `WorkflowGraph` when per-transition checkpoint history, resume, or fork is required.
 
 ## Reference Examples
 
 Offline examples:
 
+- `examples/agents/durable_graph_workflow.py`
 - `examples/agents/sequential_workflow.py`
 - `examples/agents/parallel_workflow.py`
 - `examples/agents/loop_workflow.py`
@@ -139,4 +257,4 @@ Offline examples:
 - `examples/agents/small_business_loan_agent.py`
 - `examples/agents/hr_candidate_selection_agent.py`
 
-All examples use mock models or app-owned deterministic logic by default. Live providers and external systems should be added behind application adapters, not embedded in the workflow primitives.
+The durable graph example uses mock models and SQLite, so it runs without provider credentials while still exercising process-style reconstruction, explicit resume, and fork lineage.

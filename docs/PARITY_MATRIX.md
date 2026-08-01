@@ -26,7 +26,7 @@ Legend:
 | Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
 | Durable human approvals | Yes | Yes | Yes | provider-dependent | stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |
-| Declarative workflows | Yes | Yes | Yes | N/A | beta |
+| Workflow orchestration and durable graphs | Yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork | Yes | Yes; SQLite reconstruction covered | Postgres integration gated | beta |
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
 | Realtime/live agents | Yes | partial | Yes | optional | experimental |
 | Google native media/cache clients | Yes | provider docs | provider tests | optional | beta/native |

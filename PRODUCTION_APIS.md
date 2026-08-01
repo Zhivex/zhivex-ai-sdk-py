@@ -110,4 +110,29 @@ For agent-backed API servers, keep application policy outside the SDK:
 
 See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.
 
+## Workflow APIs
+
+Durable workflow graphs are beta in `0.15.0`; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
+
+Recommended endpoint boundaries:
+
+- A start endpoint validates the business request, supplies a server-owned workflow definition and idempotency key, and returns the workflow `run_id`, status, and an application status URL.
+- A status endpoint loads the latest checkpoint through a tenant-scoped repository and returns an allowlisted projection. Workflow state, prompts, model output, interrupt payloads, and metadata may contain sensitive data.
+- A resume endpoint authorizes the specific pending action and acknowledges the exact `interrupt_id` or agent `approval_id`. Do not treat possession of a run id as authorization.
+- A fork endpoint is a privileged operation. Record the source run/checkpoint, caller, reason, state overrides, and new run id in the business audit log.
+
+Use a stable application idempotency key for start and fork requests. `WorkflowCheckpointStore.append(...)` protects checkpoint ordering with an expected sequence, but it does not make an external business write transactional with workflow progress. Side-effecting nodes must use destination-supported idempotency, an outbox, or explicit reconciliation/compensation.
+
+Functional graph executors receive ephemeral `deps` plus a stable logical step idempotency key and may return only finite JSON durable results. Treat them like retryable activities: a database or API write must consume that key or use an outbox. Do not place credentials, clients, transactions, or authorization objects in `WorkflowFunctionResult`.
+
+`InMemoryWorkflowCheckpointStore` is suitable only for tests and one-process demos. SQLite survives local process reconstruction but is not the recommended shared store for multiple API replicas. Use the optional Postgres workflow checkpoint store or an application implementation of `WorkflowCheckpointStore` for shared workers, and run integration tests against the actual deployment database.
+
+Reconstruct the same `WorkflowGraph` definition before resume or fork. The SDK rejects mismatched workflow names, definition versions, and definition digests. Supply runtime `deps` again; never place database clients, credentials, authorization objects, or other runtime dependencies into checkpoint state.
+
+Idempotent re-entry does not take over a `running` workflow automatically. It fails closed unless `recover_running=True`. Set that flag only after a lease, worker registry, or operator reconciliation proves that the previous worker is gone; otherwise two workers can execute the same node concurrently. Recovery records a `workflow-recovered` transition, but external writes still require the logical step idempotency key or reconciliation.
+
+The DBOS, Temporal, Prefect, and Restate adapter factories expose versioned callback request/outcome contracts only. They do not start those engines or certify their persistence, retry, signal, or worker behavior. Keep the real engine client and worker integration in the application layer and test it end to end.
+
+See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for the complete beta contract and [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py) for an offline SQLite reconstruction/resume/fork example.
+
 The production agent example requires `ZHIVEX_AGENT_API_TOKEN`, `ZHIVEX_TENANT_ID`, and a server-owned `ZHIVEX_AGENT_MODEL`; it uses a fixed server-side Postgres table prefix, limits request bodies and Pydantic fields, and applies a small process-local rate limit. Put a distributed limiter at the API gateway when running more than one process or replica. Clients must send both `Authorization: Bearer ...` and the matching `X-Tenant-ID`; a user-controlled tenant header is not an authorization mechanism on its own, and clients do not select provider model IDs.

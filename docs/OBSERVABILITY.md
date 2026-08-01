@@ -87,6 +87,26 @@ Useful correlation fields:
 
 Use `create_agent_trace_artifact(...)`, `summarize_agent_trace(...)`, and `replay_agent_run(...)` for persisted run-state analysis without re-running providers.
 
+## Durable Workflow Transitions
+
+`WorkflowGraph` records an append-only `WorkflowCheckpoint` for every durable transition. Use checkpoint history as the workflow audit timeline and `WorkflowRunResult.state_snapshot` as the compatibility projection into existing agent replay/trace tooling.
+
+Recommended workflow correlation fields:
+
+- workflow `run_id`, name, `definition_version`, and definition digest
+- checkpoint id and monotonically increasing sequence
+- transition type and timestamp
+- node name, node status, and logical attempt
+- logical step idempotency key and child agent run id
+- interrupt id and phase, without its raw payload
+- source run/checkpoint ids for forks
+- request, session, tenant, and trace ids supplied by the application
+- adapter backend and executor reference when a callback adapter is used
+
+Alert on repeated sequence conflicts, definition mismatch, exhausted step retries, long-lived suspended runs, repeated recovery of a `running` node, and forks without an application audit reason. A checkpoint append confirms orchestration progress; it does not prove that an external side effect committed. Correlate destination idempotency/reconciliation evidence separately.
+
+Do not export full checkpoint state, node output, resume values, adapter envelopes, or interrupt payloads as span attributes. These fields can contain prompts, model output, approval data, and regulated business records.
+
 ## Hooks, Middleware, And Events
 
 These extension surfaces have distinct responsibilities:

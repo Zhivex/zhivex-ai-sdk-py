@@ -18,9 +18,10 @@ No provider credentials are required:
 ```bash
 .venv/bin/python examples/agents/structured_workflow_outputs.py
 .venv/bin/python examples/agents/workflow_resume.py
+.venv/bin/python examples/agents/durable_graph_workflow.py
 ```
 
-These examples use `create_mock_language_model(...)` and exercise the same workflow primitives used by production agents.
+These examples use `create_mock_language_model(...)` and exercise the same workflow primitives used by production agents. `durable_graph_workflow.py` additionally uses a temporary SQLite store to demonstrate process-style graph reconstruction, explicit resume, and fork lineage without provider credentials.
 
 ## 3. Try One Live Provider
 
@@ -40,7 +41,7 @@ The smoke runner skips providers whose credentials or model IDs are missing. For
 
 - Foundation text or structured output: `examples/text/`
 - Agent runtime: [AGENTS.md](./AGENTS.md)
-- Declarative workflows: [WORKFLOWS.md](./WORKFLOWS.md)
+- Durable workflow graphs and declarative agents: [WORKFLOWS.md](./WORKFLOWS.md)
 - Production FastAPI patterns: [../PRODUCTION_APIS.md](../PRODUCTION_APIS.md)
 - Gateway fallback routing: [GATEWAY.md](./GATEWAY.md)
 - Observability: [OBSERVABILITY.md](./OBSERVABILITY.md)

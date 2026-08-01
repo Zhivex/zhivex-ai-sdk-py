@@ -9,12 +9,12 @@ Use the repository private advisory flow or the maintainer security channel used
 ## Secrets
 
 - Store provider API keys, cloud credentials, MCP bearer tokens, database DSNs, and webhook secrets in your secret manager.
-- Never put secrets in prompts, tool inputs, agent metadata, trace artifacts, approval records, or example fixtures.
+- Never put secrets in prompts, tool inputs, agent metadata, workflow state/resume values, trace artifacts, approval records, or example fixtures.
 - Pass request-scoped clients and credentials through `deps=` only when necessary. Agent and tool contexts hide dependencies from their repr and the SDK does not serialize them, but application hooks and middleware can still access the live object; never log, trace, or copy `context.deps` into durable state.
 - Use environment variables only as a process boundary, not as an audit store.
 - Apply `create_redaction_policy(...)` before logging prompts, tool payloads, provider payloads, approval records, or trace summaries.
 - Treat provider response bodies in errors as sensitive unless your app has already redacted and classified them.
-- Checkpoint persistence strips configured remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. It does not make prompts, generated text, or arbitrary business data non-sensitive.
+- Agent checkpoint persistence strips configured remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. Workflow checkpoints persist application-supplied JSON state, node output, metadata, interrupt payloads, and resume values as provided. Neither path makes prompts, generated text, approvals, or arbitrary business data non-sensitive.
 
 ## Data Retention
 
@@ -23,7 +23,7 @@ The SDK does not decide how long to retain prompts, tool inputs, generated text,
 - which fields are persisted
 - retention duration by data class
 - delete/export behavior for user data
-- access controls for run stores and trace artifacts
+- access controls for run stores, workflow checkpoint stores, and trace artifacts
 - encryption and backup policy for Postgres, object storage, and external observability sinks
 
 Use summaries or redacted trace artifacts when full prompt retention is not required for support.
@@ -40,6 +40,7 @@ Local tools run inside your application process. A tool can read data, write dat
 - require human approval for tools that can mutate systems or disclose tenant data
 - make destructive tools idempotent and auditable
 - use `ToolExecutionContext.idempotency_key` for downstream writes and reconcile `ToolExecutionOutcomeUnknown` before retrying a timed-out operation
+- use the stable logical step idempotency key supplied to workflow functional executors and adapter activities; workflow recovery/fork does not roll back or deduplicate external writes automatically
 
 Do not expose broad shell, filesystem, deployment, or HTTP request tools to untrusted prompts without an application sandbox and approval gate.
 
