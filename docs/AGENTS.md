@@ -22,7 +22,7 @@ The stable core is:
 - Postgres memory, checkpoint, and run stores
 - run-state serialization, cancellation tree, replay, run-snapshot helpers, and durable pending approvals
 
-The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite stores, packaged skills, workflow agents, and UI approval chunks. Live/realtime agent APIs are experimental.
+The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite stores, packaged skills, declarative workflow agents, durable workflow graphs/checkpoint stores/resume/fork, functional workflow steps, callback adapter contracts, and UI approval chunks. Live/realtime agent APIs are experimental.
 
 ## Minimal Tool-Using Agent
 
@@ -170,7 +170,7 @@ Runtime middleware is outermost, then call middleware, then agent middleware. Mi
 - Human-in-the-loop suspension and resume: [agents/approvals.md](./agents/approvals.md)
 - Memory, checkpoints, and production Postgres state: [agents/durable-state.md](./agents/durable-state.md)
 - Local, remote, and MCP registries: [agents/tool-registries.md](./agents/tool-registries.md)
-- Declarative sequential, parallel, and loop orchestration: [WORKFLOWS.md](./WORKFLOWS.md)
+- Durable DAG, functional-step, resume/fork, and declarative workflow orchestration: [WORKFLOWS.md](./WORKFLOWS.md)
 - Backend production defaults: [PRODUCTION.md](./PRODUCTION.md)
 - Security boundaries for tools, MCP, and skills: [../SECURITY.md](../SECURITY.md)
 

@@ -13,15 +13,19 @@ from zhivex_ai import (
     ApprovalDecision,
     PendingApproval,
     ToolApprovalRequest,
+    WorkflowBuilder,
+    WorkflowStep,
     cancel_agent_run,
     create_agent_session,
     create_mock_language_model,
     create_postgres_agent_memory_store,
     create_postgres_agent_run_store,
     create_postgres_checkpoint_store,
+    create_postgres_workflow_checkpoint_store,
     create_text_message,
     fail_agent_run_resume_claim,
     resume_agent_run,
+    resume_workflow,
     run_agent,
     tool,
 )
@@ -43,6 +47,10 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
         self.memory = create_postgres_agent_memory_store(self.dsn, table_prefix=self.prefix)
         self.checkpoints = create_postgres_checkpoint_store(self.dsn, table_prefix=self.prefix)
         self.runs = create_postgres_agent_run_store(self.dsn, table_prefix=self.prefix)
+        self.workflow_checkpoints = create_postgres_workflow_checkpoint_store(
+            self.dsn,
+            table_prefix=self.prefix,
+        )
 
     async def asyncTearDown(self) -> None:
         if not _SAFE_PREFIX_RE.fullmatch(self.prefix):
@@ -51,7 +59,13 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
 
         connection = await asyncpg.connect(self.dsn)
         try:
-            for suffix in ("agent_memory", "agent_checkpoints", "runs"):
+            for suffix in (
+                "agent_memory",
+                "agent_checkpoints",
+                "runs",
+                "workflow_runs",
+                "workflow_checkpoints",
+            ):
                 table = f'{self.prefix}_{suffix}'
                 await connection.execute(f'DROP TABLE IF EXISTS "{table}"')
         finally:
@@ -93,6 +107,59 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
         assert restored_run is not None
         self.assertEqual(restored_run.status, "completed")
         self.assertEqual(restored_run.output_text, "postgres-agent-ok")
+
+    async def test_workflow_graph_resumes_from_postgres_checkpoint_history(self) -> None:
+        def graph(*, publish_text: str):
+            return (
+                WorkflowBuilder("postgres_workflow", definition_version="1")
+                .add_step(
+                    WorkflowStep(
+                        "draft",
+                        Agent(
+                            name="workflow_draft",
+                            model=create_mock_language_model(
+                                responses=[GenerateResult(text="draft", finish_reason="stop")]
+                            ),
+                        ),
+                        output_key="draft",
+                    ),
+                    entrypoint=True,
+                )
+                .add_step(
+                    WorkflowStep(
+                        "publish",
+                        Agent(
+                            name="workflow_publish",
+                            model=create_mock_language_model(
+                                responses=[GenerateResult(text=publish_text, finish_reason="stop")]
+                            ),
+                        ),
+                        output_key="published",
+                    )
+                )
+                .add_edge("draft", "publish")
+                .interrupt_after("draft", reason="integration review")
+                .build(checkpoint_store=self.workflow_checkpoints)
+            )
+
+        suspended = await graph(publish_text="unused").run(
+            idempotency_key=f"{self.prefix}-workflow"
+        )
+        assert suspended.checkpoint is not None
+        assert suspended.checkpoint.pending_interrupt is not None
+        resumed = await resume_workflow(
+            graph(publish_text="published"),
+            suspended.run_id,
+            interrupt_id=suspended.checkpoint.pending_interrupt.interrupt_id,
+            resume_value={"approved": True},
+        )
+
+        history = await self.workflow_checkpoints.list_checkpoints(suspended.run_id)
+        self.assertEqual(suspended.status, "suspended")
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(resumed.state["draft"], "draft")
+        self.assertEqual(resumed.state["published"], "published")
+        self.assertGreater(len(history), 5)
 
     async def test_idempotency_claim_has_one_winner_across_concurrent_connections(self) -> None:
         key = f"{self.prefix}-idempotency"

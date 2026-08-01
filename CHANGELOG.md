@@ -39,6 +39,37 @@ Related documents:
 
 - None.
 
+## 0.15.0
+
+### Added
+
+- Added beta durable workflow graphs through `WorkflowBuilder`, `WorkflowGraph`, `WorkflowEdge`, persisted routing decisions, bounded parallel execution, explicit entrypoints, and fail-closed definition version and digest validation.
+- Added beta append-only `WorkflowCheckpoint` history with optimistic sequence checks, JSON serialization helpers, workflow idempotency lookup, fork lineage, and in-memory, SQLite, and Postgres checkpoint stores.
+- Added beta `resume_workflow(...)` for explicit workflow interrupts and suspended agent approvals, plus `fork_workflow(...)` for starting a new run from a selected checkpoint without rewriting source history.
+- Added beta step-level `WorkflowRetryPolicy` with stable logical step identity across attempts. Existing `WorkflowStep.max_retries` remains the model/provider retry setting passed to `run_agent(...)`.
+- Added beta functional graph steps through `WorkflowFunctionContext`, `WorkflowFunctionResult`, and sync/async `WorkflowFunctionExecutor`, with ephemeral dependencies and finite-JSON durable output/state patches.
+- Added beta callback adapter contracts with versioned `WorkflowStepRequest` and `WorkflowStepOutcome` envelopes, executor registration, and conservative capability metadata for DBOS, Temporal, Prefect, and Restate integration code.
+- Added a runnable offline durable graph example covering SQLite process-style reconstruction, resume, and fork.
+
+### Changed
+
+- Workflow results can expose their canonical workflow checkpoint and fork lineage while preserving the existing `state_snapshot` projection for replay and observability compatibility.
+- Workflow tool execution propagates a stable logical step idempotency prefix so application tools can deduplicate retries and resumed work.
+- Bumped the package version to `0.15.0` while keeping the package and all new durable-workflow APIs in Beta.
+
+### Fixed
+
+- Persisted graph edge decisions are reused after recovery instead of re-running already recorded branch conditions.
+- Checkpoint stores reject stale sequence updates, definition drift, duplicate checkpoint identities, and cross-run idempotency-key reuse.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.14.0
 
 ### Added

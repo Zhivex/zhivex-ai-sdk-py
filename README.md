@@ -31,7 +31,7 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Declarative workflows, native subagent tools such as `create_subagent_tool(...)`, evaluation/trace artifacts, safety-policy helpers, and local run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, workflow checkpoints/stores, resume/fork, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation/trace artifacts, safety-policy helpers, and local run stores remain beta.
 
 See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
@@ -40,7 +40,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - New backend setup: [docs/QUICKSTART.md](./docs/QUICKSTART.md)
 - Provider setup and smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
 - Agent runtime: [docs/AGENTS.md](./docs/AGENTS.md)
-- Declarative workflows: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 - Production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
 - Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
 - Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
@@ -54,7 +54,7 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 ## Highlights
 
 - Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
-- Declarative workflow agents with `SequentialAgent`, `ParallelAgent`, `LoopAgent`, shared `session.state`, `output_key`, and templated step inputs
+- Beta durable workflow graphs with validated DAGs, agent or functional steps, persisted routing/checkpoints, SQLite/Postgres stores, explicit resume/fork, interrupts, step retries, and the existing sequential/parallel/loop agents
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
@@ -1439,7 +1439,7 @@ For production-style FastAPI integration patterns, see [PRODUCTION_APIS.md](./PR
 
 The Python SDK now exposes an agent-first runtime on top of the core model contract:
 
-The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, declarative workflows, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
+The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, durable workflow graphs/checkpoints, declarative workflow agents, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
 
 - `Agent(...)`
 - `AgentContext`, `AgentHooks`, `AgentMiddleware`, `AgentRunRequest`
@@ -1492,26 +1492,52 @@ This layer is intended for stateful, tool-using, multi-agent assistants where yo
 
 For production semantics, persistence, approvals, tool registries, event ordering, and recovery guidance, see [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).
 
-Declarative workflows are available when the coordination pattern is known ahead of time:
+Durable workflow graphs are available when coordination is known ahead of time and execution needs branching, per-transition checkpoints, interruption, resume, or fork:
 
 ```python
-from zhivex_ai import SequentialAgent, WorkflowStep
-
-pipeline = SequentialAgent(
-    name="loan_pipeline",
-    steps=[
-        WorkflowStep("extract", extractor, prompt="Extract the application", output_key="application"),
-        WorkflowStep("validate", validator, input_template="Validate {application}", output_key="validation"),
-        WorkflowStep("decide", decider, input_template="Decide with {application} and {validation}"),
-    ],
+from zhivex_ai import (
+    WorkflowBuilder,
+    WorkflowStep,
+    create_sqlite_workflow_checkpoint_store,
+    resume_workflow,
 )
 
-result = await pipeline.run()
+store = create_sqlite_workflow_checkpoint_store("./workflow-checkpoints.sqlite3")
+pipeline = (
+    WorkflowBuilder("loan_pipeline", definition_version="1")
+    .add_step(
+        WorkflowStep("extract", extractor, prompt="Extract the application", output_key="application"),
+        entrypoint=True,
+    )
+    .add_step(WorkflowStep("review", reviewer, input_template="Review {application}", output_key="review"))
+    .add_step(WorkflowStep("decide", decider, input_template="Decide with {review}", output_key="decision"))
+    .add_edge("extract", "review")
+    .add_edge("review", "decide")
+    .interrupt_before("review", reason="Human review")
+    .build(checkpoint_store=store)
+)
+
+suspended = await pipeline.run(idempotency_key="loan-123")
+pending = suspended.checkpoint.pending_interrupt
+result = await resume_workflow(
+    pipeline,
+    suspended.run_id,
+    interrupt_id=pending.interrupt_id,
+    resume_value={"approved": True},
+)
 ```
 
-Use `ParallelAgent` for fan-out research and `LoopAgent` for bounded refinement loops. Workflow steps share `session.state`; `output_key` writes the step text into state, and `input_template` reads state keys with Python format placeholders. Workflow APIs are beta; see [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for structured outputs, resume patterns, error policy, replay, and evaluation guidance.
+`WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. SQLite survives local worker reconstruction and the optional Postgres workflow store supports shared workers through transactional sequence/idempotency constraints. In-memory storage is process-local.
 
-For fuller business-workflow references, see [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py), [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py), and the focused workflow examples under `examples/agents/`. They model regulated financial review, HR candidate selection, structured step validation, workflow resume, document artifacts, and research reports. The SDK owns orchestration primitives; the examples keep credit policy, hiring policy, pricing/scoring, persistence, approval UI, ATS integrations, artifact storage, and compliance systems application-owned behind replaceable interfaces.
+`fork_workflow(...)` creates a new run with explicit source lineage. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. All workflow graph, checkpoint/store, resume/fork, and callback adapter APIs remain beta in `0.15.0`.
+
+Re-entering a still-running idempotent workflow fails closed. `recover_running=True` is an explicit takeover operation for use only after confirming that the prior worker is gone; it records recovery but cannot make unknown external effects safe without destination idempotency or reconciliation.
+
+Graph steps may use an `Agent` or a sync/async functional `executor`. Functional steps receive `WorkflowFunctionContext` with ephemeral dependencies and a stable idempotency key, then return a finite JSON value or `WorkflowFunctionResult` with an output, state patch, and metadata. They are graph-only and do not change the existing declarative agents.
+
+The DBOS, Temporal, Prefect, and Restate adapter factories create versioned callback contracts and conservative capability metadata. They do not install or operate those engines and are not certified integrations. See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for graph validation, branching, persistence, security, migration, retry, resume/fork, and adapter boundaries.
+
+For a runnable offline durable-graph flow, see [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py). The broader references in [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py), [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py), and the focused workflow examples model regulated review, structured validation, document artifacts, and research reports. The SDK owns orchestration primitives; applications keep credit/hiring policy, authorization, persistence, approval UI, external systems, artifact storage, and compliance controls behind replaceable interfaces.
 
 Durable run state can be attached directly to an agent:
 

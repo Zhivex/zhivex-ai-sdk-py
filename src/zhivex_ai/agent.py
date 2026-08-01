@@ -4459,7 +4459,9 @@ class AgentRuntime:
                 source=definition.source,
                 metadata={
                     **definition.metadata,
-                    "zhivex_tool_idempotency_prefix": run_id,
+                    "zhivex_tool_idempotency_prefix": str(
+                        agent.metadata.get("zhivex_workflow_step_idempotency_key") or run_id
+                    ),
                     "zhivex_agent_approval_gated": bool(
                         definition.requires_approval is True
                         or (definition.requires_approval is None and definition.source in {"remote", "mcp"})

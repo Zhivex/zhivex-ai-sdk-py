@@ -99,11 +99,11 @@
       "stability": "stable helper path"
     },
     {
-      "area": "Declarative workflows",
-      "implemented": "yes",
+      "area": "Workflow orchestration and durable graphs",
+      "implemented": "yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork",
       "documented": "yes",
-      "offline_tested": "yes",
-      "live_smoked": "n/a",
+      "offline_tested": "yes; SQLite reconstruction covered",
+      "live_smoked": "Postgres integration gated",
       "stability": "beta"
     },
     {

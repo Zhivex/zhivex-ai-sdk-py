@@ -3,12 +3,26 @@ from __future__ import annotations
 import unittest
 
 from examples.agents.artifact_document_workflow import run_artifact_document_workflow_demo
+from examples.agents.durable_graph_workflow import run_durable_graph_workflow_demo
 from examples.agents.research_report_workflow import run_research_report_workflow_demo
 from examples.agents.structured_workflow_outputs import run_structured_workflow_demo
 from examples.agents.workflow_resume import run_workflow_resume_demo
 
 
 class WorkflowExampleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_durable_graph_resumes_and_forks_from_sqlite_history(self) -> None:
+        summary = await run_durable_graph_workflow_demo()
+
+        self.assertEqual(summary.initial_status, "suspended")
+        self.assertEqual(summary.resumed_status, "completed")
+        self.assertEqual(summary.resumed_decision, "offer-approved")
+        self.assertEqual(summary.forked_status, "completed")
+        self.assertEqual(summary.forked_decision, "manual-review")
+        self.assertEqual(summary.forked_from_run_id, summary.original_run_id)
+        self.assertNotEqual(summary.forked_run_id, summary.original_run_id)
+        self.assertGreater(summary.original_checkpoints, 1)
+        self.assertGreater(summary.forked_checkpoints, 1)
+
     async def test_structured_outputs_are_validated_by_application_code(self) -> None:
         summary = await run_structured_workflow_demo()
 

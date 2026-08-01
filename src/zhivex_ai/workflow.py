@@ -2,26 +2,88 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from string import Formatter
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from .agent import Agent, AgentRunResult, AgentSession, create_agent_session, run_agent
 from .agent_state import AgentChildRun, AgentRunState, AgentRunStep, AgentRunStore
 from .errors import ValidationError
 from .types import JsonValue
 
+if TYPE_CHECKING:
+    from .workflow_state import WorkflowCheckpoint
+
 WorkflowState = dict[str, JsonValue]
 WorkflowErrorPolicy = Literal["fail_fast", "continue", "capture"]
-WorkflowRunStatus = Literal["completed", "failed", "suspended"]
+WorkflowRunStatus = Literal["completed", "failed", "suspended", "cancelled"]
+WorkflowStepStatus = Literal["completed", "failed", "suspended", "cancelled", "skipped"]
 WorkflowStopCondition = Callable[["WorkflowRunResult"], bool | Awaitable[bool]]
+WorkflowRetryPredicate = Callable[[Exception], bool | Awaitable[bool]]
+
+
+@dataclass(slots=True, frozen=True)
+class WorkflowFunctionContext:
+    run_id: str
+    workflow_name: str
+    step_name: str
+    attempt: int
+    idempotency_key: str
+    input: JsonValue
+    state: Mapping[str, JsonValue]
+    resume_values: Mapping[str, JsonValue] = field(default_factory=dict)
+    deps: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(slots=True, frozen=True)
+class WorkflowFunctionResult:
+    output: JsonValue = None
+    state_patch: Mapping[str, JsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, JsonValue] = field(default_factory=dict)
+
+
+WorkflowFunctionExecutor = Callable[
+    [WorkflowFunctionContext],
+    JsonValue | WorkflowFunctionResult | Awaitable[JsonValue | WorkflowFunctionResult],
+]
+
+
+@dataclass(slots=True, frozen=True)
+class WorkflowRetryPolicy:
+    """Retry policy for a complete logical workflow step.
+
+    ``WorkflowStep.max_retries`` remains the provider/model retry setting passed
+    to ``run_agent``. This policy is deliberately separate because retrying a
+    complete step can repeat tools or external side effects.
+    """
+
+    max_attempts: int = 1
+    backoff_ms: int = 250
+    max_backoff_ms: int = 5_000
+    retry_if: WorkflowRetryPredicate | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_attempts, bool) or not isinstance(self.max_attempts, int) or self.max_attempts <= 0:
+            raise ValidationError("WorkflowRetryPolicy.max_attempts must be greater than zero.")
+        if isinstance(self.backoff_ms, bool) or not isinstance(self.backoff_ms, int) or self.backoff_ms < 0:
+            raise ValidationError("WorkflowRetryPolicy.backoff_ms must be zero or greater.")
+        if (
+            isinstance(self.max_backoff_ms, bool)
+            or not isinstance(self.max_backoff_ms, int)
+            or self.max_backoff_ms < self.backoff_ms
+        ):
+            raise ValidationError(
+                "WorkflowRetryPolicy.max_backoff_ms must be greater than or equal to backoff_ms."
+            )
+        if self.retry_if is not None and not callable(self.retry_if):
+            raise ValidationError("WorkflowRetryPolicy.retry_if must be callable.")
 
 
 @dataclass(slots=True)
 class WorkflowStep:
     name: str
-    agent: Agent
+    agent: Agent | None = None
     prompt: str | None = None
     input_template: str | None = None
     output_key: str | None = None
@@ -29,15 +91,23 @@ class WorkflowStep:
     max_retries: int | None = None
     timeout_ms: int | None = None
     error_policy: WorkflowErrorPolicy = "fail_fast"
+    retry_policy: WorkflowRetryPolicy | None = None
+    idempotency_key: str | None = None
+    executor_ref: str | None = None
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+    executor: WorkflowFunctionExecutor | None = None
 
 
 @dataclass(slots=True)
 class WorkflowStepResult:
     name: str
-    status: WorkflowRunStatus
+    status: WorkflowStepStatus
     output: AgentRunResult | None = None
     error: Exception | None = None
     iteration: int | None = None
+    output_text: str = ""
+    agent_run_id: str | None = None
+    attempts: int = 1
 
 
 @dataclass(slots=True)
@@ -62,6 +132,8 @@ class WorkflowRunResult:
     status: WorkflowRunStatus = "completed"
     trace: list[WorkflowTraceEvent] = field(default_factory=list)
     state_snapshot: AgentRunState | None = None
+    checkpoint: WorkflowCheckpoint | None = None
+    forked_from_run_id: str | None = None
 
 
 class WorkflowAgent(Protocol):
@@ -111,10 +183,11 @@ def _step_metadata(result: WorkflowStepResult) -> dict[str, JsonValue]:
     return {
         "name": result.name,
         "status": result.status,
-        "run_id": output.run_id if output is not None else None,
+        "run_id": output.run_id if output is not None else result.agent_run_id,
         "agent_name": output.agent_name if output is not None else None,
-        "text": output.text if output is not None else "",
+        "text": output.text if output is not None else result.output_text,
         "error": str(result.error) if result.error is not None else None,
+        "attempts": result.attempts,
     }
 
 
@@ -148,6 +221,11 @@ def _state_snapshot(
     step_results: list[WorkflowStepResult],
     state: WorkflowState,
 ) -> AgentRunState:
+    def projected_status(value: WorkflowStepStatus) -> Literal[
+        "running", "completed", "failed", "cancelled", "suspended"
+    ]:
+        return "completed" if value == "skipped" else value
+
     return AgentRunState(
         run_id=run_id,
         agent_name=name,
@@ -160,7 +238,7 @@ def _state_snapshot(
         steps=[
             AgentRunStep(
                 index=index,
-                status=result.status,
+                status=projected_status(result.status),
                 error=str(result.error) if result.error is not None else None,
             )
             for index, result in enumerate(step_results, start=1)
@@ -170,7 +248,11 @@ def _state_snapshot(
                 run_id=result.output.run_id,
                 agent_name=result.output.agent_name,
                 parent_run_id=run_id,
-                status=result.output.state.status if result.output.state is not None else result.status,
+                status=(
+                    result.output.state.status
+                    if result.output.state is not None
+                    else projected_status(result.status)
+                ),
                 output_text=result.output.text,
                 tool_name=result.name,
                 error=str(result.error) if result.error is not None else None,
@@ -209,6 +291,11 @@ class _BaseWorkflow:
         iteration: int | None = None,
     ) -> WorkflowStepResult:
         try:
+            if step.agent is None:
+                raise ValidationError(
+                    "SequentialAgent, ParallelAgent, and LoopAgent require an Agent on every WorkflowStep. "
+                    "Use WorkflowGraph for functional steps."
+                )
             output = await run_agent(
                 agent=step.agent,
                 session=session,
@@ -463,7 +550,7 @@ class LoopAgent(_BaseWorkflow):
 
 def workflow_step(
     name: str,
-    agent: Agent,
+    agent: Agent | None = None,
     *,
     prompt: str | None = None,
     input_template: str | None = None,
@@ -472,6 +559,11 @@ def workflow_step(
     max_retries: int | None = None,
     timeout_ms: int | None = None,
     error_policy: WorkflowErrorPolicy = "fail_fast",
+    retry_policy: WorkflowRetryPolicy | None = None,
+    idempotency_key: str | None = None,
+    executor_ref: str | None = None,
+    metadata: dict[str, JsonValue] | None = None,
+    executor: WorkflowFunctionExecutor | None = None,
 ) -> WorkflowStep:
     return WorkflowStep(
         name=name,
@@ -483,6 +575,11 @@ def workflow_step(
         max_retries=max_retries,
         timeout_ms=timeout_ms,
         error_policy=error_policy,
+        retry_policy=retry_policy,
+        idempotency_key=idempotency_key,
+        executor_ref=executor_ref,
+        metadata=dict(metadata or {}),
+        executor=executor,
     )
 
 

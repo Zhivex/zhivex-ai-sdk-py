@@ -103,7 +103,9 @@ Use `create_otel_agent_observer(...)` for OpenTelemetry spans, and `create_agent
 
 ## Recovery
 
-Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. Use `replay_agent_run(...)` to inspect what happened without re-running providers. Use `cancel_agent_run_tree(...)` to cancel the root and descendants visible while it traverses the store. Each state transition is atomic, but the multi-record traversal is best-effort: prevent new child dispatch in the application and repeat reconciliation if workers can create descendants concurrently. Application workers must still cooperate to interrupt active tasks.
+Use `resume_agent(...)` for session/checkpoint recovery. Use `resume_agent_run(...)` to continue a suspended run after a pending approval is approved or denied. For beta durable workflow graphs, reconstruct the exact definition with the same persistent store, then use `resume_workflow(...)` for one suspended run or `fork_workflow(...)` for an auditable new lineage from a selected checkpoint. Re-entering a still-running idempotent graph fails closed; set `recover_running=True` only after lease/operator reconciliation proves the previous worker is gone.
+
+Use `replay_agent_run(...)` to inspect the agent-state projection without re-running providers. Use workflow checkpoint history for authoritative graph recovery and routing decisions. Use `cancel_agent_run_tree(...)` to cancel the root and descendants visible while it traverses the agent run store. Each stored transition is atomic, but external effects and multi-record traversal are not a distributed transaction: stop new dispatch, use stable destination idempotency keys, and reconcile again after workers settle.
 
 ## Release Evidence
 
