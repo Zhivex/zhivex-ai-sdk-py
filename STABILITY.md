@@ -14,6 +14,8 @@ Related documents:
 - [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
 - [SECURITY.md](./SECURITY.md)
 - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
+- [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
 
 ## Stable
 
@@ -60,6 +62,9 @@ These APIs are supported and documented, but they may still change between minor
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
 - Agent platform helpers beyond the stable runtime/run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools such as `create_subagent_tool`, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
+- Evaluation experiments and gates: `AgentEvaluationMetric`, `AgentEvaluationGate`, `AgentEvaluationVariant`, `AgentEvaluationVariantResult`, `AgentEvaluationGateResult`, `AgentEvaluationExperimentResult`, `AgentEvaluationScorer`, `AgentEvaluationAgentFactory`, and `run_agent_evaluation_experiment`
+- Agent protocols and hosting: `A2A_PROTOCOL_VERSION`, `A2AAgentSkill`, `A2AAgentCard`, `A2AAgentExecutor`, `AGUIEvent`, `AgentResolver`, `ResponsesAgentHost`, `create_a2a_agent_card`, `create_a2a_app`, `stream_agent_ag_ui`, `to_ag_ui_sse_response`, `create_responses_app`, and `create_agent_playground_app`
+- General `zhivex` CLI commands for inspect, run, eval, protocol serve, and the local playground
 - Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, `WorkflowTraceEvent`, `WorkflowState`, `WorkflowErrorPolicy`, `WorkflowRunStatus`, `WorkflowStepStatus`, `WorkflowStopCondition`, `run_workflow`, `workflow_step`, shared `session.state`, and workflow expectation helpers
 - Durable workflow graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowEdgeCondition`, `WorkflowContext`, `WorkflowInterruptPhase`, `WorkflowFunctionContext`, `WorkflowFunctionResult`, `WorkflowFunctionExecutor`, `resume_workflow`, `fork_workflow`, `WorkflowRetryPolicy`, and `WorkflowRetryPredicate`
 - Workflow durable state: `WORKFLOW_CHECKPOINT_SCHEMA_VERSION`, `WorkflowCheckpoint`, `WorkflowCheckpointStatus`, `WorkflowNodeCheckpoint`, `WorkflowNodeStatus`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, `serialize_workflow_checkpoint`, `deserialize_workflow_checkpoint`, `workflow_checkpoint_to_json`, `workflow_checkpoint_from_json`, `InMemoryWorkflowCheckpointStore`, `SQLiteWorkflowCheckpointStore`, `PostgresWorkflowCheckpointStore`, and their factories

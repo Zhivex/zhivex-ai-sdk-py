@@ -408,13 +408,22 @@ class WorkflowGraph:
             created_at_ms=now,
             updated_at_ms=now,
             metadata={
+                **dict(metadata or {}),
                 "prompt": prompt,
                 "completed_order": [],
                 "resolved_interrupts": [],
-                **dict(metadata or {}),
             },
         )
-        checkpoint = await self.checkpoint_store.append(checkpoint)
+        try:
+            checkpoint = await self.checkpoint_store.append(checkpoint)
+        except ValidationError:
+            if idempotency_key is None:
+                raise
+            winner = await self.checkpoint_store.find_by_idempotency_key(idempotency_key)
+            if winner is None or winner.run_id == run_id:
+                raise
+            self._validate_checkpoint(winner)
+            return await self._result(winner, session=session)
         return await self._execute(checkpoint, session=resolved_session, deps=deps)
 
     def _validate_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
@@ -1250,14 +1259,24 @@ async def resume_workflow(
         step = workflow._steps[node.node_name]
         if step.agent is None:
             raise ValidationError(f'Suspended workflow step "{node.node_name}" has no Agent to resume.')
+        step_key = node.idempotency_key or workflow._step_idempotency_key(candidate, step)
+        step_agent = replace(
+            step.agent,
+            metadata={
+                **step.agent.metadata,
+                "zhivex_workflow_step_idempotency_key": step_key,
+                "workflow_run_id": candidate.run_id,
+                "workflow_step": node.node_name,
+            },
+        )
         result = await resume_agent_run(
-            agent=step.agent,
+            agent=step_agent,
             run_id=node.child_run_id,
             approval_id=approval_id,
             approved=approved,
             reason=reason,
             deps=deps,
-            idempotency_key=f"{node.idempotency_key or workflow._step_idempotency_key(candidate, step)}:resume",
+            idempotency_key=f"{step_key}:resume",
         )
         node.child_run_id = result.run_id
         node.output = cast(JsonValue, result.text)
@@ -1266,6 +1285,16 @@ async def resume_workflow(
         node.finished_at_ms = _now_ms()
         if node.status == "completed" and step.output_key is not None:
             candidate.state[step.output_key] = cast(JsonValue, result.text)
+        if node.status == "completed" and step.metadata_key is not None:
+            candidate.state[step.metadata_key] = {
+                "name": node.node_name,
+                "status": node.status,
+                "run_id": node.child_run_id,
+                "agent_name": step.agent.name,
+                "text": cast(JsonValue, result.text),
+                "attempts": node.attempt,
+                "error": None,
+            }
         completed_order = candidate.metadata.setdefault("completed_order", [])
         if node.status == "completed" and isinstance(completed_order, list) and node.node_name not in completed_order:
             completed_order.append(node.node_name)

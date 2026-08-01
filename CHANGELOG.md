@@ -39,6 +39,37 @@ Related documents:
 
 - None.
 
+## 0.16.0
+
+### Added
+
+- Added beta multi-variant agent evaluation experiments with synchronous/asynchronous custom metrics, higher/lower-is-better direction, baseline comparison, minimum/maximum thresholds, regression gates, and strict finite-JSON CI artifacts.
+- Added beta A2A v1 Agent Card and in-process task/artifact adapters plus official `a2a-sdk` REST and JSON-RPC server wiring with v0.3 compatibility disabled.
+- Added beta AG-UI run, text, tool, finish, and error event translation with official `ag-ui-protocol` SSE encoding.
+- Added beta `ResponsesAgentHost` and `create_responses_app(...)` for a constrained OpenAI Responses-compatible text/message create and streaming endpoint over server-owned agent aliases.
+- Added the beta `zhivex` CLI for agent inspect, run, eval, Responses/A2A serve, and a loopback-first local playground.
+- Added protocol, evaluation, CLI, production-boundary, observability, and `0.16.0` release-plan documentation.
+
+### Changed
+
+- Bumped the package version to `0.16.0` while keeping the package and all newly introduced protocol/evaluation/CLI surfaces in Beta.
+- Added optional `a2a` and `ag-ui` dependency groups for the supported official protocol implementations.
+- The evaluation mock language model now returns a valid async stream handle so the same fixture can exercise `stream_agent(...)` and protocol adapters.
+
+### Fixed
+
+- Prevented caller metadata from overriding workflow-internal interrupt resolution state.
+- Preserved stable workflow step/tool idempotency identity and step metadata keys when resuming a suspended tool approval.
+- Reconciled concurrent idempotent workflow starts to the winning checkpoint instead of surfacing the losing append conflict.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.15.0
 
 ### Added

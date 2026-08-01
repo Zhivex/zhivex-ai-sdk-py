@@ -7,9 +7,11 @@ from pathlib import Path
 
 from zhivex_ai import (
     Agent,
+    ApprovalDecision,
     GuardrailResult,
     ToolExecutionContext,
     WorkflowStep,
+    create_in_memory_agent_run_store,
     create_mock_language_model,
     tool,
 )
@@ -34,6 +36,26 @@ def agent_with_text(name: str, *texts: str) -> Agent:
 
 
 class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
+    async def test_caller_metadata_cannot_pre_resolve_internal_interrupts(self) -> None:
+        graph = (
+            WorkflowBuilder("protected-interrupt")
+            .add_step(WorkflowStep("review", agent_with_text("reviewer", "approved")), entrypoint=True)
+            .interrupt_before("review")
+            .build()
+        )
+
+        result = await graph.run(
+            metadata={
+                "resolved_interrupts": ["before:review"],
+                "custom": "preserved",
+            }
+        )
+
+        self.assertEqual(result.status, "suspended")
+        self.assertIsNotNone(result.checkpoint.pending_interrupt)
+        self.assertEqual(result.checkpoint.metadata["resolved_interrupts"], [])
+        self.assertEqual(result.checkpoint.metadata["custom"], "preserved")
+
     async def test_functional_step_receives_durable_context_and_patches_state(self) -> None:
         seen: list[tuple[str, int, str, object]] = []
 
@@ -226,6 +248,80 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(contexts[0].idempotency_key, contexts[1].idempotency_key)
         self.assertNotEqual(contexts[0].run_id, contexts[1].run_id)
 
+    async def test_approval_resume_preserves_step_tool_identity_and_metadata_key(self) -> None:
+        contexts: list[ToolExecutionContext] = []
+
+        async def require_human(_request):
+            return ApprovalDecision.require_human("Review required.", approval_id="approval-1")
+
+        async def side_effect(_input, context: ToolExecutionContext) -> str:
+            contexts.append(context)
+            return "done"
+
+        tool_call = GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[ToolCallPart(tool_call=ToolCall(id="call-approval", name="effect", input={}))],
+                )
+            ],
+            finish_reason="tool-calls",
+        )
+        graph = (
+            WorkflowBuilder("approval-resume")
+            .add_step(
+                WorkflowStep(
+                    "effect-step",
+                    Agent(
+                        name="effect-agent",
+                        model=create_mock_language_model(
+                            responses=[tool_call, GenerateResult(text="complete", finish_reason="stop")]
+                        ),
+                        tools={
+                            "effect": tool(
+                                name="effect",
+                                schema=dict,
+                                execute=side_effect,
+                                requires_approval=True,
+                            )
+                        },
+                        approval_policy=require_human,
+                        run_store=create_in_memory_agent_run_store(),
+                    ),
+                    output_key="result",
+                    metadata_key="result_meta",
+                ),
+                entrypoint=True,
+            )
+            .build()
+        )
+
+        suspended = await graph.run()
+        step_key = suspended.checkpoint.nodes["effect-step"].idempotency_key
+        resumed = await resume_workflow(
+            graph,
+            suspended.run_id,
+            approval_id="approval-1",
+            approved=True,
+        )
+
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].idempotency_key, f"{step_key}:call-approval")
+        self.assertEqual(resumed.state["result"], "complete")
+        self.assertEqual(
+            resumed.state["result_meta"],
+            {
+                "name": "effect-step",
+                "status": "completed",
+                "run_id": resumed.checkpoint.nodes["effect-step"].child_run_id,
+                "agent_name": "effect-agent",
+                "text": "complete",
+                "attempts": 1,
+                "error": None,
+            },
+        )
+
     async def test_definition_mismatch_fails_closed_on_resume(self) -> None:
         store = create_in_memory_workflow_checkpoint_store()
         original = (
@@ -372,6 +468,65 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(item.transition.type == "workflow-recovered" for item in await store.list_checkpoints(recovered.run_id))
         )
+
+    async def test_concurrent_idempotent_start_reuses_the_winning_run(self) -> None:
+        inner_store = create_in_memory_workflow_checkpoint_store()
+
+        class RacingStore:
+            def __init__(self) -> None:
+                self.find_calls = 0
+                self.initial_finds_ready = asyncio.Event()
+
+            async def append(self, checkpoint, *, expected_sequence=None):
+                return await inner_store.append(checkpoint, expected_sequence=expected_sequence)
+
+            async def load_latest(self, run_id):
+                return await inner_store.load_latest(run_id)
+
+            async def load_checkpoint(self, checkpoint_id):
+                return await inner_store.load_checkpoint(checkpoint_id)
+
+            async def find_by_idempotency_key(self, idempotency_key):
+                self.find_calls += 1
+                if self.find_calls <= 2:
+                    result = await inner_store.find_by_idempotency_key(idempotency_key)
+                    if self.find_calls == 2:
+                        self.initial_finds_ready.set()
+                    await self.initial_finds_ready.wait()
+                    return result
+                return await inner_store.find_by_idempotency_key(idempotency_key)
+
+            async def list_checkpoints(self, run_id):
+                return await inner_store.list_checkpoints(run_id)
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold_winner(_context):
+            started.set()
+            await release.wait()
+            return "done"
+
+        graph = (
+            WorkflowBuilder("concurrent-start")
+            .add_step(WorkflowStep("work", executor=hold_winner, output_key="result"), entrypoint=True)
+            .build(checkpoint_store=RacingStore())
+        )
+        runs = [
+            asyncio.create_task(graph.run(idempotency_key="same-request")),
+            asyncio.create_task(graph.run(idempotency_key="same-request")),
+        ]
+        await started.wait()
+        done, pending = await asyncio.wait(runs, return_when=asyncio.FIRST_COMPLETED)
+        reused = next(iter(done)).result()
+
+        self.assertEqual(reused.status, "running")
+        release.set()
+        winner = await next(iter(pending))
+
+        self.assertEqual(winner.status, "completed")
+        self.assertEqual(reused.run_id, winner.run_id)
+        self.assertEqual(winner.state["result"], "done")
 
     def test_graph_rejects_cycles_and_unreachable_explicit_entrypoints(self) -> None:
         one = WorkflowStep("one", agent_with_text("one", "one"))

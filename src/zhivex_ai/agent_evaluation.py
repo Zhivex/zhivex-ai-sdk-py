@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -99,12 +101,152 @@ class AgentEvaluationReport:
     cases: list[dict[str, JsonValue]]
     metadata: dict[str, JsonValue] = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, JsonValue]:
+        return _finite_json_object(
+            {
+                "ok": self.ok,
+                "total": self.total,
+                "passed": self.passed,
+                "failed": self.failed,
+                "pass_rate": self.pass_rate,
+                "failures": self.failures,
+                "cases": self.cases,
+                "metadata": self.metadata,
+            }
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), allow_nan=False, separators=(",", ":"), sort_keys=True)
+
 
 @dataclass(slots=True)
 class AgentEvaluationJudgeResult:
     score: float
     feedback: str | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
+AgentEvaluationScorer = Callable[[AgentEvaluationCaseResult], float | Awaitable[float]]
+AgentEvaluationAgentFactory = Callable[[AgentEvaluationCase], Agent | Awaitable[Agent]]
+
+
+@dataclass(slots=True)
+class AgentEvaluationMetric:
+    name: str
+    scorer: AgentEvaluationScorer
+    higher_is_better: bool = True
+
+
+@dataclass(slots=True)
+class AgentEvaluationGate:
+    metric: str = "pass_rate"
+    minimum: float | None = None
+    maximum: float | None = None
+    max_regression: float | None = 0.0
+
+
+@dataclass(slots=True)
+class AgentEvaluationVariant:
+    name: str
+    agent: Agent | AgentEvaluationAgentFactory
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class AgentEvaluationVariantResult:
+    name: str
+    result: AgentEvaluationResult
+    report: AgentEvaluationReport
+    metrics: dict[str, float]
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class AgentEvaluationGateResult:
+    variant: str
+    metric: str
+    value: float
+    baseline_value: float
+    delta: float
+    regression: float
+    ok: bool
+    minimum: float | None = None
+    maximum: float | None = None
+    max_regression: float | None = None
+    failures: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AgentEvaluationExperimentResult:
+    ok: bool
+    baseline: str
+    variants: list[AgentEvaluationVariantResult]
+    gates: list[AgentEvaluationGateResult]
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return _finite_json_object(
+            {
+                "ok": self.ok,
+                "baseline": self.baseline,
+                "variants": [
+                    {
+                        "name": variant.name,
+                        "ok": variant.result.ok,
+                        "metrics": variant.metrics,
+                        "report": variant.report.to_dict(),
+                        "metadata": variant.metadata,
+                    }
+                    for variant in self.variants
+                ],
+                "gates": [
+                    {
+                        "variant": gate.variant,
+                        "metric": gate.metric,
+                        "value": gate.value,
+                        "baseline_value": gate.baseline_value,
+                        "delta": gate.delta,
+                        "regression": gate.regression,
+                        "ok": gate.ok,
+                        "minimum": gate.minimum,
+                        "maximum": gate.maximum,
+                        "max_regression": gate.max_regression,
+                        "failures": gate.failures,
+                    }
+                    for gate in self.gates
+                ],
+                "metadata": self.metadata,
+            }
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), allow_nan=False, separators=(",", ":"), sort_keys=True)
+
+
+def _finite_json_value(value: Any, *, path: str = "$") -> JsonValue:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"Expected finite JSON number at {path}.")
+        return value
+    if isinstance(value, list):
+        return [_finite_json_value(item, path=f"{path}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, dict):
+        normalized: dict[str, JsonValue] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"Expected string JSON object key at {path}.")
+            normalized[key] = _finite_json_value(item, path=f"{path}.{key}")
+        return normalized
+    raise TypeError(f"Expected JSON-compatible value at {path}, got {type(value).__name__}.")
+
+
+def _finite_json_object(value: dict[str, Any]) -> dict[str, JsonValue]:
+    normalized = _finite_json_value(value)
+    if not isinstance(normalized, dict):
+        raise TypeError("Expected a JSON object.")
+    return normalized
 
 
 def create_agent_run_snapshot(state: AgentRunState) -> AgentRunSnapshot:
@@ -185,15 +327,22 @@ class MockLanguageModel:
         return self._responses.pop(0)
 
     async def stream(self, input: ModelGenerateInput):
-        if not self._stream_events:
-            result = await self.generate(input)
-            from .types import StreamFinishEvent, StreamTextDeltaEvent
+        async def generator():
+            if not self._stream_events:
+                result = await self.generate(input)
+                from .types import StreamFinishEvent, StreamTextDeltaEvent
 
-            yield StreamTextDeltaEvent(text_delta=result.text or "")
-            yield StreamFinishEvent(response=result)
-            return
-        for event in self._stream_events.pop(0):
-            yield event
+                yield StreamTextDeltaEvent(text_delta=result.text or "")
+                yield StreamFinishEvent(
+                    finish_reason=result.finish_reason,
+                    provider_finish_reason=result.provider_finish_reason,
+                    usage=result.usage,
+                )
+                return
+            for event in self._stream_events.pop(0):
+                yield event
+
+        return generator()
 
 
 def create_mock_language_model(
@@ -345,7 +494,7 @@ async def run_agent_evaluation_fixture(
 def create_agent_evaluation_report(result: AgentEvaluationResult, *, metadata: dict[str, JsonValue] | None = None) -> AgentEvaluationReport:
     total = len(result.cases)
     passed = sum(1 for item in result.cases if item.ok)
-    cases = [
+    cases: list[dict[str, JsonValue]] = [
         {
             "name": item.name,
             "ok": item.ok,
@@ -365,6 +514,180 @@ def create_agent_evaluation_report(result: AgentEvaluationResult, *, metadata: d
         cases=cases,
         metadata=metadata or {},
     )
+
+
+def _normalize_experiment_variants(
+    variants: list[AgentEvaluationVariant] | dict[str, Agent | AgentEvaluationAgentFactory],
+) -> list[AgentEvaluationVariant]:
+    normalized = (
+        list(variants)
+        if isinstance(variants, list)
+        else [AgentEvaluationVariant(name=name, agent=agent) for name, agent in variants.items()]
+    )
+    if not normalized:
+        raise ValueError("Agent evaluation experiments require at least one variant.")
+    names: set[str] = set()
+    for variant in normalized:
+        if not variant.name:
+            raise ValueError("Agent evaluation variant names cannot be empty.")
+        if variant.name in names:
+            raise ValueError(f'Duplicate agent evaluation variant name "{variant.name}".')
+        names.add(variant.name)
+    return normalized
+
+
+def _normalize_experiment_metrics(metrics: list[AgentEvaluationMetric] | None) -> list[AgentEvaluationMetric]:
+    normalized = list(metrics or [])
+    names = {"pass_rate"}
+    for metric in normalized:
+        if not metric.name:
+            raise ValueError("Agent evaluation metric names cannot be empty.")
+        if metric.name in names:
+            raise ValueError(f'Duplicate agent evaluation metric name "{metric.name}".')
+        names.add(metric.name)
+    return normalized
+
+
+def _finite_metric(value: float, *, metric: str, case: str | None = None) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        location = f' for case "{case}"' if case is not None else ""
+        raise TypeError(f'Metric "{metric}"{location} must return a number.')
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        location = f' for case "{case}"' if case is not None else ""
+        raise ValueError(f'Metric "{metric}"{location} must return a finite number.')
+    return normalized
+
+
+async def _aggregate_experiment_metrics(
+    result: AgentEvaluationResult,
+    metrics: list[AgentEvaluationMetric],
+) -> dict[str, float]:
+    report = create_agent_evaluation_report(result)
+    aggregated = {"pass_rate": report.pass_rate}
+    for metric in metrics:
+        values: list[float] = []
+        for case in result.cases:
+            score = metric.scorer(case)
+            if isinstance(score, Awaitable):
+                score = await score
+            values.append(_finite_metric(score, metric=metric.name, case=case.name))
+        try:
+            aggregate = math.fsum(values) / len(values) if values else 0.0
+        except OverflowError as exc:
+            raise ValueError(f'Aggregate metric "{metric.name}" must be finite.') from exc
+        aggregated[metric.name] = _finite_metric(aggregate, metric=metric.name)
+    return aggregated
+
+
+def _evaluate_experiment_gates(
+    *,
+    variants: list[AgentEvaluationVariantResult],
+    baseline: AgentEvaluationVariantResult,
+    metrics: list[AgentEvaluationMetric],
+    gates: list[AgentEvaluationGate],
+) -> list[AgentEvaluationGateResult]:
+    directions = {"pass_rate": True, **{metric.name: metric.higher_is_better for metric in metrics}}
+    results: list[AgentEvaluationGateResult] = []
+    for gate in gates:
+        if gate.metric not in directions:
+            raise ValueError(f'Unknown agent evaluation gate metric "{gate.metric}".')
+        if gate.max_regression is not None and gate.max_regression < 0:
+            raise ValueError("Agent evaluation max_regression must be non-negative.")
+        minimum = None if gate.minimum is None else _finite_metric(gate.minimum, metric=gate.metric)
+        maximum = None if gate.maximum is None else _finite_metric(gate.maximum, metric=gate.metric)
+        max_regression = (
+            None if gate.max_regression is None else _finite_metric(gate.max_regression, metric=gate.metric)
+        )
+        baseline_value = baseline.metrics[gate.metric]
+        higher_is_better = directions[gate.metric]
+        for variant in variants:
+            value = variant.metrics[gate.metric]
+            delta = value - baseline_value
+            regression = max(0.0, -delta if higher_is_better else delta)
+            failures: list[str] = []
+            if minimum is not None and value < minimum:
+                failures.append(f"Expected {gate.metric} >= {minimum}, got {value}.")
+            if maximum is not None and value > maximum:
+                failures.append(f"Expected {gate.metric} <= {maximum}, got {value}.")
+            if variant.name != baseline.name and max_regression is not None and regression > max_regression:
+                failures.append(
+                    f"Regression {regression} for {gate.metric} exceeds allowed {max_regression} "
+                    f'against baseline "{baseline.name}".'
+                )
+            results.append(
+                AgentEvaluationGateResult(
+                    variant=variant.name,
+                    metric=gate.metric,
+                    value=value,
+                    baseline_value=baseline_value,
+                    delta=delta,
+                    regression=regression,
+                    ok=not failures,
+                    minimum=minimum,
+                    maximum=maximum,
+                    max_regression=max_regression,
+                    failures=failures,
+                )
+            )
+    return results
+
+
+async def run_agent_evaluation_experiment(
+    *,
+    variants: list[AgentEvaluationVariant] | dict[str, Agent | AgentEvaluationAgentFactory],
+    dataset: list[AgentEvaluationCase],
+    baseline: str | None = None,
+    metrics: list[AgentEvaluationMetric] | None = None,
+    gates: list[AgentEvaluationGate] | None = None,
+    metadata: dict[str, JsonValue] | None = None,
+) -> AgentEvaluationExperimentResult:
+    """Evaluate agent variants deterministically and apply baseline-aware CI gates.
+
+    Variants, cases, and custom metrics run in their supplied order. Custom metric
+    values are averaged across cases, and every emitted number is required to be
+    finite so ``to_json`` always produces strict JSON.
+    """
+
+    normalized_variants = _normalize_experiment_variants(variants)
+    normalized_metrics = _normalize_experiment_metrics(metrics)
+    baseline_name = baseline or normalized_variants[0].name
+    if baseline_name not in {variant.name for variant in normalized_variants}:
+        raise ValueError(f'Unknown agent evaluation baseline "{baseline_name}".')
+
+    variant_results: list[AgentEvaluationVariantResult] = []
+    for variant in normalized_variants:
+        result = await run_agent_evaluation(agent=variant.agent, dataset=dataset)
+        report = create_agent_evaluation_report(result, metadata=variant.metadata)
+        variant_results.append(
+            AgentEvaluationVariantResult(
+                name=variant.name,
+                result=result,
+                report=report,
+                metrics=await _aggregate_experiment_metrics(result, normalized_metrics),
+                metadata=variant.metadata,
+            )
+        )
+
+    baseline_result = next(variant for variant in variant_results if variant.name == baseline_name)
+    normalized_gates = [AgentEvaluationGate()] if gates is None else list(gates)
+    gate_results = _evaluate_experiment_gates(
+        variants=variant_results,
+        baseline=baseline_result,
+        metrics=normalized_metrics,
+        gates=normalized_gates,
+    )
+    experiment = AgentEvaluationExperimentResult(
+        ok=all(gate.ok for gate in gate_results),
+        baseline=baseline_name,
+        variants=variant_results,
+        gates=gate_results,
+        metadata=metadata or {},
+    )
+    # Validate the full artifact eagerly so invalid metadata never yields a
+    # partially usable CI result.
+    experiment.to_dict()
+    return experiment
 
 
 async def judge_agent_evaluation(

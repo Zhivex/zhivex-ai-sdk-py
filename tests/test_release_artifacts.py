@@ -47,7 +47,7 @@ class ReleaseArtifactToolingTests(TestCase):
         script = ROOT / "scripts/verify_release_artifacts.py"
         source = script.read_text("utf-8")
         ast.parse(source)
-        for extra in ["postgres", "mcp", "api", "otel", "docx"]:
+        for extra in ["postgres", "mcp", "api", "a2a", "ag-ui", "otel", "docx"]:
             self.assertIn(f'"{extra}"', source)
         self.assertIn("validate_release", source)
         self.assertIn("tool_executions", source)
@@ -164,6 +164,8 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("pip-audit>=2.10.1", extras["dev"])
         self.assertIn("setuptools>=83.0.0", extras["dev"])
         self.assertIn("mcp>=1.28.1", extras["mcp"])
+        self.assertIn("a2a-sdk[fastapi]>=1.1.2,<2", extras["a2a"])
+        self.assertIn("ag-ui-protocol>=0.1.19,<0.2", extras["ag-ui"])
 
     def test_makefile_release_check_runs_install_verification(self) -> None:
         makefile = (ROOT / "Makefile").read_text("utf-8")
@@ -236,4 +238,4 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn("fetch-depth: 0", workflow)
             self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main', workflow)
             self.assertIn("make PYTHON=python release-check", workflow)
-            self.assertIn(".[dev,postgres,mcp,api,otel,docx]", workflow)
+            self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)

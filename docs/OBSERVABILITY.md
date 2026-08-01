@@ -107,6 +107,21 @@ Alert on repeated sequence conflicts, definition mismatch, exhausted step retrie
 
 Do not export full checkpoint state, node output, resume values, adapter envelopes, or interrupt payloads as span attributes. These fields can contain prompts, model output, approval data, and regulated business records.
 
+## Protocol Correlation
+
+A2A, AG-UI, and Responses identifiers are external transport identifiers. Correlate them with the authenticated application identity and internal agent run; do not use them as authorization tokens.
+
+Recommended fields:
+
+- protocol and route/binding
+- authenticated tenant and subject identifiers or irreversible references
+- A2A task/context IDs, AG-UI thread/run IDs, or Responses response/item IDs
+- internal agent `run_id`, `session_id`, and agent/model alias
+- provider and provider model from server configuration
+- request size, duration, terminal status, and normalized error class
+
+Keep prompts, AG-UI state/forwarded props, A2A message parts/artifacts, Responses input/output, and tool arguments/results out of default span attributes. If content logging is explicitly approved, apply DLP/redaction and the deployment's retention policy before export.
+
 ## Hooks, Middleware, And Events
 
 These extension surfaces have distinct responsibilities:

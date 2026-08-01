@@ -4897,6 +4897,10 @@ async def _execute_resolved_approval_tool(
     context = ToolExecutionContext(
         tool_name=pending.name,
         tool_call_id=pending.tool_call_id or pending.id,
+        idempotency_key=(
+            f"{agent.metadata.get('zhivex_workflow_step_idempotency_key') or state.run_id}:"
+            f"{pending.tool_call_id or pending.name}"
+        ),
         run_id=state.run_id,
         session_id=state.session_id or "",
         agent_name=state.agent_name,

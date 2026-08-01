@@ -24,6 +24,33 @@ if TYPE_CHECKING:
         run_agent as run_agent,
         stream_agent as stream_agent,
     )
+    from .agent_evaluation import (
+        AgentEvaluationAgentFactory as AgentEvaluationAgentFactory,
+        AgentEvaluationExperimentResult as AgentEvaluationExperimentResult,
+        AgentEvaluationGate as AgentEvaluationGate,
+        AgentEvaluationGateResult as AgentEvaluationGateResult,
+        AgentEvaluationMetric as AgentEvaluationMetric,
+        AgentEvaluationScorer as AgentEvaluationScorer,
+        AgentEvaluationVariant as AgentEvaluationVariant,
+        AgentEvaluationVariantResult as AgentEvaluationVariantResult,
+        run_agent_evaluation_experiment as run_agent_evaluation_experiment,
+    )
+    from .protocols import (
+        A2AAgentCard as A2AAgentCard,
+        A2AAgentExecutor as A2AAgentExecutor,
+        A2AAgentSkill as A2AAgentSkill,
+        AGUIEvent as AGUIEvent,
+        create_a2a_agent_card as create_a2a_agent_card,
+        create_a2a_app as create_a2a_app,
+        stream_agent_ag_ui as stream_agent_ag_ui,
+        to_ag_ui_sse_response as to_ag_ui_sse_response,
+    )
+    from .responses_host import (
+        AgentResolver as AgentResolver,
+        ResponsesAgentHost as ResponsesAgentHost,
+        create_agent_playground_app as create_agent_playground_app,
+        create_responses_app as create_responses_app,
+    )
     from .types import ToolExecutionContext as ToolExecutionContext
 
 _MODULE_EXPORTS = {
@@ -150,15 +177,41 @@ _MODULE_EXPORTS = {
         "AgentEvaluationFixture",
         "AgentEvaluationReport",
         "AgentEvaluationJudgeResult",
+        "AgentEvaluationScorer",
+        "AgentEvaluationAgentFactory",
+        "AgentEvaluationMetric",
+        "AgentEvaluationGate",
+        "AgentEvaluationVariant",
+        "AgentEvaluationVariantResult",
+        "AgentEvaluationGateResult",
+        "AgentEvaluationExperimentResult",
         "create_agent_run_snapshot",
         "replay_agent_run",
         "create_mock_language_model",
         "create_mock_tool",
         "run_agent_evaluation",
+        "run_agent_evaluation_experiment",
         "create_agent_evaluation_fixture",
         "run_agent_evaluation_fixture",
         "create_agent_evaluation_report",
         "judge_agent_evaluation",
+    ),
+    "protocols": (
+        "A2A_PROTOCOL_VERSION",
+        "A2AAgentSkill",
+        "A2AAgentCard",
+        "A2AAgentExecutor",
+        "AGUIEvent",
+        "create_a2a_agent_card",
+        "create_a2a_app",
+        "stream_agent_ag_ui",
+        "to_ag_ui_sse_response",
+    ),
+    "responses_host": (
+        "AgentResolver",
+        "ResponsesAgentHost",
+        "create_responses_app",
+        "create_agent_playground_app",
     ),
     "workflow": (
         "WorkflowAgent",

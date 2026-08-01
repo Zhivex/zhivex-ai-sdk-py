@@ -21,6 +21,8 @@ EXTRAS_IMPORTS = {
     "postgres": ["asyncpg"],
     "mcp": ["mcp"],
     "api": ["fastapi", "uvicorn"],
+    "a2a": ["a2a", "fastapi"],
+    "ag-ui": ["ag_ui"],
     "otel": ["opentelemetry", "opentelemetry.sdk"],
     "docx": ["docx"],
 }
@@ -151,15 +153,21 @@ def _smoke_code(expected_version: str) -> str:
             AgentHooks,
             AgentMiddleware,
             AgentRunRequest,
+            AgentEvaluationCase,
+            AgentEvaluationGate,
+            A2AAgentExecutor,
+            ResponsesAgentHost,
             SequentialAgent,
             WorkflowBuilder,
             WorkflowStep,
             create_in_memory_workflow_checkpoint_store,
             create_deepseek,
+            create_a2a_agent_card,
             create_mock_language_model,
             create_text_message,
             generate_text,
             run_agent,
+            run_agent_evaluation_experiment,
             tool,
         )
         from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
@@ -173,6 +181,9 @@ def _smoke_code(expected_version: str) -> str:
         assert "generate_text" in zhivex_ai.__all__
         assert "WorkflowGraph" in zhivex_ai.__all__
         assert "resume_workflow" in zhivex_ai.__all__
+        assert "run_agent_evaluation_experiment" in zhivex_ai.__all__
+        assert "create_a2a_app" in zhivex_ai.__all__
+        assert "create_responses_app" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
         deepseek = create_deepseek(api_key="artifact-smoke-key")
         assert deepseek("deepseek-v4-flash").provider == "deepseek"
@@ -316,6 +327,41 @@ def _smoke_code(expected_version: str) -> str:
             assert graph_result.state["out"] == "graph-ok"
             assert graph_result.checkpoint.sequence > 0
 
+            def evaluation_agent(_case):
+                return Agent(
+                    name="evaluation",
+                    model=create_mock_language_model(
+                        responses=[GenerateResult(text="eval-ok", finish_reason="stop")]
+                    ),
+                )
+
+            experiment = await run_agent_evaluation_experiment(
+                variants={{"baseline": evaluation_agent, "candidate": evaluation_agent}},
+                dataset=[AgentEvaluationCase(name="artifact", prompt="go")],
+                gates=[AgentEvaluationGate("pass_rate", minimum=1.0, max_regression=0.0)],
+            )
+            assert experiment.ok
+            assert experiment.to_dict()["baseline"] == "baseline"
+
+            hosted_agent = Agent(
+                name="hosted",
+                model=create_mock_language_model(
+                    responses=[GenerateResult(text="responses-ok", finish_reason="stop")]
+                ),
+            )
+            hosted = await ResponsesAgentHost({{"default": hosted_agent}}).create(
+                {{"model": "default", "input": "go"}}
+            )
+            assert hosted["output"][0]["content"][0]["text"] == "responses-ok"
+
+            card = create_a2a_agent_card(
+                hosted_agent,
+                url="https://example.com/a2a",
+                version={expected_version!r},
+            )
+            assert card.to_dict()["supportedInterfaces"][0]["protocolVersion"] == "1.0"
+            assert A2AAgentExecutor(hosted_agent).agent is hosted_agent
+
         asyncio.run(main())
         """
     )
@@ -325,18 +371,49 @@ def _run_base_smoke(python: Path, *, expected_version: str) -> None:
     _run([str(python), "-c", _smoke_code(expected_version)])
     cli = _venv_bin(python.parent.parent, "zhivex-skills")
     _run([str(cli), "--help"])
+    general_cli = _venv_bin(python.parent.parent, "zhivex")
+    _run([str(general_cli), "--help"])
 
 
 def _run_extra_smoke(python: Path, extra: str) -> None:
     imports = EXTRAS_IMPORTS[extra]
-    code = "\n".join(
-        [
-            "import importlib",
-            "import zhivex_ai",
-            *[f'importlib.import_module("{name}")' for name in imports],
-            'print("ok")',
-        ]
-    )
+    lines = [
+        "import importlib",
+        "import zhivex_ai",
+        *[f'importlib.import_module("{name}")' for name in imports],
+    ]
+    if extra == "a2a":
+        lines.extend(
+            [
+                "from fastapi.testclient import TestClient",
+                "from zhivex_ai import Agent, A2AAgentExecutor, create_a2a_agent_card, create_a2a_app, create_mock_language_model",
+                "from zhivex_ai.types import GenerateResult",
+                'agent = Agent(name="artifact-a2a", model=create_mock_language_model(responses=[GenerateResult(text="ok", finish_reason="stop")]))',
+                'card = create_a2a_agent_card(agent, url="http://testserver/a2a", version="1.0.0")',
+                "app = create_a2a_app(executor=A2AAgentExecutor(agent), card=card)",
+                "with TestClient(app) as client:",
+                '    response = client.post("/a2a/message:send", headers={"A2A-Version": "1.0"}, json={"message": {"messageId": "artifact", "role": "ROLE_USER", "parts": [{"text": "go"}]}})',
+                "assert response.status_code == 200, response.text",
+                'assert response.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"',
+            ]
+        )
+    elif extra == "ag-ui":
+        lines.extend(
+            [
+                "import asyncio",
+                "from zhivex_ai import Agent, create_mock_language_model, stream_agent_ag_ui, to_ag_ui_sse_response",
+                "from zhivex_ai.types import GenerateResult",
+                "async def smoke_ag_ui():",
+                '    agent = Agent(name="artifact-ag-ui", model=create_mock_language_model(responses=[GenerateResult(text="ok", finish_reason="stop")]))',
+                '    response = to_ag_ui_sse_response(stream_agent_ag_ui(agent=agent, prompt="go", thread_id="thread", run_id="run"))',
+                "    frames = [frame async for frame in response.body]",
+                '    assert b\'"type":"RUN_STARTED"\' in frames[0]',
+                '    assert b\'"type":"RUN_FINISHED"\' in frames[-1]',
+                "asyncio.run(smoke_ag_ui())",
+            ]
+        )
+    lines.append('print("ok")')
+    code = "\n".join(lines)
     _run([str(python), "-c", code])
 
 
@@ -369,7 +446,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-sdist", action="store_true", help="Skip installing the source distribution.")
     parser.add_argument(
         "--extras",
-        default="postgres,mcp,api,otel,docx",
+        default="postgres,mcp,api,a2a,ag-ui,otel,docx",
         help="Comma-separated optional extras to install and import-check.",
     )
     return parser.parse_args(argv)

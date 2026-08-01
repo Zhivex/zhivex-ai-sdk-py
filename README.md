@@ -31,7 +31,7 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, workflow checkpoints/stores, resume/fork, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation/trace artifacts, safety-policy helpers, and local run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, workflow checkpoints/stores, resume/fork, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, trace artifacts, safety-policy helpers, and local run stores remain beta.
 
 See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
@@ -41,6 +41,9 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Provider setup and smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
 - Agent runtime: [docs/AGENTS.md](./docs/AGENTS.md)
 - Durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Evaluations and CI gates: [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
+- Agent protocols and hosting: [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
+- CLI and local playground: [docs/CLI.md](./docs/CLI.md)
 - Production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
 - Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
 - Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
@@ -55,6 +58,8 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 
 - Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
 - Beta durable workflow graphs with validated DAGs, agent or functional steps, persisted routing/checkpoints, SQLite/Postgres stores, explicit resume/fork, interrupts, step retries, and the existing sequential/parallel/loop agents
+- Beta evaluation experiments with deterministic variants, custom metrics, baseline comparison, and CI regression gates
+- Beta A2A v1, AG-UI, and Responses-compatible agent hosting plus a general CLI and loopback-first local playground
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
@@ -200,6 +205,8 @@ Optional extras:
 pip install "zhivex-ai-sdk[postgres]"
 pip install "zhivex-ai-sdk[mcp]"
 pip install "zhivex-ai-sdk[api]"
+pip install "zhivex-ai-sdk[a2a]"
+pip install "zhivex-ai-sdk[ag-ui]"
 pip install "zhivex-ai-sdk[otel]"
 pip install "zhivex-ai-sdk[docx]"
 ```
@@ -211,6 +218,14 @@ zhivex-skills validate path/to/skill
 zhivex-skills install path/to/skill
 # Remote packages contain executable Python and require explicit trust:
 zhivex-skills install writer@1.0.0 --registry-url https://skills.example.com/index.json --trust-remote-code
+```
+
+The beta general CLI runs, evaluates, serves, and opens a local playground for a trusted `module:attribute` agent:
+
+```bash
+zhivex run my_app.agents:support_agent --prompt "Draft a reply"
+zhivex eval my_app.agents:support_agent --dataset evals/support.json
+zhivex playground my_app.agents:support_agent
 ```
 
 ## Quick Start
@@ -1466,6 +1481,7 @@ The stable agent slice covers the run/result/stream lifecycle, local tools, dire
 - `create_agent_run_snapshot(...)`
 - `replay_agent_run(...)`
 - `run_agent_evaluation(...)`
+- `run_agent_evaluation_experiment(...)`
 - `create_agent_evaluation_report(...)`
 - `create_safety_policy(...)`
 - `apply_safety_policy_to_agent(...)`
@@ -1529,7 +1545,7 @@ result = await resume_workflow(
 
 `WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. SQLite survives local worker reconstruction and the optional Postgres workflow store supports shared workers through transactional sequence/idempotency constraints. In-memory storage is process-local.
 
-`fork_workflow(...)` creates a new run with explicit source lineage. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. All workflow graph, checkpoint/store, resume/fork, and callback adapter APIs remain beta in `0.15.0`.
+`fork_workflow(...)` creates a new run with explicit source lineage. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store, resume/fork, and callback adapter APIs were introduced in `0.15.0` and remain beta in `0.16.0`.
 
 Re-entering a still-running idempotent workflow fails closed. `recover_running=True` is an explicit takeover operation for use only after confirming that the prior worker is gone; it records recovery but cannot make unknown external effects safe without destination idempotency or reconciliation.
 
@@ -1571,6 +1587,21 @@ trace = create_agent_trace_artifact(state)
 timeline = replay_agent_run(state)
 summary = summarize_agent_trace(state)
 ```
+
+Version `0.16.0` also supports multi-variant evaluation experiments with strict JSON artifacts and baseline-aware CI gates:
+
+```python
+from zhivex_ai import AgentEvaluationGate, run_agent_evaluation_experiment
+
+experiment = await run_agent_evaluation_experiment(
+    variants={"baseline": baseline_agent, "candidate": candidate_agent},
+    baseline="baseline",
+    dataset=dataset,
+    gates=[AgentEvaluationGate("pass_rate", minimum=0.95, max_regression=0.01)],
+)
+```
+
+Protocol adapters remain beta. `create_a2a_app(...)` delegates A2A v1 REST, JSON-RPC, task lifecycle, and wire framing to the official `a2a-sdk`; `stream_agent_ag_ui(...)` maps agent lifecycle events and `to_ag_ui_sse_response(...)` uses the official AG-UI encoder; `create_responses_app(...)` exposes a constrained `POST /v1/responses` create/stream contract over server-owned aliases. `create_agent_playground_app(...)` and `zhivex playground` are loopback-first development tools, not production consoles. See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md), [docs/EVALUATIONS.md](./docs/EVALUATIONS.md), and [docs/CLI.md](./docs/CLI.md).
 
 Agent skills are also available across the agent runtime. These are provider-agnostic workflow packs that inject task-specific instructions and optional tool dependencies before a run starts. They are distinct from the raw OpenAI Skills API:
 

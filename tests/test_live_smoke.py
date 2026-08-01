@@ -23,6 +23,12 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             {"temperature": 0, "max_tokens": 80},
         )
 
+    def test_gemini_agent_smoke_allows_reasoning_before_tool_output(self) -> None:
+        self.assertEqual(
+            run_live_smoke._agent_smoke_generation_options("gemini"),
+            {"temperature": 0, "max_tokens": 512},
+        )
+
     def test_selected_providers_normalizes_azure_alias(self) -> None:
         with patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "openai,azure"}, clear=True):
             selected = run_live_smoke._selected_providers()

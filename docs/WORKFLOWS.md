@@ -6,7 +6,7 @@ The SDK owns orchestration mechanics. The application continues to own business 
 
 ## Stability
 
-The complete workflow surface remains beta in `0.15.0`:
+The complete workflow surface introduced in `0.15.0` remains beta in `0.16.0`:
 
 - Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
 - Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, and `fork_workflow`

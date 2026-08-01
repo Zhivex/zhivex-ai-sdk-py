@@ -10,6 +10,7 @@ Related examples:
 - [docs/GATEWAY.md](./docs/GATEWAY.md)
 - [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
 - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
 - [SECURITY.md](./SECURITY.md)
 
 ## Install
@@ -110,9 +111,25 @@ For agent-backed API servers, keep application policy outside the SDK:
 
 See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md) for the full runtime and production guidance.
 
+## Protocol APIs
+
+Version `0.16.0` includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
+
+- Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
+- Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.
+- Replace A2A's default in-memory task store for multi-process or durable deployments and configure an owner resolver based on application identity.
+- Treat the Responses endpoint as a text/message create and stream subset. Do not promise unsupported tool, background, persistence, retrieval, or continuation endpoints.
+- Use the official AG-UI encoder and keep UI state, resume/interrupt authorization, and reconnect persistence in the application.
+- Apply request, field, concurrency, rate, provider-token, and output limits before public exposure. Redact protocol payloads and tool results in logs.
+- Correlate external A2A task/context IDs, AG-UI thread/run IDs, or Responses IDs with the internal agent run ID and authenticated identity.
+
+`create_agent_playground_app(...)` and `zhivex playground` are local development tools. They bind to loopback by default and do not supply authentication, TLS, distributed limits, tenant persistence, or approval UI. Do not deploy them as a public console.
+
+See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md) for supported routes, extras, wire boundaries, and limitations.
+
 ## Workflow APIs
 
-Durable workflow graphs are beta in `0.15.0`; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
+Durable workflow graphs were introduced in `0.15.0` and remain beta in `0.16.0`; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
 
 Recommended endpoint boundaries:
 
