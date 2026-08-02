@@ -72,6 +72,18 @@ class WorkflowAdapterEnvelopeTests(unittest.TestCase):
 
         self.assertEqual(WorkflowStepOutcome.from_json(outcome.to_json()), outcome)
 
+    def test_suspension_and_cancellation_outcomes_round_trip(self) -> None:
+        request = step_request()
+        suspended = WorkflowStepOutcome.for_request(
+            request,
+            status="suspended",
+            suspension={"signal": "manager-review", "resume_token": "review-1"},
+        )
+        cancelled = WorkflowStepOutcome.for_request(request, status="cancelled")
+
+        self.assertEqual(WorkflowStepOutcome.from_json(suspended.to_json()), suspended)
+        self.assertEqual(WorkflowStepOutcome.from_json(cancelled.to_json()), cancelled)
+
 
 class WorkflowStepExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
     async def test_registry_dispatches_sync_and_async_executors(self) -> None:

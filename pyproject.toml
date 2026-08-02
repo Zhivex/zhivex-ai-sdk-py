@@ -141,6 +141,7 @@ files = [
   "src/zhivex_ai/middleware.py",
   "src/zhivex_ai/messages.py",
   "src/zhivex_ai/protocols.py",
+  "src/zhivex_ai/observability.py",
   "src/zhivex_ai/realtime.py",
   "src/zhivex_ai/responses_host.py",
   "src/zhivex_ai/runtime.py",

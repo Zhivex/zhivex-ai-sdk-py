@@ -7,11 +7,13 @@ import inspect
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from .agent import AgentRunResult, AgentSession, create_agent_session, resume_agent_run, run_agent
+from .agent import AgentObserver, AgentRunResult, AgentSession, create_agent_session, resume_agent_run, run_agent
 from .agent_state import AgentChildRun, AgentRunState, AgentRunStep, AgentRunStore
 from .errors import ProviderHTTPError, ValidationError
 from .types import JsonValue
@@ -28,7 +30,9 @@ from .workflow_adapters import WorkflowAdapter, WorkflowStepOutcome, WorkflowSte
 from .workflow_state import (
     WorkflowCheckpoint,
     WorkflowCheckpointStore,
+    WorkflowExecutionLease,
     WorkflowInterrupt,
+    WorkflowLeaseManager,
     WorkflowNodeCheckpoint,
     WorkflowTransition,
     create_in_memory_workflow_checkpoint_store,
@@ -94,13 +98,33 @@ class WorkflowEdge:
 
 @dataclass(slots=True)
 class _NodeExecution:
-    status: Literal["completed", "failed", "suspended"]
+    status: Literal["completed", "failed", "suspended", "cancelled"]
     output: JsonValue | None = None
     child_run_id: str | None = None
     agent_result: AgentRunResult[Any] | None = None
     error: Exception | None = None
     state_patch: dict[str, JsonValue] = field(default_factory=dict)
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    suspension: dict[str, JsonValue] | None = None
+
+
+@dataclass(slots=True)
+class _WorkflowLeaseGuard:
+    lease: WorkflowExecutionLease
+    graph_identity: int
+    lost: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_ACTIVE_WORKFLOW_LEASE: ContextVar[_WorkflowLeaseGuard | None] = ContextVar(
+    "zhivex_active_workflow_lease",
+    default=None,
+)
+
+
+class _WorkflowCancellationObserved(Exception):
+    def __init__(self, checkpoint: WorkflowCheckpoint) -> None:
+        self.checkpoint = checkpoint
+        super().__init__(f'Workflow run "{checkpoint.run_id}" was cancelled.')
 
 
 class WorkflowBuilder:
@@ -147,6 +171,10 @@ class WorkflowBuilder:
         run_store: AgentRunStore | None = None,
         adapter: WorkflowAdapter | None = None,
         max_concurrency: int | None = None,
+        lease_manager: WorkflowLeaseManager | None = None,
+        lease_ttl_ms: int = 30_000,
+        lease_heartbeat_ms: int | None = None,
+        observer: AgentObserver | None = None,
     ) -> WorkflowGraph:
         return WorkflowGraph(
             name=self.name,
@@ -160,6 +188,10 @@ class WorkflowBuilder:
             interrupt_before=self._interrupt_before,
             interrupt_after=self._interrupt_after,
             max_concurrency=max_concurrency,
+            lease_manager=lease_manager,
+            lease_ttl_ms=lease_ttl_ms,
+            lease_heartbeat_ms=lease_heartbeat_ms,
+            observer=observer,
         )
 
 
@@ -180,6 +212,10 @@ class WorkflowGraph:
         interrupt_before: Mapping[str, str | None] | Sequence[str] = (),
         interrupt_after: Mapping[str, str | None] | Sequence[str] = (),
         max_concurrency: int | None = None,
+        lease_manager: WorkflowLeaseManager | None = None,
+        lease_ttl_ms: int = 30_000,
+        lease_heartbeat_ms: int | None = None,
+        observer: AgentObserver | None = None,
     ) -> None:
         self.name = name
         self.definition_version = str(definition_version).strip()
@@ -189,6 +225,16 @@ class WorkflowGraph:
         self.run_store = run_store
         self.adapter = adapter
         self.max_concurrency = max_concurrency
+        self.lease_manager = lease_manager
+        self.observer = observer
+        self.lease_ttl_ms = lease_ttl_ms
+        self.lease_heartbeat_ms = (
+            max(1, lease_ttl_ms // 3)
+            if lease_heartbeat_ms is None and isinstance(lease_ttl_ms, int) and not isinstance(lease_ttl_ms, bool)
+            else 1
+            if lease_heartbeat_ms is None
+            else lease_heartbeat_ms
+        )
         self._steps = {step.name: step for step in self.steps}
         self._interrupt_before = self._normalize_interrupts(interrupt_before)
         self._interrupt_after = self._normalize_interrupts(interrupt_after)
@@ -242,6 +288,22 @@ class WorkflowGraph:
             or self.max_concurrency <= 0
         ):
             raise ValidationError("WorkflowGraph.max_concurrency must be a positive integer.")
+        if self.lease_manager is not None:
+            if (
+                isinstance(self.lease_ttl_ms, bool)
+                or not isinstance(self.lease_ttl_ms, int)
+                or self.lease_ttl_ms <= 0
+            ):
+                raise ValidationError("WorkflowGraph.lease_ttl_ms must be a positive integer.")
+            if (
+                isinstance(self.lease_heartbeat_ms, bool)
+                or not isinstance(self.lease_heartbeat_ms, int)
+                or self.lease_heartbeat_ms <= 0
+                or self.lease_heartbeat_ms >= self.lease_ttl_ms
+            ):
+                raise ValidationError(
+                    "WorkflowGraph.lease_heartbeat_ms must be a positive integer smaller than lease_ttl_ms."
+                )
         for step in self.steps:
             self._validate_durable_payload(step.metadata)
             if self.adapter is not None:
@@ -353,6 +415,135 @@ class WorkflowGraph:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
         return hashlib.sha256(encoded).hexdigest()
 
+    async def _assert_execution_lease(self) -> None:
+        guard = _ACTIVE_WORKFLOW_LEASE.get()
+        if guard is None or guard.graph_identity != id(self):
+            return
+        if guard.lost.is_set() or self.lease_manager is None:
+            raise ValidationError(
+                f'Workflow execution lease for run "{guard.lease.run_id}" was lost; refusing stale worker progress.'
+            )
+        current = await self.lease_manager.get(guard.lease.run_id)
+        if (
+            current is None
+            or current.token != guard.lease.token
+            or current.fencing_token != guard.lease.fencing_token
+            or current.is_expired()
+        ):
+            guard.lost.set()
+            raise ValidationError(
+                f'Workflow execution lease for run "{guard.lease.run_id}" was lost; refusing stale worker progress.'
+            )
+
+    async def _with_execution_lease(
+        self,
+        run_id: str,
+        operation: Callable[[], Awaitable[WorkflowRunResult]],
+    ) -> WorkflowRunResult:
+        started_at = time.perf_counter()
+        span = self._start_span(
+            "zhivex.workflow.run",
+            {
+                "zhivex.workflow.name": self.name,
+                "zhivex.workflow.run_id": run_id,
+                "zhivex.workflow.definition_version": self.definition_version,
+                "zhivex.workflow.definition_digest": self.definition_digest,
+                "zhivex.workflow.leased": self.lease_manager is not None,
+            },
+        )
+        try:
+            result = await self._with_execution_lease_impl(run_id, operation)
+        except BaseException as error:
+            attributes = {
+                "zhivex.workflow.status": (
+                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+                ),
+                "zhivex.duration_ms": (time.perf_counter() - started_at) * 1_000,
+            }
+            self._finish_span(
+                span,
+                attributes=attributes,
+                error=error if isinstance(error, Exception) else None,
+            )
+            raise
+        self._finish_span(
+            span,
+            attributes={
+                "zhivex.workflow.status": result.status,
+                "zhivex.workflow.checkpoint_sequence": (
+                    result.checkpoint.sequence if result.checkpoint is not None else -1
+                ),
+                "zhivex.duration_ms": (time.perf_counter() - started_at) * 1_000,
+            },
+        )
+        return result
+
+    async def _with_execution_lease_impl(
+        self,
+        run_id: str,
+        operation: Callable[[], Awaitable[WorkflowRunResult]],
+    ) -> WorkflowRunResult:
+        lease_manager = self.lease_manager
+        if lease_manager is None:
+            return await operation()
+        lease = await lease_manager.acquire(
+            run_id,
+            owner_id=f"workflow-worker-{uuid4().hex}",
+            ttl_ms=self.lease_ttl_ms,
+        )
+        if lease is None:
+            current = await lease_manager.get(run_id)
+            owner = current.owner_id if current is not None and not current.is_expired() else "another worker"
+            raise ValidationError(
+                f'Workflow run "{run_id}" has an active execution lease owned by "{owner}".'
+            )
+
+        guard = _WorkflowLeaseGuard(lease=lease, graph_identity=id(self))
+        context_token = _ACTIVE_WORKFLOW_LEASE.set(guard)
+
+        async def heartbeat() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(self.lease_heartbeat_ms / 1_000)
+                    renewed = await lease_manager.renew(
+                        run_id,
+                        token=lease.token,
+                        ttl_ms=self.lease_ttl_ms,
+                    )
+                    if renewed is None:
+                        guard.lost.set()
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                guard.lost.set()
+
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            try:
+                return await operation()
+            except _WorkflowCancellationObserved as cancellation:
+                return await self._result(cancellation.checkpoint, session=None)
+        finally:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+            with suppress(Exception):
+                await lease_manager.release(run_id, token=lease.token)
+            _ACTIVE_WORKFLOW_LEASE.reset(context_token)
+
+    async def _execute_with_optional_lease(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        session: AgentSession | None,
+        deps: Any,
+    ) -> WorkflowRunResult:
+        return await self._with_execution_lease(
+            checkpoint.run_id,
+            lambda: self._execute(checkpoint, session=session, deps=deps),
+        )
+
     async def run(
         self,
         *,
@@ -375,18 +566,25 @@ class WorkflowGraph:
                         f'Workflow run "{existing.run_id}" is still running. Pass recover_running=True only '
                         "after reconciling that the prior worker is no longer active."
                     )
-                recovered = self._recover_running_nodes(existing)
-                if recovered is not existing:
-                    existing = await self._append(
-                        existing,
-                        recovered,
-                        WorkflowTransition(
-                            type="workflow-recovered",
-                            at_ms=_now_ms(),
-                            detail={"reason": "idempotent re-entry"},
-                        ),
-                    )
-                return await self._execute(existing, session=session, deps=deps)
+                async def recover_and_execute() -> WorkflowRunResult:
+                    current = await self.checkpoint_store.load_latest(existing.run_id)
+                    if current is None:
+                        raise ValidationError(f'Workflow run "{existing.run_id}" was not found during recovery.')
+                    self._validate_checkpoint(current)
+                    recovered = self._recover_running_nodes(current)
+                    if recovered is not current:
+                        current = await self._append(
+                            current,
+                            recovered,
+                            WorkflowTransition(
+                                type="workflow-recovered",
+                                at_ms=_now_ms(),
+                                detail={"reason": "expired lease" if self.lease_manager is not None else "idempotent re-entry"},
+                            ),
+                        )
+                    return await self._execute(current, session=session, deps=deps)
+
+                return await self._with_execution_lease(existing.run_id, recover_and_execute)
 
         now = _now_ms()
         run_id = _new_id("wf")
@@ -424,7 +622,7 @@ class WorkflowGraph:
                 raise
             self._validate_checkpoint(winner)
             return await self._result(winner, session=session)
-        return await self._execute(checkpoint, session=resolved_session, deps=deps)
+        return await self._execute_with_optional_lease(checkpoint, session=resolved_session, deps=deps)
 
     def _validate_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         if checkpoint.workflow_name != self.name:
@@ -457,12 +655,27 @@ class WorkflowGraph:
         candidate: WorkflowCheckpoint,
         transition: WorkflowTransition,
     ) -> WorkflowCheckpoint:
+        await self._assert_execution_lease()
         candidate = copy.deepcopy(candidate)
+        guard = _ACTIVE_WORKFLOW_LEASE.get()
+        if guard is not None and guard.graph_identity == id(self):
+            candidate.metadata["execution_lease"] = {
+                "owner_id": guard.lease.owner_id,
+                "fencing_token": guard.lease.fencing_token,
+            }
         candidate.sequence = current.sequence + 1
         candidate.checkpoint_id = _new_id("wfc")
         candidate.updated_at_ms = transition.at_ms
         candidate.transition = transition
-        return await self.checkpoint_store.append(candidate, expected_sequence=current.sequence)
+        try:
+            return await self.checkpoint_store.append(candidate, expected_sequence=current.sequence)
+        except ValidationError:
+            guard = _ACTIVE_WORKFLOW_LEASE.get()
+            if guard is not None and guard.graph_identity == id(self):
+                latest = await self.checkpoint_store.load_latest(current.run_id)
+                if latest is not None and latest.status == "cancelled":
+                    raise _WorkflowCancellationObserved(latest) from None
+            raise
 
     async def _update(
         self,
@@ -580,6 +793,10 @@ class WorkflowGraph:
         resolved_session = session or create_agent_session(id=checkpoint.session_id, state=dict(checkpoint.state))
         resolved_session.state = dict(checkpoint.state)
         while True:
+            await self._assert_execution_lease()
+            latest = await self.checkpoint_store.load_latest(checkpoint.run_id)
+            if latest is not None and latest.status == "cancelled":
+                return await self._result(latest, session=resolved_session)
             checkpoint = await self._resolve_skipped(checkpoint)
             if checkpoint.pending_interrupt is not None:
                 checkpoint.status = "suspended"
@@ -605,7 +822,9 @@ class WorkflowGraph:
 
             if not ready:
                 statuses = {node.status for node in checkpoint.nodes.values()}
-                if "suspended" in statuses:
+                if "cancelled" in statuses:
+                    checkpoint = await self._finish(checkpoint, status="cancelled")
+                elif "suspended" in statuses:
                     checkpoint = await self._finish(checkpoint, status="suspended")
                 elif "failed" in statuses:
                     checkpoint = await self._finish(checkpoint, status="failed")
@@ -650,16 +869,49 @@ class WorkflowGraph:
 
             async def execute_one(node_name: str) -> _NodeExecution:
                 async with semaphore:
-                    return await self._execute_node(
-                        checkpoint,
-                        node_name=node_name,
-                        attempt=attempts[node_name],
-                        deps=deps,
+                    started_at = time.perf_counter()
+                    span = self._start_span(
+                        "zhivex.workflow.step",
+                        {
+                            "zhivex.workflow.name": self.name,
+                            "zhivex.workflow.run_id": checkpoint.run_id,
+                            "zhivex.workflow.step_name": node_name,
+                            "zhivex.workflow.step_attempt": attempts[node_name],
+                        },
                     )
+                    try:
+                        outcome = await self._execute_node(
+                            checkpoint,
+                            node_name=node_name,
+                            attempt=attempts[node_name],
+                            deps=deps,
+                        )
+                    except BaseException as error:
+                        self._finish_span(
+                            span,
+                            attributes={
+                                "zhivex.workflow.step_status": "cancelled",
+                                "zhivex.duration_ms": (time.perf_counter() - started_at) * 1_000,
+                            },
+                            error=error if isinstance(error, Exception) else None,
+                        )
+                        raise
+                    attributes: dict[str, Any] = {
+                        "zhivex.workflow.step_status": outcome.status,
+                        "zhivex.duration_ms": (time.perf_counter() - started_at) * 1_000,
+                    }
+                    if outcome.child_run_id is not None:
+                        attributes["zhivex.agent.run_id"] = outcome.child_run_id
+                    self._finish_span(span, attributes=attributes, error=outcome.error)
+                    return outcome
 
             outcomes = await asyncio.gather(*(execute_one(name) for name in ready))
+            latest = await self.checkpoint_store.load_latest(checkpoint.run_id)
+            if latest is not None and latest.status == "cancelled":
+                return await self._result(latest, session=resolved_session)
             fail_fast = False
             suspended = False
+            cancelled = False
             after_interrupt: str | None = None
             edge_sources: list[str] = []
             for node_name, outcome in zip(ready, outcomes, strict=True):
@@ -716,6 +968,11 @@ class WorkflowGraph:
                     result_node.error = str(execution.error) if execution.error is not None else None
                     result_node.finished_at_ms = at_ms
                     result_node.metadata = {**result_node.metadata, **execution.metadata}
+                    result_node.suspension = (
+                        copy.deepcopy(execution.suspension)
+                        if execution.status == "suspended" and execution.suspension is not None
+                        else None
+                    )
                     if execution.status == "completed":
                         if workflow_step.output_key is not None:
                             candidate.state[workflow_step.output_key] = execution.output
@@ -756,6 +1013,9 @@ class WorkflowGraph:
                 if outcome.status == "suspended":
                     suspended = True
                     continue
+                if outcome.status == "cancelled":
+                    cancelled = True
+                    continue
                 if outcome.status == "failed" and step.error_policy == "fail_fast":
                     fail_fast = True
                     continue
@@ -768,6 +1028,9 @@ class WorkflowGraph:
                     continue
                 edge_sources.append(node_name)
 
+            if cancelled:
+                checkpoint = await self._finish(checkpoint, status="cancelled")
+                return await self._result(checkpoint, session=resolved_session)
             if suspended:
                 checkpoint = await self._finish(checkpoint, status="suspended")
                 return await self._result(checkpoint, session=resolved_session)
@@ -802,6 +1065,7 @@ class WorkflowGraph:
         deps: Any,
     ) -> _NodeExecution:
         try:
+            await self._assert_execution_lease()
             step = self._steps[node_name]
             retry_not_before = checkpoint.nodes[node_name].metadata.get("retry_not_before_ms")
             if isinstance(retry_not_before, int):
@@ -815,6 +1079,10 @@ class WorkflowGraph:
                 cast(str | None, checkpoint.metadata.get("prompt")),
             )
             if self.adapter is not None:
+                guard = _ACTIVE_WORKFLOW_LEASE.get()
+                correlation_ids = {"session_id": checkpoint.session_id or ""}
+                if guard is not None and guard.graph_identity == id(self):
+                    correlation_ids["workflow_fencing_token"] = str(guard.lease.fencing_token)
                 request = WorkflowStepRequest(
                     workflow_name=self.name,
                     definition_version=self.definition_version,
@@ -831,7 +1099,7 @@ class WorkflowGraph:
                         "workflow_resume_values": dict(checkpoint.resume_values),
                     },
                     checkpoint_id=checkpoint.checkpoint_id,
-                    correlation_ids={"session_id": checkpoint.session_id or ""},
+                    correlation_ids=correlation_ids,
                 )
                 outcome = await self.adapter.dispatch(request)
                 if (
@@ -901,6 +1169,7 @@ class WorkflowGraph:
                 timeout_ms=step.timeout_ms,
                 max_retries=step.max_retries,
                 idempotency_key=f"{step_key}:attempt:{attempt}",
+                observer=self.observer,
             )
         except Exception as error:
             return _NodeExecution(status="failed", error=error)
@@ -928,18 +1197,32 @@ class WorkflowGraph:
             message = outcome.error.get("message") or outcome.error.get("code") or "Workflow adapter step failed."
             error = RuntimeError(str(message))
         status = outcome.status
-        if status == "cancelled":
-            return _NodeExecution(status="failed", error=error or RuntimeError("Workflow adapter step cancelled."))
-        if status not in {"completed", "failed", "suspended"}:
+        if status not in {"completed", "failed", "suspended", "cancelled"}:
             return _NodeExecution(status="failed", error=ValidationError("Workflow adapter returned invalid status."))
         return _NodeExecution(
-            status=cast(Literal["completed", "failed", "suspended"], status),
+            status=cast(Literal["completed", "failed", "suspended", "cancelled"], status),
             output=outcome.output,
             child_run_id=outcome.child_run_id,
             error=error,
             state_patch=dict(outcome.state_patch),
             metadata=dict(outcome.metadata),
+            suspension=dict(outcome.suspension) if outcome.suspension is not None else None,
         )
+
+    def _start_span(self, name: str, attributes: dict[str, Any]) -> Any:
+        if self.observer is None:
+            return None
+        return self.observer.start_span(name, attributes)
+
+    @staticmethod
+    def _finish_span(
+        span: Any,
+        *,
+        attributes: dict[str, Any] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if span is not None:
+            span.end(attributes=attributes, error=error)
 
     @staticmethod
     def _render_prompt(step: WorkflowStep, state: Mapping[str, JsonValue], fallback: str | None) -> str | None:
@@ -1098,6 +1381,7 @@ class WorkflowGraph:
             child_runs=child_runs,
             output_text=str(last_output or ""),
             error=str(checkpoint.metadata.get("error") or "") or None,
+            cancellation_reason=str(checkpoint.metadata.get("cancellation_reason") or "") or None,
             metadata={
                 "workflow_name": self.name,
                 "workflow_definition_version": self.definition_version,
@@ -1194,6 +1478,38 @@ async def resume_workflow(
     deps: Any = None,
     session: AgentSession | None = None,
 ) -> WorkflowRunResult:
+    return await workflow._with_execution_lease(
+        run_id,
+        lambda: _resume_workflow_claimed(
+            workflow,
+            run_id,
+            interrupt_id=interrupt_id,
+            resume_value=resume_value,
+            state_updates=state_updates,
+            approval_id=approval_id,
+            approved=approved,
+            reason=reason,
+            node_name=node_name,
+            deps=deps,
+            session=session,
+        ),
+    )
+
+
+async def _resume_workflow_claimed(
+    workflow: WorkflowGraph,
+    run_id: str,
+    *,
+    interrupt_id: str | None = None,
+    resume_value: JsonValue | None = None,
+    state_updates: Mapping[str, JsonValue] | None = None,
+    approval_id: str | None = None,
+    approved: bool = True,
+    reason: str | None = None,
+    node_name: str | None = None,
+    deps: Any = None,
+    session: AgentSession | None = None,
+) -> WorkflowRunResult:
     checkpoint = await workflow.checkpoint_store.load_latest(run_id)
     if checkpoint is None:
         raise ValidationError(f'Workflow run "{run_id}" was not found.')
@@ -1236,6 +1552,7 @@ async def resume_workflow(
             node.status = "pending"
             node.error = None
             node.finished_at_ms = None
+            node.suspension = None
             candidate.status = "running"
             transition_detail = {
                 "node_name": node.node_name,
@@ -1329,6 +1646,53 @@ async def resume_workflow(
     return await workflow._execute(checkpoint, session=session, deps=deps)
 
 
+async def cancel_workflow(
+    workflow: WorkflowGraph,
+    run_id: str,
+    *,
+    reason: str | None = None,
+    session: AgentSession | None = None,
+) -> WorkflowRunResult:
+    checkpoint = await workflow.checkpoint_store.load_latest(run_id)
+    if checkpoint is None:
+        raise ValidationError(f'Workflow run "{run_id}" was not found.')
+    workflow._validate_checkpoint(checkpoint)
+    if checkpoint.status in {"completed", "failed", "cancelled"}:
+        return await workflow._result(checkpoint, session=session)
+
+    now = _now_ms()
+    candidate = copy.deepcopy(checkpoint)
+    candidate.status = "cancelled"
+    candidate.pending_interrupt = None
+    candidate.metadata["cancellation_reason"] = reason
+    for node in candidate.nodes.values():
+        if node.status in {"running", "suspended"}:
+            node.status = "cancelled"
+            node.finished_at_ms = now
+            node.suspension = None
+        elif node.status == "pending":
+            node.status = "skipped"
+            node.finished_at_ms = now
+    try:
+        checkpoint = await workflow._append(
+            checkpoint,
+            candidate,
+            WorkflowTransition(
+                type="workflow-cancelled",
+                at_ms=now,
+                from_status=checkpoint.status,
+                to_status="cancelled",
+                detail={"reason": reason},
+            ),
+        )
+    except ValidationError:
+        latest = await workflow.checkpoint_store.load_latest(run_id)
+        if latest is None or latest.status != "cancelled":
+            raise
+        checkpoint = latest
+    return await workflow._result(checkpoint, session=session)
+
+
 async def fork_workflow(
     workflow: WorkflowGraph,
     run_id: str,
@@ -1394,4 +1758,4 @@ async def fork_workflow(
         },
     )
     candidate = await workflow.checkpoint_store.append(candidate)
-    return await workflow._execute(candidate, session=session, deps=deps)
+    return await workflow._execute_with_optional_lease(candidate, session=session, deps=deps)

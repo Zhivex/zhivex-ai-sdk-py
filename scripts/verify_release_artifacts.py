@@ -156,11 +156,14 @@ def _smoke_code(expected_version: str) -> str:
             AgentEvaluationCase,
             AgentEvaluationGate,
             A2AAgentExecutor,
+            InMemoryResponsesEventStore,
+            ProtocolLimits,
             ResponsesAgentHost,
             SequentialAgent,
             WorkflowBuilder,
             WorkflowStep,
             create_in_memory_workflow_checkpoint_store,
+            create_in_memory_workflow_lease_manager,
             create_deepseek,
             create_a2a_agent_card,
             create_mock_language_model,
@@ -182,6 +185,11 @@ def _smoke_code(expected_version: str) -> str:
         assert "WorkflowGraph" in zhivex_ai.__all__
         assert "resume_workflow" in zhivex_ai.__all__
         assert "run_agent_evaluation_experiment" in zhivex_ai.__all__
+        assert "AgentEvaluationTrialResult" in zhivex_ai.__all__
+        assert "ProtocolLimits" in zhivex_ai.__all__
+        assert "ResponsesEventStore" in zhivex_ai.__all__
+        assert "WorkflowLeaseManager" in zhivex_ai.__all__
+        assert "cancel_workflow" in zhivex_ai.__all__
         assert "create_a2a_app" in zhivex_ai.__all__
         assert "create_responses_app" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
@@ -306,6 +314,7 @@ def _smoke_code(expected_version: str) -> str:
             result = await workflow.run()
             assert result.state["out"] == "workflow-ok"
 
+            workflow_leases = create_in_memory_workflow_lease_manager()
             graph = (
                 WorkflowBuilder("release_graph")
                 .add_step(
@@ -321,11 +330,15 @@ def _smoke_code(expected_version: str) -> str:
                     ),
                     entrypoint=True,
                 )
-                .build(checkpoint_store=create_in_memory_workflow_checkpoint_store())
+                .build(
+                    checkpoint_store=create_in_memory_workflow_checkpoint_store(),
+                    lease_manager=workflow_leases,
+                )
             )
             graph_result = await graph.run(idempotency_key="artifact-graph")
             assert graph_result.state["out"] == "graph-ok"
             assert graph_result.checkpoint.sequence > 0
+            assert graph_result.checkpoint.metadata["execution_lease"]["fencing_token"] == 1
 
             def evaluation_agent(_case):
                 return Agent(
@@ -339,9 +352,13 @@ def _smoke_code(expected_version: str) -> str:
                 variants={{"baseline": evaluation_agent, "candidate": evaluation_agent}},
                 dataset=[AgentEvaluationCase(name="artifact", prompt="go")],
                 gates=[AgentEvaluationGate("pass_rate", minimum=1.0, max_regression=0.0)],
+                repetitions=2,
+                max_concurrency=2,
             )
             assert experiment.ok
             assert experiment.to_dict()["baseline"] == "baseline"
+            assert experiment.variants[0].report.trial_total == 2
+            assert "testsuites" in experiment.to_junit_xml()
 
             hosted_agent = Agent(
                 name="hosted",
@@ -349,10 +366,24 @@ def _smoke_code(expected_version: str) -> str:
                     responses=[GenerateResult(text="responses-ok", finish_reason="stop")]
                 ),
             )
-            hosted = await ResponsesAgentHost({{"default": hosted_agent}}).create(
+            response_store = InMemoryResponsesEventStore()
+            hosted = await ResponsesAgentHost(
+                {{"default": hosted_agent}},
+                limits=ProtocolLimits(max_text_chars=1024),
+                event_store=response_store,
+            ).create(
                 {{"model": "default", "input": "go"}}
             )
             assert hosted["output"][0]["content"][0]["text"] == "responses-ok"
+            stored = await response_store.get(
+                hosted["id"],
+                invocation=zhivex_ai.ProtocolInvocation(
+                    protocol="responses",
+                    action="artifact-smoke",
+                    external_ids={{"response_id": hosted["id"]}},
+                ),
+            )
+            assert stored is not None and stored.status == "completed"
 
             card = create_a2a_agent_card(
                 hosted_agent,

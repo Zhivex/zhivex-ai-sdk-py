@@ -102,8 +102,17 @@ Recommended workflow correlation fields:
 - source run/checkpoint ids for forks
 - request, session, tenant, and trace ids supplied by the application
 - adapter backend and executor reference when a callback adapter is used
+- execution-lease owner reference and monotonic fencing token, never the secret lease token
 
 Alert on repeated sequence conflicts, definition mismatch, exhausted step retries, long-lived suspended runs, repeated recovery of a `running` node, and forks without an application audit reason. A checkpoint append confirms orchestration progress; it does not prove that an external side effect committed. Correlate destination idempotency/reconciliation evidence separately.
+
+The runtime agent observer emits `zhivex.agent.run`, `zhivex.agent.model`,
+`zhivex.agent.tool`, and `zhivex.agent.handoff` spans with safe identity,
+status, duration, finish-reason, and token-usage attributes. Trace artifacts and
+summaries also expose `started_at_ms`, `finished_at_ms`, and `duration_ms` when
+the persisted state contains both timestamps. Applications should add tenant,
+request, and business correlation at their boundary without adding prompt or
+tool payload content.
 
 Do not export full checkpoint state, node output, resume values, adapter envelopes, or interrupt payloads as span attributes. These fields can contain prompts, model output, approval data, and regulated business records.
 

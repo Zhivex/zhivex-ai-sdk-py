@@ -4,7 +4,10 @@ import argparse
 import asyncio
 import importlib
 import json
+import math
+import os
 import sys
+import tempfile
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -53,9 +56,15 @@ def _read_dataset(path: str) -> list[AgentEvaluationCase]:
     if not isinstance(raw_cases, list):
         raise ValueError("Evaluation datasets must be a JSON list or an object with a cases list.")
     cases: list[AgentEvaluationCase] = []
+    names: set[str] = set()
     for raw in raw_cases:
         if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
             raise ValueError("Every evaluation case requires a string name.")
+        if not raw["name"]:
+            raise ValueError("Evaluation case names cannot be empty.")
+        if raw["name"] in names:
+            raise ValueError(f'Duplicate evaluation case name "{raw["name"]}".')
+        names.add(raw["name"])
         raw_expectations = raw.get("expectations")
         expectations = None
         if raw_expectations is not None:
@@ -70,7 +79,33 @@ def _read_dataset(path: str) -> list[AgentEvaluationCase]:
                 metadata=raw.get("metadata") or {},
             )
         )
+    if not cases:
+        raise ValueError("Evaluation datasets cannot be empty.")
     return cases
+
+
+def _write_text_atomic(path: str, content: str) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary_path.replace(target)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 async def _run_command(args: argparse.Namespace) -> int:
@@ -93,9 +128,47 @@ async def _run_command(args: argparse.Namespace) -> int:
 
 
 async def _eval_command(args: argparse.Namespace) -> int:
-    result = await run_agent_evaluation(agent=load_agent(args.agent), dataset=_read_dataset(args.dataset))
+    if not math.isfinite(args.min_pass_rate) or not 0 <= args.min_pass_rate <= 1:
+        raise ValueError("--min-pass-rate must be a finite number between 0 and 1.")
+    if args.max_mean_latency_ms is not None and (
+        not math.isfinite(args.max_mean_latency_ms) or args.max_mean_latency_ms < 0
+    ):
+        raise ValueError("--max-mean-latency-ms must be a finite non-negative number.")
+    if args.output_json and args.output_junit:
+        if Path(args.output_json).resolve() == Path(args.output_junit).resolve():
+            raise ValueError("--output-json and --output-junit must use different paths.")
+
+    dataset = _read_dataset(args.dataset)
+    result = await run_agent_evaluation(
+        agent=load_agent(args.agent),
+        dataset=dataset,
+        repetitions=args.repetitions,
+        max_concurrency=args.max_concurrency,
+    )
     report = create_agent_evaluation_report(result)
-    print(report.to_json())
+    if report.trial_pass_rate < args.min_pass_rate:
+        report.gate_failures.append(
+            f"Expected trial_pass_rate >= {args.min_pass_rate}, got {report.trial_pass_rate}."
+        )
+    mean_latency_ms = report.metrics.get("mean_latency_ms")
+    if (
+        mean_latency_ms is not None
+        and args.max_mean_latency_ms is not None
+        and mean_latency_ms > args.max_mean_latency_ms
+    ):
+        report.gate_failures.append(
+            f"Expected mean_latency_ms <= {args.max_mean_latency_ms}, got {mean_latency_ms}."
+        )
+    if report.gate_failures:
+        report.ok = False
+
+    json_artifact = report.to_json()
+    junit_artifact = report.to_junit_xml()
+    if args.output_json:
+        _write_text_atomic(args.output_json, f"{json_artifact}\n")
+    if args.output_junit:
+        _write_text_atomic(args.output_junit, f"{junit_artifact}\n")
+    print(json_artifact)
     return 0 if report.ok else 1
 
 
@@ -140,6 +213,11 @@ def _serve_command(args: argparse.Namespace) -> int:
 
 
 def _playground_command(args: argparse.Namespace) -> int:
+    if args.host.strip().lower() not in {"127.0.0.1", "::1", "localhost"}:
+        raise ValueError(
+            "The development playground is restricted to a loopback host; "
+            "use `zhivex serve` behind application-owned authentication for remote access."
+        )
     try:
         import uvicorn
     except ImportError as error:
@@ -165,6 +243,12 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = commands.add_parser("eval", help="Run an evaluation JSON dataset.")
     eval_parser.add_argument("agent", help="Python reference in module:attribute form.")
     eval_parser.add_argument("--dataset", required=True)
+    eval_parser.add_argument("--repetitions", type=int, default=1)
+    eval_parser.add_argument("--max-concurrency", type=int, default=1)
+    eval_parser.add_argument("--output-json")
+    eval_parser.add_argument("--output-junit")
+    eval_parser.add_argument("--min-pass-rate", type=float, default=1.0)
+    eval_parser.add_argument("--max-mean-latency-ms", type=float)
 
     serve_parser = commands.add_parser("serve", help="Serve an Agent over a beta protocol adapter.")
     serve_parser.add_argument("agent", help="Python reference in module:attribute form.")

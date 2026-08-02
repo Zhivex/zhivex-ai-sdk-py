@@ -44,10 +44,14 @@ Related documents:
 ### Added
 
 - Added beta multi-variant agent evaluation experiments with synchronous/asynchronous custom metrics, higher/lower-is-better direction, baseline comparison, minimum/maximum thresholds, regression gates, and strict finite-JSON CI artifacts.
+- Added repeated evaluation trials with bounded concurrency, deterministic ordering, monotonic latency, token/cost metrics, redacted trajectories, trace-to-dataset curation hooks, schema-versioned JSON, and JUnit XML artifacts.
 - Added beta A2A v1 Agent Card and in-process task/artifact adapters plus official `a2a-sdk` REST and JSON-RPC server wiring with v0.3 compatibility disabled.
 - Added beta AG-UI run, text, tool, finish, and error event translation with official `ag-ui-protocol` SSE encoding.
 - Added beta `ResponsesAgentHost` and `create_responses_app(...)` for a constrained OpenAI Responses-compatible text/message create and streaming endpoint over server-owned agent aliases.
+- Added protocol invocation/run-option contracts, finite request/content limits, sanitized error mapping, lifecycle callbacks, Responses event-store/replay contracts, and injectable A2A task/context/queue infrastructure.
 - Added the beta `zhivex` CLI for agent inspect, run, eval, Responses/A2A serve, and a loopback-first local playground.
+- Added workflow execution leases with heartbeat and fencing for in-memory, SQLite, and Postgres deployments, cooperative cancellation, and persisted adapter suspension/cancellation semantics.
+- Added root agent-run, model, tool, and handoff telemetry attributes plus trace duration fields for latency correlation.
 - Added protocol, evaluation, CLI, production-boundary, observability, and `0.16.0` release-plan documentation.
 
 ### Changed
@@ -55,12 +59,15 @@ Related documents:
 - Bumped the package version to `0.16.0` while keeping the package and all newly introduced protocol/evaluation/CLI surfaces in Beta.
 - Added optional `a2a` and `ag-ui` dependency groups for the supported official protocol implementations.
 - The evaluation mock language model now returns a valid async stream handle so the same fixture can exercise `stream_agent(...)` and protocol adapters.
+- The local playground now rejects non-loopback binds; remote hosting must use the protocol server behind application-owned authentication and deployment controls.
 
 ### Fixed
 
 - Prevented caller metadata from overriding workflow-internal interrupt resolution state.
 - Preserved stable workflow step/tool idempotency identity and step metadata keys when resuming a suspended tool approval.
 - Reconciled concurrent idempotent workflow starts to the winning checkpoint instead of surfacing the losing append conflict.
+- Rejected unsupported Responses request/message/content fields instead of silently ignoring them, enforced actual body limits, and sanitized protocol failures by default.
+- Prevented active or stale workflow workers from recovering or committing through an invalid execution lease.
 
 ### Deprecated
 

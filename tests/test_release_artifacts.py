@@ -51,6 +51,9 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(f'"{extra}"', source)
         self.assertIn("validate_release", source)
         self.assertIn("tool_executions", source)
+        self.assertIn("AgentEvaluationTrialResult", source)
+        self.assertIn("WorkflowLeaseManager", source)
+        self.assertIn("ResponsesEventStore", source)
 
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -10,15 +11,21 @@ from zhivex_ai.errors import ValidationError
 from zhivex_ai.workflow_state import (
     WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
     InMemoryWorkflowCheckpointStore,
+    InMemoryWorkflowLeaseManager,
     PostgresWorkflowCheckpointStore,
+    PostgresWorkflowLeaseManager,
     SQLiteWorkflowCheckpointStore,
+    SQLiteWorkflowLeaseManager,
     WorkflowCheckpoint,
     WorkflowInterrupt,
     WorkflowNodeCheckpoint,
     WorkflowTransition,
     create_in_memory_workflow_checkpoint_store,
+    create_in_memory_workflow_lease_manager,
     create_postgres_workflow_checkpoint_store,
+    create_postgres_workflow_lease_manager,
     create_sqlite_workflow_checkpoint_store,
+    create_sqlite_workflow_lease_manager,
     deserialize_workflow_checkpoint,
     serialize_workflow_checkpoint,
     workflow_checkpoint_from_json,
@@ -91,6 +98,8 @@ def checkpoint(
 class WorkflowCheckpointSerializationTests(unittest.TestCase):
     def test_round_trip_preserves_full_checkpoint(self) -> None:
         original = checkpoint()
+        original.nodes["decision"].status = "suspended"
+        original.nodes["decision"].suspension = {"signal": "manager-review", "ticket": "review-1"}
 
         payload = serialize_workflow_checkpoint(original)
         restored = deserialize_workflow_checkpoint(payload)
@@ -100,6 +109,7 @@ class WorkflowCheckpointSerializationTests(unittest.TestCase):
         self.assertEqual(from_json, original)
         self.assertEqual(restored.pending_interrupt.phase, "before")
         self.assertEqual(restored.nodes["intake"].output, {"rating": "low"})
+        self.assertEqual(restored.nodes["decision"].suspension, original.nodes["decision"].suspension)
 
     def test_rejects_future_schema_versions(self) -> None:
         payload = serialize_workflow_checkpoint(checkpoint())
@@ -242,6 +252,56 @@ class SQLiteWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
                 await store.append(checkpoint(checkpoint_id="other-cp", run_id="run-2"))
 
 
+class InMemoryWorkflowLeaseManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_owner_renews_and_expired_lease_is_fenced(self) -> None:
+        manager = create_in_memory_workflow_lease_manager()
+        self.assertIsInstance(manager, InMemoryWorkflowLeaseManager)
+
+        claims = await asyncio.gather(
+            *(
+                manager.acquire("run-1", owner_id=f"worker-{index}", ttl_ms=100, now_ms=1_000)
+                for index in range(12)
+            )
+        )
+        winners = [lease for lease in claims if lease is not None]
+        self.assertEqual(len(winners), 1)
+        first = winners[0]
+        self.assertEqual(first.fencing_token, 1)
+
+        renewed = await manager.renew("run-1", token=first.token, ttl_ms=100, now_ms=1_050)
+        assert renewed is not None
+        self.assertEqual(renewed.expires_at_ms, 1_150)
+        self.assertIsNone(await manager.renew("run-1", token="stale-token", ttl_ms=100, now_ms=1_060))
+        self.assertIsNone(await manager.acquire("run-1", owner_id="early", ttl_ms=100, now_ms=1_149))
+
+        replacement = await manager.acquire("run-1", owner_id="replacement", ttl_ms=100, now_ms=1_150)
+        assert replacement is not None
+        self.assertEqual(replacement.fencing_token, 2)
+        self.assertFalse(await manager.release("run-1", token=first.token))
+        self.assertTrue(await manager.release("run-1", token=replacement.token))
+
+
+class SQLiteWorkflowLeaseManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_contention_persists_across_manager_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "leases.sqlite3")
+            first = create_sqlite_workflow_lease_manager(path, namespace="tenant-a")
+            second = create_sqlite_workflow_lease_manager(path, namespace="tenant-a")
+            self.assertIsInstance(first, SQLiteWorkflowLeaseManager)
+
+            acquired = await first.acquire("run-1", owner_id="worker-a", ttl_ms=100, now_ms=1_000)
+            assert acquired is not None
+            self.assertIsNone(await second.acquire("run-1", owner_id="worker-b", ttl_ms=100, now_ms=1_050))
+            restored = await second.get("run-1")
+            self.assertEqual(restored, acquired)
+
+            replacement = await second.acquire("run-1", owner_id="worker-b", ttl_ms=100, now_ms=1_100)
+            assert replacement is not None
+            self.assertEqual(replacement.fencing_token, acquired.fencing_token + 1)
+            self.assertIsNone(await first.renew("run-1", token=acquired.token, ttl_ms=100, now_ms=1_101))
+            self.assertFalse(await first.release("run-1", token=acquired.token))
+
+
 class PostgresWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_asyncpg_import_is_deferred_until_first_operation(self) -> None:
         store = create_postgres_workflow_checkpoint_store("postgres://example")
@@ -254,6 +314,14 @@ class PostgresWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
     def test_rejects_unsafe_table_prefix(self) -> None:
         with self.assertRaisesRegex(ValidationError, "SQL identifier"):
             create_postgres_workflow_checkpoint_store("postgres://example", table_prefix="bad-prefix")
+
+    async def test_postgres_lease_manager_defers_asyncpg_import(self) -> None:
+        manager = create_postgres_workflow_lease_manager("postgres://example")
+        self.assertIsInstance(manager, PostgresWorkflowLeaseManager)
+
+        with patch.dict(sys.modules, {"asyncpg": None}):
+            with self.assertRaisesRegex(RuntimeError, "optional dependency"):
+                await manager.get("run-1")
 
 
 if __name__ == "__main__":

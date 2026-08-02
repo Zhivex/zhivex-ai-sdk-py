@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-docs test-release test-cov lint typecheck smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv venv .venv
@@ -28,7 +28,10 @@ test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
 
 test-agents:
-	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_safety_runtime.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
+	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
+
+test-evals:
+	$(PYTHON) -m pytest tests/test_agent_evaluation.py tests/test_cli.py -q
 
 test-docs:
 	$(PYTHON) -m pytest tests/test_docs_onboarding.py tests/test_operations_docs.py -q

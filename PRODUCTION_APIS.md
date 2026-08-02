@@ -117,13 +117,14 @@ Version `0.16.0` includes beta A2A v1, AG-UI, and Responses-compatible adapters.
 
 - Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
 - Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.
-- Replace A2A's default in-memory task store for multi-process or durable deployments and configure an owner resolver based on application identity.
-- Treat the Responses endpoint as a text/message create and stream subset. Do not promise unsupported tool, background, persistence, retrieval, or continuation endpoints.
+- Inject an official A2A task store, request-context builder/owner resolver, and queue manager for multi-process or durable deployments.
+- Treat the Responses endpoint as a strict text/message create and stream subset. Optional GET/event replay exists only with an application-owned, tenant-scoped `ResponsesEventStore`; do not promise unsupported tool, background, retrieval, cancellation, or continuation endpoints.
+- Resolve `HostedAgentRunOptions` from authenticated application state so sessions, dependencies, runtime, and idempotency never come from caller-controlled serialized objects.
 - Use the official AG-UI encoder and keep UI state, resume/interrupt authorization, and reconnect persistence in the application.
 - Apply request, field, concurrency, rate, provider-token, and output limits before public exposure. Redact protocol payloads and tool results in logs.
 - Correlate external A2A task/context IDs, AG-UI thread/run IDs, or Responses IDs with the internal agent run ID and authenticated identity.
 
-`create_agent_playground_app(...)` and `zhivex playground` are local development tools. They bind to loopback by default and do not supply authentication, TLS, distributed limits, tenant persistence, or approval UI. Do not deploy them as a public console.
+`create_agent_playground_app(...)` and `zhivex playground` are local development tools. The CLI refuses non-loopback binds; neither surface supplies authentication, TLS, distributed limits, tenant persistence, or approval UI. Do not deploy them as a public console.
 
 See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md) for supported routes, extras, wire boundaries, and limitations.
 
@@ -137,16 +138,17 @@ Recommended endpoint boundaries:
 - A status endpoint loads the latest checkpoint through a tenant-scoped repository and returns an allowlisted projection. Workflow state, prompts, model output, interrupt payloads, and metadata may contain sensitive data.
 - A resume endpoint authorizes the specific pending action and acknowledges the exact `interrupt_id` or agent `approval_id`. Do not treat possession of a run id as authorization.
 - A fork endpoint is a privileged operation. Record the source run/checkpoint, caller, reason, state overrides, and new run id in the business audit log.
+- A cancellation endpoint authorizes the specific run and records caller/reason before invoking cooperative `cancel_workflow(...)`.
 
 Use a stable application idempotency key for start and fork requests. `WorkflowCheckpointStore.append(...)` protects checkpoint ordering with an expected sequence, but it does not make an external business write transactional with workflow progress. Side-effecting nodes must use destination-supported idempotency, an outbox, or explicit reconciliation/compensation.
 
 Functional graph executors receive ephemeral `deps` plus a stable logical step idempotency key and may return only finite JSON durable results. Treat them like retryable activities: a database or API write must consume that key or use an outbox. Do not place credentials, clients, transactions, or authorization objects in `WorkflowFunctionResult`.
 
-`InMemoryWorkflowCheckpointStore` is suitable only for tests and one-process demos. SQLite survives local process reconstruction but is not the recommended shared store for multiple API replicas. Use the optional Postgres workflow checkpoint store or an application implementation of `WorkflowCheckpointStore` for shared workers, and run integration tests against the actual deployment database.
+`InMemoryWorkflowCheckpointStore` and `InMemoryWorkflowLeaseManager` are suitable only for tests and one-process demos. SQLite survives local process reconstruction but is not the recommended shared boundary for multiple API replicas. Pair the optional Postgres checkpoint and lease managers, or application implementations of both protocols, for shared workers and run contention/expiry/takeover tests against the actual deployment database.
 
 Reconstruct the same `WorkflowGraph` definition before resume or fork. The SDK rejects mismatched workflow names, definition versions, and definition digests. Supply runtime `deps` again; never place database clients, credentials, authorization objects, or other runtime dependencies into checkpoint state.
 
-Idempotent re-entry does not take over a `running` workflow automatically. It fails closed unless `recover_running=True`. Set that flag only after a lease, worker registry, or operator reconciliation proves that the previous worker is gone; otherwise two workers can execute the same node concurrently. Recovery records a `workflow-recovered` transition, but external writes still require the logical step idempotency key or reconciliation.
+Idempotent re-entry does not take over a `running` workflow automatically. It fails closed unless `recover_running=True`. With a `WorkflowLeaseManager`, takeover succeeds only after lease expiry and increments a fencing token; without one, the operator must prove the previous worker is gone. Recovery records `workflow-recovered`, but external writes still require the logical step idempotency key, destination-supported fencing, or reconciliation.
 
 The DBOS, Temporal, Prefect, and Restate adapter factories expose versioned callback request/outcome contracts only. They do not start those engines or certify their persistence, retry, signal, or worker behavior. Keep the real engine client and worker integration in the application layer and test it end to end.
 

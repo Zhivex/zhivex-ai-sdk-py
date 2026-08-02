@@ -21,7 +21,7 @@ class _SpanHandle:
         if self.span is not None and error is not None:
             self.span.record_exception(error)
             try:
-                from opentelemetry.trace import Status, StatusCode
+                from opentelemetry.trace import Status, StatusCode  # type: ignore[import-not-found]
 
                 self.span.set_status(Status(StatusCode.ERROR, str(error)))
             except Exception:
@@ -43,7 +43,7 @@ class OTelAgentObserver:
 
 def create_otel_agent_observer(*, tracer_name: str = "zhivex_ai.agent", version: str | None = None) -> OTelAgentObserver:
     try:
-        from opentelemetry import trace
+        from opentelemetry import trace  # type: ignore[import-not-found]
     except Exception as error:
         raise RuntimeError("OpenTelemetry is not installed. Install opentelemetry-api/sdk to use OTEL observability.") from error
     tracer = trace.get_tracer(tracer_name, version)
@@ -92,6 +92,9 @@ class AgentTraceArtifact:
     output_text: str | None = None
     error: str | None = None
     cancellation_reason: str | None = None
+    started_at_ms: int | None = None
+    finished_at_ms: int | None = None
+    duration_ms: int | None = None
 
 
 @dataclass(slots=True)
@@ -108,6 +111,7 @@ class AgentTraceSummary:
     usage: TokenUsage | None = None
     cost: CostEstimate | None = None
     error: str | None = None
+    duration_ms: int | None = None
 
 
 @dataclass(slots=True)
@@ -188,6 +192,11 @@ def create_agent_trace_artifact(
         for step in state.steps
     ]
     replay = replay_agent_run(state)
+    duration_ms = (
+        max(0, state.finished_at_ms - state.started_at_ms)
+        if state.started_at_ms is not None and state.finished_at_ms is not None
+        else None
+    )
     return AgentTraceArtifact(
         run_id=state.run_id,
         agent_name=state.agent_name,
@@ -211,6 +220,9 @@ def create_agent_trace_artifact(
         output_text=state.output_text if include_messages else None,
         error=state.error,
         cancellation_reason=state.cancellation_reason,
+        started_at_ms=state.started_at_ms,
+        finished_at_ms=state.finished_at_ms,
+        duration_ms=duration_ms,
     )
 
 
@@ -269,8 +281,14 @@ def summarize_agent_trace(state_or_trace: AgentRunState | AgentTraceArtifact, *,
             usage=usage,
             cost=cost,
             error=state_or_trace.error,
+            duration_ms=state_or_trace.duration_ms,
         )
     cost = estimate_agent_run_cost(state_or_trace, pricing) if pricing is not None else None
+    duration_ms = (
+        max(0, state_or_trace.finished_at_ms - state_or_trace.started_at_ms)
+        if state_or_trace.started_at_ms is not None and state_or_trace.finished_at_ms is not None
+        else None
+    )
     return AgentTraceSummary(
         run_id=state_or_trace.run_id,
         agent_name=state_or_trace.agent_name,
@@ -284,6 +302,7 @@ def summarize_agent_trace(state_or_trace: AgentRunState | AgentTraceArtifact, *,
         usage=state_or_trace.usage,
         cost=cost,
         error=state_or_trace.error,
+        duration_ms=duration_ms,
     )
 
 

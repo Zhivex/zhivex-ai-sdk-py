@@ -27,7 +27,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp]"
+        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel]"
 
       - name: Verify installed dependency consistency
         run: python -m pip check
@@ -85,7 +85,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp]"
+        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel]"
+
+      - name: Verify production-hardening contracts
+        run: python -m pytest tests/test_agent_evaluation.py tests/test_cli.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow_graph.py tests/test_workflow_state.py -q
 
       - name: Run tests with coverage
         if: matrix.python-version == '3.11'

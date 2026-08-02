@@ -147,13 +147,17 @@ class PlatformParityTests(unittest.IsolatedAsyncioTestCase):
             current_step=1,
             output_text="hello",
             usage=TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150),
+            started_at_ms=1_000,
+            finished_at_ms=1_250,
         )
 
         artifact = create_agent_trace_artifact(state)
         summary = summarize_agent_trace(state)
 
         self.assertEqual(artifact.output_preview, "hello")
+        self.assertEqual(artifact.duration_ms, 250)
         self.assertEqual(summary.tool_calls, 0)
+        self.assertEqual(summary.duration_ms, 250)
 
     async def test_safety_redaction_budget_and_agent_application(self) -> None:
         redaction = create_redaction_policy(include_emails=True)

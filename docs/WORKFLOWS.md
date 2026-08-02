@@ -9,9 +9,10 @@ The SDK owns orchestration mechanics. The application continues to own business 
 The complete workflow surface introduced in `0.15.0` remains beta in `0.16.0`:
 
 - Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
-- Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, and `fork_workflow`
+- Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, `fork_workflow`, and `cancel_workflow`
 - Functional graph steps: `WorkflowFunctionContext`, `WorkflowFunctionResult`, and `WorkflowFunctionExecutor`
 - Durable state: checkpoint schema/status aliases, `WorkflowCheckpoint`, `WorkflowNodeCheckpoint`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, serialization helpers, and the in-memory, SQLite, and Postgres workflow checkpoint stores
+- Execution ownership: `WorkflowExecutionLease`, `WorkflowLeaseManager`, and the in-memory, SQLite, and Postgres lease managers/factories
 - Step retries: `WorkflowRetryPolicy`
 - External runtime contracts: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, and the DBOS, Temporal, Prefect, and Restate callback-adapter factories
 
@@ -136,6 +137,40 @@ Checkpoint stores have different operational guarantees:
 
 Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming.
 
+## Execution Leases And Fencing
+
+For shared or restartable workers, attach a lease manager separately from the
+checkpoint store:
+
+```python
+from zhivex_ai import (
+    WorkflowBuilder,
+    create_postgres_workflow_checkpoint_store,
+    create_postgres_workflow_lease_manager,
+)
+
+workflow = WorkflowBuilder("publishing").add_step(...).build(
+    checkpoint_store=create_postgres_workflow_checkpoint_store(dsn),
+    lease_manager=create_postgres_workflow_lease_manager(dsn),
+    lease_ttl_ms=30_000,
+    lease_heartbeat_ms=10_000,
+)
+```
+
+The graph acquires one run lease, renews it in the background, verifies it
+before durable progress, and releases it at the end. `resume_workflow(...)` and
+`fork_workflow(...)` use the same ownership boundary. A takeover is allowed
+only after expiry and increments a monotonic fencing token; the former owner is
+then refused before it can append stale progress. Checkpoints retain the owner
+reference and fencing token for correlation, never the secret lease token.
+
+Use the in-memory manager only in one process and the SQLite manager only where
+one shared filesystem/database has reviewed locking semantics. The Postgres
+manager is the shared-worker implementation, but it still requires integration
+and contention tests against the deployment database and pool/proxy topology.
+Leases reduce concurrent orchestration writers; external side effects still
+need their own idempotency or fencing support.
+
 ## Interrupt And Resume
 
 Declare safe interruption boundaries before or after a node:
@@ -169,6 +204,24 @@ The caller must acknowledge the exact pending `interrupt_id`. A reconstructed wo
 When a graph node is suspended by a local-tool approval, `resume_workflow(...)` also accepts `approval_id`, `approved`, `reason`, and `node_name`; it delegates the child continuation to the stable agent approval-resume contract. Runtime `deps` are never serialized and must be supplied again.
 
 Interrupts occur at declared workflow boundaries or when a node explicitly suspends through the agent/adapter contract. They do not forcibly preempt synchronous code or undo an external side effect already in progress.
+
+Adapter suspension metadata is persisted in the node checkpoint and cleared
+only when the step resumes. An adapter `cancelled` outcome remains a cancelled
+workflow instead of being converted into a generic failure.
+
+## Cooperative Cancellation
+
+```python
+from zhivex_ai import cancel_workflow
+
+cancelled = await cancel_workflow(workflow, run_id, reason="Operator request")
+```
+
+Cancellation appends a canonical `workflow-cancelled` transition, marks running
+or suspended nodes cancelled, skips pending nodes, and causes an active worker
+to observe the cancelled checkpoint before later progress. It is cooperative:
+it cannot preempt synchronous code or roll back an external effect already in
+flight.
 
 ## Fork From A Checkpoint
 
@@ -225,7 +278,7 @@ The adapter layer defines JSON envelopes and callback boundaries for dispatching
 ## Recovery And Operational Boundaries
 
 - Re-entering `WorkflowGraph.run(...)` with the same workflow idempotency key returns a terminal or suspended result. If the latest checkpoint is still `running`, the call fails closed by default.
-- After an operator or lease/reconciliation process confirms that the previous worker is no longer active, call `run(..., idempotency_key=..., recover_running=True)`. The graph appends a `workflow-recovered` transition and resets recorded running nodes to pending. Never enable this while the previous worker may still commit work.
+- With a lease manager configured, `run(..., recover_running=True)` can take over only after the prior lease expires; the new fencing token prevents the old owner from appending. Without a lease manager, the caller must first reconcile that the prior worker is gone. Recovery appends `workflow-recovered` and resets recorded running nodes to pending.
 - Recovery can re-dispatch a node whose external outcome is unknown. Every agent tool, functional executor, and callback activity that writes externally must deduplicate with its stable logical step idempotency key or reconcile before retrying.
 - Definition version and digest drift fail closed. `0.15.0` does not provide an automatic checkpoint migration engine; migration is an explicit application operation with its own audit record.
 - SQLite and Postgres stores keep append-only checkpoint history. Retention, archival, encryption, tenant authorization, backups, and deletion remain deployment responsibilities.

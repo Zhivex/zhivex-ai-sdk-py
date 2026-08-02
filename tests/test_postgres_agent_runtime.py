@@ -22,6 +22,7 @@ from zhivex_ai import (
     create_postgres_agent_run_store,
     create_postgres_checkpoint_store,
     create_postgres_workflow_checkpoint_store,
+    create_postgres_workflow_lease_manager,
     create_text_message,
     fail_agent_run_resume_claim,
     resume_agent_run,
@@ -51,6 +52,10 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
             self.dsn,
             table_prefix=self.prefix,
         )
+        self.workflow_leases = create_postgres_workflow_lease_manager(
+            self.dsn,
+            table_prefix=self.prefix,
+        )
 
     async def asyncTearDown(self) -> None:
         if not _SAFE_PREFIX_RE.fullmatch(self.prefix):
@@ -65,6 +70,7 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
                 "runs",
                 "workflow_runs",
                 "workflow_checkpoints",
+                "workflow_leases",
             ):
                 table = f'{self.prefix}_{suffix}'
                 await connection.execute(f'DROP TABLE IF EXISTS "{table}"')
@@ -160,6 +166,66 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
         self.assertEqual(resumed.state["draft"], "draft")
         self.assertEqual(resumed.state["published"], "published")
         self.assertGreater(len(history), 5)
+
+    async def test_workflow_lease_fences_concurrent_and_expired_owners(self) -> None:
+        run_id = f"{self.prefix}-leased-workflow"
+        managers = [
+            create_postgres_workflow_lease_manager(self.dsn, table_prefix=self.prefix)
+            for _ in range(12)
+        ]
+
+        claims = await asyncio.gather(
+            *(
+                manager.acquire(
+                    run_id,
+                    owner_id=f"worker-{index}",
+                    ttl_ms=100,
+                    now_ms=1_000,
+                )
+                for index, manager in enumerate(managers)
+            )
+        )
+
+        winners = [lease for lease in claims if lease is not None]
+        self.assertEqual(len(winners), 1)
+        first = winners[0]
+        self.assertEqual(first.fencing_token, 1)
+
+        renewed = await self.workflow_leases.renew(
+            run_id,
+            token=first.token,
+            ttl_ms=100,
+            now_ms=1_050,
+        )
+        assert renewed is not None
+        self.assertEqual(renewed.expires_at_ms, 1_150)
+        self.assertIsNone(
+            await self.workflow_leases.renew(
+                run_id,
+                token="stale-token",
+                ttl_ms=100,
+                now_ms=1_060,
+            )
+        )
+        self.assertIsNone(
+            await self.workflow_leases.acquire(
+                run_id,
+                owner_id="early-worker",
+                ttl_ms=100,
+                now_ms=1_149,
+            )
+        )
+
+        replacement = await self.workflow_leases.acquire(
+            run_id,
+            owner_id="replacement-worker",
+            ttl_ms=100,
+            now_ms=1_150,
+        )
+        assert replacement is not None
+        self.assertEqual(replacement.fencing_token, 2)
+        self.assertFalse(await self.workflow_leases.release(run_id, token=first.token))
+        self.assertTrue(await self.workflow_leases.release(run_id, token=replacement.token))
 
     async def test_idempotency_claim_has_one_winner_across_concurrent_connections(self) -> None:
         key = f"{self.prefix}-idempotency"
