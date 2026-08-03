@@ -28,6 +28,7 @@ from zhivex_ai import (  # noqa: E402
     create_agent_session,
     create_in_memory_agent_memory_store,
     create_in_memory_checkpoint_store,
+    create_mock_language_model,
     create_otel_agent_observer,
     create_text_message,
     handoff_to,
@@ -913,6 +914,11 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
             self.assertIsInstance(observer, OTelAgentObserver)
             handle = observer.start_span("demo", {"agent.name": "assistant"})
             handle.end(attributes={"finish.reason": "stop"})
+            result = await run_agent(
+                agent=Agent(name="observed", model=create_mock_language_model()),
+                prompt="hello",
+                observer=observer,
+            )
         finally:
             if previous_root is not None:
                 sys.modules["opentelemetry"] = previous_root
@@ -926,3 +932,15 @@ class AgentRuntimeTests(IsolatedAsyncioTestCase):
         self.assertEqual(tracer.started[0][0], "demo")
         self.assertEqual(tracer.started[0][1].attributes["agent.name"], "assistant")
         self.assertEqual(tracer.started[0][1].attributes["finish.reason"], "stop")
+        spans = {name: span for name, span in tracer.started}
+        self.assertIn("zhivex.agent.run", spans)
+        self.assertIn("zhivex.agent.model", spans)
+        self.assertEqual(spans["zhivex.agent.run"].attributes["run.id"], result.run_id)
+        self.assertEqual(
+            spans["zhivex.agent.run"].attributes["gen_ai.operation.name"],
+            "invoke_agent",
+        )
+        self.assertEqual(
+            spans["zhivex.agent.model"].attributes["gen_ai.request.model"],
+            "mock-model",
+        )

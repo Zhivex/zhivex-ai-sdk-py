@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.15.0"
+version = "0.16.0"
 description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
 readme = "README.md"
 license = { text = "MIT" }
@@ -62,6 +62,13 @@ api = [
   "fastapi>=0.115.0",
   "uvicorn>=0.31.0"
 ]
+a2a = [
+  "a2a-sdk[fastapi]>=1.1.2,<2",
+  "uvicorn>=0.31.0"
+]
+ag-ui = [
+  "ag-ui-protocol>=0.1.19,<0.2"
+]
 otel = [
   "opentelemetry-api>=1.28.0",
   "opentelemetry-sdk>=1.28.0"
@@ -73,6 +80,7 @@ Repository = "https://github.com/Zhivex/zhivex-ai-sdk-py"
 Issues = "https://github.com/Zhivex/zhivex-ai-sdk-py/issues"
 
 [project.scripts]
+zhivex = "zhivex_ai.cli:main"
 zhivex-skills = "zhivex_ai.skill_cli:main"
 
 [tool.hatch.build.targets.wheel]
@@ -123,14 +131,19 @@ files = [
   "src/zhivex_ai/_serde.py",
   "src/zhivex_ai/api_stability.py",
   "src/zhivex_ai/agent.py",
+  "src/zhivex_ai/agent_evaluation.py",
   "src/zhivex_ai/agent_state.py",
+  "src/zhivex_ai/cli.py",
   "src/zhivex_ai/errors.py",
   "src/zhivex_ai/gateway.py",
   "src/zhivex_ai/generate_object.py",
   "src/zhivex_ai/generate_text.py",
   "src/zhivex_ai/middleware.py",
   "src/zhivex_ai/messages.py",
+  "src/zhivex_ai/protocols.py",
+  "src/zhivex_ai/observability.py",
   "src/zhivex_ai/realtime.py",
+  "src/zhivex_ai/responses_host.py",
   "src/zhivex_ai/runtime.py",
   "src/zhivex_ai/safety.py",
   "src/zhivex_ai/schema.py",

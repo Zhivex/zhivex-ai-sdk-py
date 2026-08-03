@@ -100,10 +100,34 @@
     },
     {
       "area": "Workflow orchestration and durable graphs",
-      "implemented": "yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork",
+      "implemented": "yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork/cancel, execution leases, heartbeat, and fencing",
       "documented": "yes",
-      "offline_tested": "yes; SQLite reconstruction covered",
-      "live_smoked": "Postgres integration gated",
+      "offline_tested": "yes; in-memory/SQLite ownership and recovery covered",
+      "live_smoked": "Postgres checkpoint/lease integration gated",
+      "stability": "beta"
+    },
+    {
+      "area": "Agent evaluations and CI gates",
+      "implemented": "yes: repeated trials, bounded concurrency, custom metrics, baselines, regression gates, JSON/JUnit artifacts, and trace-derived datasets",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "optional provider-backed evaluation",
+      "stability": "beta"
+    },
+    {
+      "area": "Agent protocols and hosting",
+      "implemented": "yes: A2A v1, AG-UI, constrained Responses hosting, trusted run context, safe errors, limits, and optional stores/replay",
+      "documented": "yes",
+      "offline_tested": "yes; official protocol packages exercised",
+      "live_smoked": "provider-dependent",
+      "stability": "beta"
+    },
+    {
+      "area": "General CLI and local playground",
+      "implemented": "yes: inspect, run, eval, Responses/A2A serve, and loopback-only playground",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "n/a",
       "stability": "beta"
     },
     {

@@ -7,9 +7,11 @@ from pathlib import Path
 
 from zhivex_ai import (
     Agent,
+    ApprovalDecision,
     GuardrailResult,
     ToolExecutionContext,
     WorkflowStep,
+    create_in_memory_agent_run_store,
     create_mock_language_model,
     tool,
 )
@@ -17,9 +19,17 @@ from zhivex_ai.errors import ProviderHTTPError, ValidationError
 from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
 from zhivex_ai.workflow import WorkflowFunctionResult, WorkflowRetryPolicy
 from zhivex_ai.workflow_adapters import CallbackWorkflowAdapter, WorkflowStepOutcome
-from zhivex_ai.workflow_graph import WorkflowBuilder, WorkflowEdge, WorkflowGraph, fork_workflow, resume_workflow
+from zhivex_ai.workflow_graph import (
+    WorkflowBuilder,
+    WorkflowEdge,
+    WorkflowGraph,
+    cancel_workflow,
+    fork_workflow,
+    resume_workflow,
+)
 from zhivex_ai.workflow_state import (
     create_in_memory_workflow_checkpoint_store,
+    create_in_memory_workflow_lease_manager,
     create_sqlite_workflow_checkpoint_store,
 )
 
@@ -33,7 +43,47 @@ def agent_with_text(name: str, *texts: str) -> Agent:
     )
 
 
+class _RecordingSpan:
+    def __init__(self, attributes):
+        self.attributes = dict(attributes or {})
+        self.error = None
+
+    def end(self, *, attributes=None, error=None):
+        self.attributes.update(attributes or {})
+        self.error = error
+
+
+class _RecordingObserver:
+    def __init__(self):
+        self.spans = []
+
+    def start_span(self, name, attributes=None):
+        span = _RecordingSpan(attributes)
+        self.spans.append((name, span))
+        return span
+
+
 class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
+    async def test_caller_metadata_cannot_pre_resolve_internal_interrupts(self) -> None:
+        graph = (
+            WorkflowBuilder("protected-interrupt")
+            .add_step(WorkflowStep("review", agent_with_text("reviewer", "approved")), entrypoint=True)
+            .interrupt_before("review")
+            .build()
+        )
+
+        result = await graph.run(
+            metadata={
+                "resolved_interrupts": ["before:review"],
+                "custom": "preserved",
+            }
+        )
+
+        self.assertEqual(result.status, "suspended")
+        self.assertIsNotNone(result.checkpoint.pending_interrupt)
+        self.assertEqual(result.checkpoint.metadata["resolved_interrupts"], [])
+        self.assertEqual(result.checkpoint.metadata["custom"], "preserved")
+
     async def test_functional_step_receives_durable_context_and_patches_state(self) -> None:
         seen: list[tuple[str, int, str, object]] = []
 
@@ -226,6 +276,80 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(contexts[0].idempotency_key, contexts[1].idempotency_key)
         self.assertNotEqual(contexts[0].run_id, contexts[1].run_id)
 
+    async def test_approval_resume_preserves_step_tool_identity_and_metadata_key(self) -> None:
+        contexts: list[ToolExecutionContext] = []
+
+        async def require_human(_request):
+            return ApprovalDecision.require_human("Review required.", approval_id="approval-1")
+
+        async def side_effect(_input, context: ToolExecutionContext) -> str:
+            contexts.append(context)
+            return "done"
+
+        tool_call = GenerateResult(
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[ToolCallPart(tool_call=ToolCall(id="call-approval", name="effect", input={}))],
+                )
+            ],
+            finish_reason="tool-calls",
+        )
+        graph = (
+            WorkflowBuilder("approval-resume")
+            .add_step(
+                WorkflowStep(
+                    "effect-step",
+                    Agent(
+                        name="effect-agent",
+                        model=create_mock_language_model(
+                            responses=[tool_call, GenerateResult(text="complete", finish_reason="stop")]
+                        ),
+                        tools={
+                            "effect": tool(
+                                name="effect",
+                                schema=dict,
+                                execute=side_effect,
+                                requires_approval=True,
+                            )
+                        },
+                        approval_policy=require_human,
+                        run_store=create_in_memory_agent_run_store(),
+                    ),
+                    output_key="result",
+                    metadata_key="result_meta",
+                ),
+                entrypoint=True,
+            )
+            .build()
+        )
+
+        suspended = await graph.run()
+        step_key = suspended.checkpoint.nodes["effect-step"].idempotency_key
+        resumed = await resume_workflow(
+            graph,
+            suspended.run_id,
+            approval_id="approval-1",
+            approved=True,
+        )
+
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].idempotency_key, f"{step_key}:call-approval")
+        self.assertEqual(resumed.state["result"], "complete")
+        self.assertEqual(
+            resumed.state["result_meta"],
+            {
+                "name": "effect-step",
+                "status": "completed",
+                "run_id": resumed.checkpoint.nodes["effect-step"].child_run_id,
+                "agent_name": "effect-agent",
+                "text": "complete",
+                "attempts": 1,
+                "error": None,
+            },
+        )
+
     async def test_definition_mismatch_fails_closed_on_resume(self) -> None:
         store = create_in_memory_workflow_checkpoint_store()
         original = (
@@ -325,7 +449,12 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(suspended.status, "suspended")
+        self.assertEqual(
+            suspended.checkpoint.nodes["external"].suspension,
+            {"reason": "external signal"},
+        )
         self.assertEqual(resumed.status, "completed")
+        self.assertIsNone(resumed.checkpoint.nodes["external"].suspension)
         self.assertEqual(resumed.state["external"], "external-result")
         self.assertEqual(resumed.state["external_state"], "done")
         self.assertEqual(seen_keys[0], seen_keys[1])
@@ -372,6 +501,286 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(item.transition.type == "workflow-recovered" for item in await store.list_checkpoints(recovered.run_id))
         )
+
+    async def test_concurrent_idempotent_start_reuses_the_winning_run(self) -> None:
+        inner_store = create_in_memory_workflow_checkpoint_store()
+
+        class RacingStore:
+            def __init__(self) -> None:
+                self.find_calls = 0
+                self.initial_finds_ready = asyncio.Event()
+
+            async def append(self, checkpoint, *, expected_sequence=None):
+                return await inner_store.append(checkpoint, expected_sequence=expected_sequence)
+
+            async def load_latest(self, run_id):
+                return await inner_store.load_latest(run_id)
+
+            async def load_checkpoint(self, checkpoint_id):
+                return await inner_store.load_checkpoint(checkpoint_id)
+
+            async def find_by_idempotency_key(self, idempotency_key):
+                self.find_calls += 1
+                if self.find_calls <= 2:
+                    result = await inner_store.find_by_idempotency_key(idempotency_key)
+                    if self.find_calls == 2:
+                        self.initial_finds_ready.set()
+                    await self.initial_finds_ready.wait()
+                    return result
+                return await inner_store.find_by_idempotency_key(idempotency_key)
+
+            async def list_checkpoints(self, run_id):
+                return await inner_store.list_checkpoints(run_id)
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold_winner(_context):
+            started.set()
+            await release.wait()
+            return "done"
+
+        graph = (
+            WorkflowBuilder("concurrent-start")
+            .add_step(WorkflowStep("work", executor=hold_winner, output_key="result"), entrypoint=True)
+            .build(checkpoint_store=RacingStore())
+        )
+        runs = [
+            asyncio.create_task(graph.run(idempotency_key="same-request")),
+            asyncio.create_task(graph.run(idempotency_key="same-request")),
+        ]
+        await started.wait()
+        done, pending = await asyncio.wait(runs, return_when=asyncio.FIRST_COMPLETED)
+        reused = next(iter(done)).result()
+
+        self.assertEqual(reused.status, "running")
+        release.set()
+        winner = await next(iter(pending))
+
+        self.assertEqual(winner.status, "completed")
+        self.assertEqual(reused.run_id, winner.run_id)
+        self.assertEqual(winner.state["result"], "done")
+
+    async def test_active_lease_blocks_recovery_and_heartbeat_keeps_it_alive(self) -> None:
+        lease_manager = create_in_memory_workflow_lease_manager()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_step(_context):
+            started.set()
+            await release.wait()
+            return "done"
+
+        graph = (
+            WorkflowBuilder("leased-heartbeat")
+            .add_step(WorkflowStep("work", executor=slow_step, output_key="result"), entrypoint=True)
+            .build(
+                lease_manager=lease_manager,
+                lease_ttl_ms=60,
+                lease_heartbeat_ms=10,
+            )
+        )
+        worker = asyncio.create_task(graph.run(idempotency_key="leased-heartbeat"))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await asyncio.sleep(0.08)
+
+        with self.assertRaisesRegex(ValidationError, "active execution lease"):
+            await graph.run(idempotency_key="leased-heartbeat", recover_running=True)
+
+        release.set()
+        result = await worker
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.state["result"], "done")
+        self.assertEqual(result.checkpoint.metadata["execution_lease"]["fencing_token"], 1)
+        self.assertIsNone(await lease_manager.get(result.run_id))
+
+    async def test_expired_lease_allows_recovery_and_increments_fence(self) -> None:
+        calls = 0
+
+        async def callback(request):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise asyncio.CancelledError()
+            return WorkflowStepOutcome.for_request(request, status="completed", output="recovered")
+
+        store = create_in_memory_workflow_checkpoint_store()
+        step = WorkflowStep(
+            "external",
+            agent_with_text("placeholder", "unused"),
+            executor_ref="tasks.external",
+            output_key="result",
+        )
+        unleased = WorkflowGraph(
+            name="expired-recovery",
+            steps=[step],
+            edges=[],
+            checkpoint_store=store,
+            adapter=CallbackWorkflowAdapter(backend="custom", callback=callback),
+        )
+        with self.assertRaises(asyncio.CancelledError):
+            await unleased.run(idempotency_key="expired-recovery")
+        running = await store.find_by_idempotency_key("expired-recovery")
+        assert running is not None
+
+        lease_manager = create_in_memory_workflow_lease_manager()
+        expired = await lease_manager.acquire(
+            running.run_id,
+            owner_id="dead-worker",
+            ttl_ms=10,
+            now_ms=0,
+        )
+        assert expired is not None
+        leased = WorkflowGraph(
+            name="expired-recovery",
+            steps=[step],
+            edges=[],
+            checkpoint_store=store,
+            adapter=CallbackWorkflowAdapter(backend="custom", callback=callback),
+            lease_manager=lease_manager,
+        )
+
+        result = await leased.run(idempotency_key="expired-recovery", recover_running=True)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.checkpoint.nodes["external"].attempt, 2)
+        self.assertEqual(calls, 2)
+
+    async def test_resume_requires_lease_ownership(self) -> None:
+        lease_manager = create_in_memory_workflow_lease_manager()
+        graph = (
+            WorkflowBuilder("leased-resume")
+            .add_step(WorkflowStep("review", agent_with_text("reviewer", "approved")), entrypoint=True)
+            .interrupt_before("review")
+            .build(lease_manager=lease_manager)
+        )
+        suspended = await graph.run()
+        pending = suspended.checkpoint.pending_interrupt
+        assert pending is not None
+        other = await lease_manager.acquire(
+            suspended.run_id,
+            owner_id="other-worker",
+            ttl_ms=30_000,
+        )
+        assert other is not None
+
+        with self.assertRaisesRegex(ValidationError, "active execution lease"):
+            await resume_workflow(
+                graph,
+                suspended.run_id,
+                interrupt_id=pending.interrupt_id,
+            )
+
+        self.assertTrue(await lease_manager.release(suspended.run_id, token=other.token))
+        resumed = await resume_workflow(
+            graph,
+            suspended.run_id,
+            interrupt_id=pending.interrupt_id,
+        )
+        self.assertEqual(resumed.status, "completed")
+
+    async def test_stale_lease_owner_cannot_persist_step_result(self) -> None:
+        lease_manager = create_in_memory_workflow_lease_manager()
+        replacement_tokens: list[str] = []
+
+        async def steal_lease(context):
+            current = await lease_manager.get(context.run_id)
+            assert current is not None
+            self.assertTrue(await lease_manager.release(context.run_id, token=current.token))
+            replacement = await lease_manager.acquire(
+                context.run_id,
+                owner_id="replacement-worker",
+                ttl_ms=30_000,
+            )
+            assert replacement is not None
+            replacement_tokens.append(replacement.token)
+            return "must-not-commit"
+
+        graph = (
+            WorkflowBuilder("lease-fencing")
+            .add_step(WorkflowStep("work", executor=steal_lease, output_key="result"), entrypoint=True)
+            .build(lease_manager=lease_manager)
+        )
+
+        with self.assertRaisesRegex(ValidationError, "lost"):
+            await graph.run(idempotency_key="lease-fencing")
+
+        running = await graph.checkpoint_store.find_by_idempotency_key("lease-fencing")
+        assert running is not None
+        self.assertEqual(running.nodes["work"].status, "running")
+        self.assertNotIn("result", running.state)
+        self.assertTrue(await lease_manager.release(running.run_id, token=replacement_tokens[0]))
+
+    async def test_cancel_workflow_stops_running_graph_cooperatively(self) -> None:
+        lease_manager = create_in_memory_workflow_lease_manager()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def side_effect(_context):
+            started.set()
+            await release.wait()
+            return "late"
+
+        graph = (
+            WorkflowBuilder("cancellable")
+            .add_step(WorkflowStep("work", executor=side_effect, output_key="result"), entrypoint=True)
+            .build(lease_manager=lease_manager)
+        )
+        worker = asyncio.create_task(graph.run(idempotency_key="cancellable"))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        running = await graph.checkpoint_store.find_by_idempotency_key("cancellable")
+        assert running is not None
+
+        cancelled = await cancel_workflow(graph, running.run_id, reason="operator-stop")
+        release.set()
+        worker_result = await worker
+
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(worker_result.status, "cancelled")
+        self.assertEqual(cancelled.checkpoint.nodes["work"].status, "cancelled")
+        self.assertNotIn("result", cancelled.state)
+        self.assertEqual(cancelled.state_snapshot.cancellation_reason, "operator-stop")
+        self.assertIsNone(await lease_manager.get(running.run_id))
+
+    async def test_adapter_cancelled_outcome_cancels_workflow(self) -> None:
+        async def callback(request):
+            return WorkflowStepOutcome.for_request(request, status="cancelled")
+
+        graph = WorkflowGraph(
+            name="adapter-cancel",
+            steps=[
+                WorkflowStep(
+                    "external",
+                    agent_with_text("placeholder", "unused"),
+                    executor_ref="tasks.external",
+                )
+            ],
+            edges=[],
+            adapter=CallbackWorkflowAdapter(backend="custom", callback=callback),
+        )
+
+        result = await graph.run()
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.checkpoint.nodes["external"].status, "cancelled")
+
+    async def test_observer_correlates_workflow_step_and_child_agent_spans(self) -> None:
+        observer = _RecordingObserver()
+        graph = (
+            WorkflowBuilder("observed")
+            .add_step(WorkflowStep("work", agent_with_text("worker", "done")), entrypoint=True)
+            .build(observer=observer)
+        )
+
+        result = await graph.run()
+        spans = {name: span for name, span in observer.spans}
+
+        self.assertEqual(spans["zhivex.workflow.run"].attributes["zhivex.workflow.run_id"], result.run_id)
+        self.assertEqual(spans["zhivex.workflow.run"].attributes["zhivex.workflow.status"], "completed")
+        self.assertEqual(spans["zhivex.workflow.step"].attributes["zhivex.workflow.step_name"], "work")
+        self.assertEqual(spans["zhivex.workflow.step"].attributes["zhivex.workflow.step_status"], "completed")
+        self.assertIn("zhivex.agent.run", spans)
+        self.assertIn("zhivex.agent.model", spans)
 
     def test_graph_rejects_cycles_and_unreachable_explicit_entrypoints(self) -> None:
         one = WorkflowStep("one", agent_with_text("one", "one"))

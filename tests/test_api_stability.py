@@ -30,6 +30,7 @@ KNOWN_CATEGORIES = {
     "observability",
     "provider",
     "provider-support",
+    "protocol",
     "realtime",
     "safety",
     "skills",

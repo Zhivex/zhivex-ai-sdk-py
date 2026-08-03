@@ -31,7 +31,7 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, workflow checkpoints/stores, resume/fork, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation/trace artifacts, safety-policy helpers, and local run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, checkpoint/lease managers, resume/fork/cancel, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, trace artifacts, safety-policy helpers, and local run stores remain beta.
 
 See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
 
@@ -41,6 +41,9 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 - Provider setup and smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
 - Agent runtime: [docs/AGENTS.md](./docs/AGENTS.md)
 - Durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Evaluations and CI gates: [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
+- Agent protocols and hosting: [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
+- CLI and local playground: [docs/CLI.md](./docs/CLI.md)
 - Production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
 - Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
 - Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
@@ -54,7 +57,9 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 ## Highlights
 
 - Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
-- Beta durable workflow graphs with validated DAGs, agent or functional steps, persisted routing/checkpoints, SQLite/Postgres stores, explicit resume/fork, interrupts, step retries, and the existing sequential/parallel/loop agents
+- Beta durable workflow graphs with validated DAGs, persisted routing/checkpoints, in-memory/SQLite/Postgres execution leases with heartbeat/fencing, resume/fork/cancel, interrupts, step retries, and callback adapters
+- Beta repeated evaluation trials with bounded concurrency, latency/token/application-cost metrics, redacted trajectories, JSON/JUnit artifacts, variants, and CI regression gates
+- Beta A2A v1, AG-UI, and strict Responses-compatible hosting with trusted run context, safe errors, lifecycle events, finite limits, injectable durability/replay, and a loopback-only local playground
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
@@ -200,6 +205,8 @@ Optional extras:
 pip install "zhivex-ai-sdk[postgres]"
 pip install "zhivex-ai-sdk[mcp]"
 pip install "zhivex-ai-sdk[api]"
+pip install "zhivex-ai-sdk[a2a]"
+pip install "zhivex-ai-sdk[ag-ui]"
 pip install "zhivex-ai-sdk[otel]"
 pip install "zhivex-ai-sdk[docx]"
 ```
@@ -211,6 +218,16 @@ zhivex-skills validate path/to/skill
 zhivex-skills install path/to/skill
 # Remote packages contain executable Python and require explicit trust:
 zhivex-skills install writer@1.0.0 --registry-url https://skills.example.com/index.json --trust-remote-code
+```
+
+The beta general CLI runs, evaluates, serves, and opens a local playground for a trusted `module:attribute` agent:
+
+```bash
+zhivex run my_app.agents:support_agent --prompt "Draft a reply"
+zhivex eval my_app.agents:support_agent --dataset evals/support.json \
+  --repetitions 5 --max-concurrency 4 \
+  --output-json artifacts/eval.json --output-junit artifacts/eval.xml
+zhivex playground my_app.agents:support_agent
 ```
 
 ## Quick Start
@@ -1466,6 +1483,7 @@ The stable agent slice covers the run/result/stream lifecycle, local tools, dire
 - `create_agent_run_snapshot(...)`
 - `replay_agent_run(...)`
 - `run_agent_evaluation(...)`
+- `run_agent_evaluation_experiment(...)`
 - `create_agent_evaluation_report(...)`
 - `create_safety_policy(...)`
 - `apply_safety_policy_to_agent(...)`
@@ -1527,11 +1545,11 @@ result = await resume_workflow(
 )
 ```
 
-`WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. SQLite survives local worker reconstruction and the optional Postgres workflow store supports shared workers through transactional sequence/idempotency constraints. In-memory storage is process-local.
+`WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. Optional in-memory, SQLite, and Postgres lease managers add TTL, heartbeat, monotonic fencing, and stale-owner rejection; shared deployments should pair the Postgres checkpoint and lease managers and validate them against the actual database.
 
-`fork_workflow(...)` creates a new run with explicit source lineage. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. All workflow graph, checkpoint/store, resume/fork, and callback adapter APIs remain beta in `0.15.0`.
+`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.16.0`.
 
-Re-entering a still-running idempotent workflow fails closed. `recover_running=True` is an explicit takeover operation for use only after confirming that the prior worker is gone; it records recovery but cannot make unknown external effects safe without destination idempotency or reconciliation.
+Re-entering a still-running idempotent workflow fails closed. With a lease manager, `recover_running=True` can take over only after expiry and increments the fence; without one, it remains an operator-reconciled operation. Recovery cannot make unknown external effects safe without destination idempotency or reconciliation.
 
 Graph steps may use an `Agent` or a sync/async functional `executor`. Functional steps receive `WorkflowFunctionContext` with ephemeral dependencies and a stable idempotency key, then return a finite JSON value or `WorkflowFunctionResult` with an output, state patch, and metadata. They are graph-only and do not change the existing declarative agents.
 
@@ -1571,6 +1589,23 @@ trace = create_agent_trace_artifact(state)
 timeline = replay_agent_run(state)
 summary = summarize_agent_trace(state)
 ```
+
+Version `0.16.0` also supports repeated, bounded-concurrency evaluation trials with strict JSON/JUnit artifacts, built-in latency/token/application-cost metrics, redacted trajectories, and baseline-aware CI gates:
+
+```python
+from zhivex_ai import AgentEvaluationGate, run_agent_evaluation_experiment
+
+experiment = await run_agent_evaluation_experiment(
+    variants={"baseline": baseline_agent, "candidate": candidate_agent},
+    baseline="baseline",
+    dataset=dataset,
+    gates=[AgentEvaluationGate("pass_rate", minimum=0.95, max_regression=0.01)],
+    repetitions=5,
+    max_concurrency=4,
+)
+```
+
+Protocol adapters remain beta. A2A delegates wire semantics to the official SDK and accepts application task/context/queue infrastructure; AG-UI carries trusted run options and safe errors; Responses strictly validates the documented text subset and can inject application-owned result/event replay. Protocol IDs never authorize access. `create_agent_playground_app(...)` is development-only and `zhivex playground` refuses non-loopback binds. See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md), [docs/EVALUATIONS.md](./docs/EVALUATIONS.md), and [docs/CLI.md](./docs/CLI.md).
 
 Agent skills are also available across the agent runtime. These are provider-agnostic workflow packs that inject task-specific instructions and optional tool dependencies before a run starts. They are distinct from the raw OpenAI Skills API:
 

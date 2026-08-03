@@ -44,7 +44,7 @@ jobs:
         run: git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
 
       - name: Install release dependencies and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev,postgres,mcp,api,otel,docx]"
+        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]"
 
       - name: Run release gates
         run: make PYTHON=python release-check

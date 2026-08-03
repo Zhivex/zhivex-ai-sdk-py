@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 import hashlib
 from importlib import metadata as importlib_metadata
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PATH_SANITIZATION_NOTE = "- Local paths: sanitized as `<repo>`, `<home>`, `<tmp>`, and `<python>`."
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,80 @@ DEFAULT_CHECKS = (
 def _package_version() -> str:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
     return str(pyproject["project"]["version"])
+
+
+def _path_forms(path: str | Path) -> set[str]:
+    raw = str(path).rstrip("/\\")
+    if not raw:
+        return set()
+    forms = {raw, raw.replace("\\", "/")}
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        resolved = str(candidate.resolve()).rstrip("/\\")
+        forms.update({resolved, resolved.replace("\\", "/")})
+    for value in tuple(forms):
+        normalized = value.replace("\\", "/")
+        if normalized.startswith("/"):
+            forms.add(f"file://{normalized}")
+        elif re.match(r"^[A-Za-z]:/", normalized):
+            forms.add(f"file:///{normalized}")
+    return forms
+
+
+def _sanitize_evidence_output(
+    output: str,
+    *,
+    repo_root: str | Path = ROOT,
+    home_dir: str | Path | None = None,
+    temp_dirs: tuple[str | Path, ...] | None = None,
+    python_prefixes: tuple[str | Path, ...] | None = None,
+) -> str:
+    home_dir = Path.home() if home_dir is None else home_dir
+    if temp_dirs is None:
+        temp_dirs = (tempfile.gettempdir(), "/tmp", "/private/tmp")
+    if python_prefixes is None:
+        python_prefixes = (sys.prefix, sys.base_prefix)
+
+    replacements: list[tuple[str, str]] = []
+    path_groups = (
+        ((repo_root,), "<repo>"),
+        (python_prefixes, "<python>"),
+        (temp_dirs, "<tmp>"),
+        ((home_dir,), "<home>"),
+    )
+    for paths, placeholder in path_groups:
+        for path in paths:
+            replacements.extend((form, placeholder) for form in _path_forms(path))
+
+    sanitized = output
+    for value, placeholder in sorted(set(replacements), key=lambda item: len(item[0]), reverse=True):
+        sanitized = sanitized.replace(value, placeholder)
+    sanitized = re.sub(
+        r"<(?:repo|home|tmp|python)>(?:[/\\][^\s`'\"()<>]*)?",
+        lambda match: match.group(0).replace("\\", "/"),
+        sanitized,
+    )
+
+    sanitized = re.sub(
+        r"/Library/Frameworks/Python\.framework/Versions/[^/\s`'\"()<>]+",
+        "<python>",
+        sanitized,
+    )
+    sanitized = re.sub(r"<tmp>/[^/\s`'\"()<>]+", "<tmp>/<run>", sanitized)
+    return sanitized
+
+
+def _sanitize_evidence_document(document: str) -> str:
+    sanitized = _sanitize_evidence_output(document)
+    if PATH_SANITIZATION_NOTE in sanitized:
+        return sanitized
+    lines = sanitized.splitlines()
+    mode_index = next((index for index, line in enumerate(lines) if line.startswith("- Mode: `")), None)
+    if mode_index is None:
+        return sanitized
+    lines.insert(mode_index + 1, PATH_SANITIZATION_NOTE)
+    suffix = "\n" if document.endswith("\n") else ""
+    return "\n".join(lines) + suffix
 
 
 def _run_check(check: ReleaseCheck, *, dry_run: bool) -> ReleaseCheckResult:
@@ -203,6 +280,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="Render the evidence file without running gates.")
     parser.add_argument(
+        "--sanitize-existing",
+        action="store_true",
+        help="Sanitize local paths in an existing evidence file without rerunning gates.",
+    )
+    parser.add_argument(
         "--only",
         default=None,
         help="Comma-separated gate names to run, using the names shown in the evidence table.",
@@ -212,6 +294,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    output = Path(args.output) if args.output else ROOT / "docs" / "releases" / f"{args.version}-evidence.md"
+    if not output.is_absolute():
+        output = ROOT / output
+    if args.sanitize_existing:
+        if args.dry_run or args.only:
+            raise ValueError("--sanitize-existing cannot be combined with --dry-run or --only")
+        if not output.is_file():
+            raise FileNotFoundError(f"Evidence file not found: {output}")
+        output.write_text(_sanitize_evidence_document(output.read_text("utf-8")), "utf-8")
+        try:
+            display_path = output.relative_to(ROOT)
+        except ValueError:
+            display_path = output
+        print(f"Sanitized release evidence at {display_path}")
+        return 0
+
     selected_names = {item.strip() for item in args.only.split(",")} if args.only else None
     checks = [check for check in DEFAULT_CHECKS if selected_names is None or check.name in selected_names]
     if selected_names:
@@ -221,12 +319,11 @@ def main(argv: list[str] | None = None) -> int:
 
     results = [_run_check(check, dry_run=args.dry_run) for check in checks]
     metadata = _collect_release_metadata()
-    output = Path(args.output) if args.output else ROOT / "docs" / "releases" / f"{args.version}-evidence.md"
-    if not output.is_absolute():
-        output = ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
-        _render_markdown(args.version, results, dry_run=args.dry_run, metadata=metadata),
+        _sanitize_evidence_document(
+            _render_markdown(args.version, results, dry_run=args.dry_run, metadata=metadata)
+        ),
         "utf-8",
     )
 

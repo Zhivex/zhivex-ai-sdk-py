@@ -3278,7 +3278,51 @@ class AgentRuntime:
                 raise TypeError("Agent middleware must return AgentRunResult.")
             return result
 
-        return cast(AgentRunResult[AgentOutputT], await call_at(0, request))
+        started_at_ms = _now_ms()
+        root_span = self._start_span(
+            "zhivex.agent.run",
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.name": agent.name,
+                "gen_ai.provider.name": str(getattr(agent.model, "provider", "")),
+                "gen_ai.request.model": str(getattr(agent.model, "model_id", "")),
+                "session.id": session.id if session is not None else "",
+                "run.parent_id": parent_run_id or "",
+                "run.idempotency_key": idempotency_key or "",
+            },
+        )
+        try:
+            result = cast(AgentRunResult[AgentOutputT], await call_at(0, request))
+        except BaseException as error:
+            error_attributes = {
+                "zhivex.duration_ms": max(0, _now_ms() - started_at_ms),
+                "zhivex.run.status": "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+            }
+            if isinstance(error, Exception):
+                self._finish_span(root_span, attributes=error_attributes, error=error)
+            else:
+                self._finish_span(root_span, attributes=error_attributes)
+            raise
+        result_attributes: dict[str, Any] = {
+            "run.id": result.run_id,
+            "session.id": result.session.id,
+            "zhivex.duration_ms": max(0, _now_ms() - started_at_ms),
+            "zhivex.run.status": (
+                result.state.status
+                if result.state is not None
+                else ("failed" if result.finish_reason == "error" else "completed")
+            ),
+            "gen_ai.response.finish_reasons": [result.finish_reason or "unknown"],
+        }
+        if result.usage is not None:
+            if result.usage.input_tokens is not None:
+                result_attributes["gen_ai.usage.input_tokens"] = result.usage.input_tokens
+            if result.usage.output_tokens is not None:
+                result_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
+            if result.usage.total_tokens is not None:
+                result_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
+        self._finish_span(root_span, attributes=result_attributes)
+        return result
 
     async def _run_impl(
         self,
@@ -3503,8 +3547,24 @@ class AgentRuntime:
                 handoff = segment_result.handoff
                 await publish(AgentHandoffRequestedEvent(handoff=handoff))
                 trace.handoff_count += 1
+                handoff_span = self._start_span(
+                    "zhivex.agent.handoff",
+                    {
+                        "gen_ai.operation.name": "handoff",
+                        "gen_ai.agent.name": current_agent.name,
+                        "zhivex.handoff.source_agent": current_agent.name,
+                        "zhivex.handoff.target_agent": handoff.target_agent,
+                        "run.id": run_id,
+                        "session.id": resolved_session.id,
+                        "orchestration.depth": handoff_depth,
+                    },
+                )
                 if current_agent.run_limits.max_handoffs is not None and trace.handoff_count > current_agent.run_limits.max_handoffs:
-                    raise RuntimeError(f'Agent exceeded max handoffs ({current_agent.run_limits.max_handoffs}).')
+                    handoff_error = RuntimeError(
+                        f'Agent exceeded max handoffs ({current_agent.run_limits.max_handoffs}).'
+                    )
+                    self._finish_span(handoff_span, error=handoff_error)
+                    raise handoff_error
                 next_agent = current_agent.subagents.get(handoff.target_agent) or self._registry.get(handoff.target_agent)
                 if next_agent is None:
                     await publish(
@@ -3514,7 +3574,16 @@ class AgentRuntime:
                             reason="Unknown handoff target.",
                         )
                     )
-                    raise RuntimeError(f'Unknown handoff target "{handoff.target_agent}".')
+                    handoff_error = RuntimeError(f'Unknown handoff target "{handoff.target_agent}".')
+                    self._finish_span(handoff_span, error=handoff_error)
+                    raise handoff_error
+                self._finish_span(
+                    handoff_span,
+                    attributes={
+                        "zhivex.handoff.resolved": True,
+                        "zhivex.handoff.target_agent": next_agent.name,
+                    },
+                )
                 await publish(
                     AgentHandoffResolvedEvent(
                         source_agent=current_agent.name,
@@ -3939,6 +4008,10 @@ class AgentRuntime:
                 "run.id": run_id,
                 "session.id": session.id,
                 "orchestration.depth": len(trace.orchestration_path) - 1,
+                "gen_ai.operation.name": "chat",
+                "gen_ai.agent.name": agent.name,
+                "gen_ai.provider.name": str(getattr(agent.model, "provider", "")),
+                "gen_ai.request.model": str(getattr(agent.model, "model_id", "")),
             },
         )
         buffer_live_text = live_stream and agent.model.capabilities.streaming and bool(agent.output_guardrails)
@@ -4117,7 +4190,18 @@ class AgentRuntime:
         except Exception as error:
             self._finish_span(span, error=error)
             raise
-        self._finish_span(span, attributes={"finish.reason": result.finish_reason})
+        model_attributes: dict[str, Any] = {
+            "finish.reason": result.finish_reason,
+            "gen_ai.response.finish_reasons": [result.finish_reason or "unknown"],
+        }
+        if result.usage is not None:
+            if result.usage.input_tokens is not None:
+                model_attributes["gen_ai.usage.input_tokens"] = result.usage.input_tokens
+            if result.usage.output_tokens is not None:
+                model_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
+            if result.usage.total_tokens is not None:
+                model_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
+        self._finish_span(span, attributes=model_attributes)
 
         if not emitted_live_tool_events:
             for tool_call in _extract_tool_calls_from_steps(accumulated_steps):
@@ -4367,6 +4451,9 @@ class AgentRuntime:
                         "tool.source": _definition.source,
                         "agent.name": agent.name,
                         "run.id": run_id,
+                        "gen_ai.operation.name": "execute_tool",
+                        "gen_ai.tool.name": _tool_name,
+                        "gen_ai.tool.type": _definition.source,
                     },
                 )
                 skill_name = str(_definition.metadata.get("skill_name") or "")
@@ -4897,6 +4984,10 @@ async def _execute_resolved_approval_tool(
     context = ToolExecutionContext(
         tool_name=pending.name,
         tool_call_id=pending.tool_call_id or pending.id,
+        idempotency_key=(
+            f"{agent.metadata.get('zhivex_workflow_step_idempotency_key') or state.run_id}:"
+            f"{pending.tool_call_id or pending.name}"
+        ),
         run_id=state.run_id,
         session_id=state.session_id or "",
         agent_name=state.agent_name,

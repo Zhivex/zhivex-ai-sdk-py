@@ -12,7 +12,7 @@ import tomllib
 from unittest import TestCase
 import zipfile
 
-from scripts import verify_release_artifacts
+from scripts import collect_release_evidence, verify_release_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +47,13 @@ class ReleaseArtifactToolingTests(TestCase):
         script = ROOT / "scripts/verify_release_artifacts.py"
         source = script.read_text("utf-8")
         ast.parse(source)
-        for extra in ["postgres", "mcp", "api", "otel", "docx"]:
+        for extra in ["postgres", "mcp", "api", "a2a", "ag-ui", "otel", "docx"]:
             self.assertIn(f'"{extra}"', source)
         self.assertIn("validate_release", source)
         self.assertIn("tool_executions", source)
+        self.assertIn("AgentEvaluationTrialResult", source)
+        self.assertIn("WorkflowLeaseManager", source)
+        self.assertIn("ResponsesEventStore", source)
 
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -133,6 +136,90 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertRegex(evidence, r"Python: `\d+\.\d+\.\d+")
         self.assertIn("## Artifact SHA256", evidence)
         self.assertIn("pip-audit==", evidence)
+        self.assertIn(collect_release_evidence.PATH_SANITIZATION_NOTE, evidence)
+
+    def test_release_evidence_sanitizes_local_paths_portably(self) -> None:
+        raw = "\n".join(
+            [
+                "repo=/Users/alice/work/zhivex/src/example.py",
+                "repo-uri=file:///Users/alice/work/zhivex/dist/package.whl",
+                "home=/Users/alice/Library/Caches/pip",
+                "tmp=/private/tmp/zhivex-release-a1b2c3/venv/bin/python",
+                "python=/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio.py",
+                r"windows=C:\Users\alice\work\zhivex\src\example.py",
+            ]
+        )
+
+        sanitized = collect_release_evidence._sanitize_evidence_output(
+            raw,
+            repo_root="/Users/alice/work/zhivex",
+            home_dir="/Users/alice",
+            temp_dirs=("/private/tmp",),
+            python_prefixes=("/Library/Frameworks/Python.framework/Versions/3.14",),
+        )
+        sanitized = collect_release_evidence._sanitize_evidence_output(
+            sanitized,
+            repo_root=r"C:\Users\alice\work\zhivex",
+            home_dir=r"C:\Users\alice",
+            temp_dirs=(r"C:\Users\alice\AppData\Local\Temp",),
+            python_prefixes=(r"C:\Python314",),
+        )
+
+        self.assertIn("repo=<repo>/src/example.py", sanitized)
+        self.assertIn("repo-uri=<repo>/dist/package.whl", sanitized)
+        self.assertIn("home=<home>/Library/Caches/pip", sanitized)
+        self.assertIn("tmp=<tmp>/<run>/venv/bin/python", sanitized)
+        self.assertIn("python=<python>/lib/python3.14/asyncio.py", sanitized)
+        self.assertIn("windows=<repo>/src/example.py", sanitized)
+        self.assertNotIn("alice", sanitized)
+        self.assertNotIn("file:///", sanitized)
+
+    def test_checked_in_release_evidence_contains_no_personal_local_paths(self) -> None:
+        evidence = (ROOT / "docs/releases/0.16.0-evidence.md").read_text("utf-8")
+
+        self.assertIn(collect_release_evidence.PATH_SANITIZATION_NOTE, evidence)
+        self.assertNotIn(str(Path.home()), evidence)
+        self.assertNotIn("/Users/", evidence)
+        self.assertNotIn("/private/tmp/", evidence)
+        self.assertNotIn("/var/folders/", evidence)
+        self.assertNotIn("/Library/Frameworks/", evidence)
+        self.assertNotRegex(evidence, r"[A-Za-z]:\\Users\\")
+
+    def test_release_evidence_can_sanitize_an_existing_file_without_rerunning_gates(self) -> None:
+        script = ROOT / "scripts/collect_release_evidence.py"
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            output = Path(temporary_dir) / "evidence.md"
+            output.write_text(
+                "\n".join(
+                    [
+                        "# Evidence",
+                        "",
+                        "- Mode: `executed`",
+                        "",
+                        "| compile | passed | `make compile` |",
+                        f"traceback: {ROOT}/src/zhivex_ai/agent.py",
+                        "sha256: abc123",
+                        "",
+                    ]
+                ),
+                "utf-8",
+            )
+            process = subprocess.run(
+                [sys.executable, str(script), "--sanitize-existing", "--output", str(output)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            evidence = output.read_text("utf-8")
+
+        self.assertEqual(process.returncode, 0, process.stdout)
+        self.assertIn(collect_release_evidence.PATH_SANITIZATION_NOTE, evidence)
+        self.assertIn("| compile | passed | `make compile` |", evidence)
+        self.assertIn("traceback: <repo>/src/zhivex_ai/agent.py", evidence)
+        self.assertIn("sha256: abc123", evidence)
+        self.assertNotIn(str(ROOT), evidence)
 
     def test_release_tag_verifier_rejects_version_mismatches(self) -> None:
         script = ROOT / "scripts/verify_release_tag.py"
@@ -164,6 +251,8 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("pip-audit>=2.10.1", extras["dev"])
         self.assertIn("setuptools>=83.0.0", extras["dev"])
         self.assertIn("mcp>=1.28.1", extras["mcp"])
+        self.assertIn("a2a-sdk[fastapi]>=1.1.2,<2", extras["a2a"])
+        self.assertIn("ag-ui-protocol>=0.1.19,<0.2", extras["ag-ui"])
 
     def test_makefile_release_check_runs_install_verification(self) -> None:
         makefile = (ROOT / "Makefile").read_text("utf-8")
@@ -236,4 +325,4 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn("fetch-depth: 0", workflow)
             self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main', workflow)
             self.assertIn("make PYTHON=python release-check", workflow)
-            self.assertIn(".[dev,postgres,mcp,api,otel,docx]", workflow)
+            self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)

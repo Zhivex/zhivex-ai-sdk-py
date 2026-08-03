@@ -14,6 +14,8 @@ Related documents:
 - [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
 - [SECURITY.md](./SECURITY.md)
 - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
+- [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
 
 ## Stable
 
@@ -60,9 +62,12 @@ These APIs are supported and documented, but they may still change between minor
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding content aliases: `EmbeddingContent` and `EmbeddingPart`
 - Agent platform helpers beyond the stable runtime/run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools such as `create_subagent_tool`, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
+- Evaluation trials, experiments, and gates: `AGENT_EVALUATION_ARTIFACT_SCHEMA_VERSION`, `AgentEvaluationTrialResult`, `AgentEvaluationTrajectory`, `AgentEvaluationTrajectoryEvent`, `AgentEvaluationCostEstimator`, trace extractor aliases, `create_agent_evaluation_trajectory`, `create_agent_evaluation_dataset_from_traces`, `AgentEvaluationMetric`, `AgentEvaluationGate`, `AgentEvaluationVariant`, `AgentEvaluationVariantResult`, `AgentEvaluationGateResult`, `AgentEvaluationExperimentResult`, `AgentEvaluationScorer`, `AgentEvaluationAgentFactory`, and `run_agent_evaluation_experiment`
+- Agent protocols and hosting: `A2A_PROTOCOL_VERSION`, `A2AAgentSkill`, `A2AAgentCard`, `A2AAgentExecutor`, `AGUIEvent`, `HostedAgentRunOptions`, `ProtocolInvocation`, `ProtocolLimits`, `ProtocolRunOptionsResolver`, `ProtocolErrorMapper`, `ProtocolEventCallback`, `AgentResolver`, `ResponsesAgentHost`, `StoredResponsesRun`, `ResponsesEventStore`, `InMemoryResponsesEventStore`, `create_a2a_agent_card`, `create_a2a_app`, `stream_agent_ag_ui`, `to_ag_ui_sse_response`, `create_responses_app`, and `create_agent_playground_app`
+- General `zhivex` CLI commands for inspect, run, eval, protocol serve, and the local playground
 - Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, `WorkflowTraceEvent`, `WorkflowState`, `WorkflowErrorPolicy`, `WorkflowRunStatus`, `WorkflowStepStatus`, `WorkflowStopCondition`, `run_workflow`, `workflow_step`, shared `session.state`, and workflow expectation helpers
-- Durable workflow graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowEdgeCondition`, `WorkflowContext`, `WorkflowInterruptPhase`, `WorkflowFunctionContext`, `WorkflowFunctionResult`, `WorkflowFunctionExecutor`, `resume_workflow`, `fork_workflow`, `WorkflowRetryPolicy`, and `WorkflowRetryPredicate`
-- Workflow durable state: `WORKFLOW_CHECKPOINT_SCHEMA_VERSION`, `WorkflowCheckpoint`, `WorkflowCheckpointStatus`, `WorkflowNodeCheckpoint`, `WorkflowNodeStatus`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, `serialize_workflow_checkpoint`, `deserialize_workflow_checkpoint`, `workflow_checkpoint_to_json`, `workflow_checkpoint_from_json`, `InMemoryWorkflowCheckpointStore`, `SQLiteWorkflowCheckpointStore`, `PostgresWorkflowCheckpointStore`, and their factories
+- Durable workflow graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowEdgeCondition`, `WorkflowContext`, `WorkflowInterruptPhase`, `WorkflowFunctionContext`, `WorkflowFunctionResult`, `WorkflowFunctionExecutor`, `resume_workflow`, `fork_workflow`, `cancel_workflow`, `WorkflowRetryPolicy`, and `WorkflowRetryPredicate`
+- Workflow durable state and execution ownership: `WORKFLOW_CHECKPOINT_SCHEMA_VERSION`, `WorkflowCheckpoint`, `WorkflowCheckpointStatus`, `WorkflowNodeCheckpoint`, `WorkflowNodeStatus`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, `WorkflowExecutionLease`, `WorkflowLeaseManager`, serialization helpers, in-memory/SQLite/Postgres checkpoint and lease managers, and their factories
 - External workflow runtime contracts: `WORKFLOW_ADAPTER_SCHEMA_VERSION`, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, `WorkflowAdapter`, `WorkflowAdapterCapabilities`, and callback-adapter factories for DBOS, Temporal, Prefect, and Restate. These factories are contracts for application-owned integrations, not certified engine integrations.
 
 Workflow semantics and operational boundaries are documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md). SQLite and Postgres workflow checkpoint stores are durable storage implementations, but their workflow APIs remain beta and are not promoted by the stable Postgres agent-store guarantee.

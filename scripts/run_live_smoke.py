@@ -102,6 +102,8 @@ def _matches_smoke_token(text: str, expected: str) -> bool:
 def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
     if provider == "anthropic":
         return {"temperature": None, "max_tokens": 4096}
+    if provider == "gemini":
+        return {"temperature": 0, "max_tokens": 512}
     return {"temperature": 0, "max_tokens": 80}
 
 
@@ -219,7 +221,7 @@ async def _run_gemini() -> tuple[str, bool, str, bool]:
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly GEMINI_SMOKE_OK.",
-        max_tokens=20,
+        max_tokens=256,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=20_000,

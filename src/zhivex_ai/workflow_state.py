@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from .errors import ValidationError
 from .types import JsonValue
@@ -16,12 +17,20 @@ from .types import JsonValue
 
 WORKFLOW_CHECKPOINT_SCHEMA_VERSION = 1
 
-WorkflowNodeStatus = Literal["pending", "running", "completed", "failed", "suspended", "skipped"]
+WorkflowNodeStatus = Literal[
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "suspended",
+    "cancelled",
+    "skipped",
+]
 WorkflowCheckpointStatus = Literal["running", "completed", "failed", "suspended", "cancelled"]
 WorkflowInterruptPhase = Literal["before", "after"]
 
 _WORKFLOW_NODE_STATUSES: frozenset[str] = frozenset(
-    {"pending", "running", "completed", "failed", "suspended", "skipped"}
+    {"pending", "running", "completed", "failed", "suspended", "cancelled", "skipped"}
 )
 _WORKFLOW_CHECKPOINT_STATUSES: frozenset[str] = frozenset(
     {"running", "completed", "failed", "suspended", "cancelled"}
@@ -61,6 +70,22 @@ def _validate_postgres_table_prefix(table_prefix: str) -> str:
     return table_prefix
 
 
+def _validate_lease_request(run_id: str, owner_id: str, ttl_ms: int) -> tuple[str, str, int]:
+    resolved_run_id = _validate_non_empty(run_id, "lease run_id")
+    resolved_owner_id = _validate_non_empty(owner_id, "lease owner_id")
+    if isinstance(ttl_ms, bool) or not isinstance(ttl_ms, int) or ttl_ms <= 0:
+        raise ValidationError("Workflow execution lease ttl_ms must be a positive integer.")
+    return resolved_run_id, resolved_owner_id, ttl_ms
+
+
+def _validate_lease_token(run_id: str, token: str, ttl_ms: int | None = None) -> tuple[str, str]:
+    resolved_run_id = _validate_non_empty(run_id, "lease run_id")
+    resolved_token = _validate_non_empty(token, "lease token")
+    if ttl_ms is not None and (isinstance(ttl_ms, bool) or not isinstance(ttl_ms, int) or ttl_ms <= 0):
+        raise ValidationError("Workflow execution lease ttl_ms must be a positive integer.")
+    return resolved_run_id, resolved_token
+
+
 def _validate_json_value(value: Any, *, path: str) -> None:
     if value is None or isinstance(value, (str, bool, int)):
         return
@@ -95,6 +120,7 @@ class WorkflowNodeCheckpoint:
     started_at_ms: int | None = None
     finished_at_ms: int | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    suspension: dict[str, JsonValue] | None = None
 
 
 @dataclass(slots=True)
@@ -162,6 +188,45 @@ class WorkflowCheckpointStore(Protocol):
     async def list_checkpoints(self, run_id: str) -> list[WorkflowCheckpoint]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowExecutionLease:
+    run_id: str
+    owner_id: str
+    token: str
+    fencing_token: int
+    acquired_at_ms: int
+    renewed_at_ms: int
+    expires_at_ms: int
+
+    def is_expired(self, *, now_ms: int | None = None) -> bool:
+        effective_now = _now_ms() if now_ms is None else now_ms
+        return self.expires_at_ms <= effective_now
+
+
+class WorkflowLeaseManager(Protocol):
+    async def acquire(
+        self,
+        run_id: str,
+        *,
+        owner_id: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None: ...
+
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None: ...
+
+    async def release(self, run_id: str, *, token: str) -> bool: ...
+
+    async def get(self, run_id: str) -> WorkflowExecutionLease | None: ...
+
+
 def _validate_node_checkpoint(node: WorkflowNodeCheckpoint) -> None:
     _validate_non_empty(node.node_name, "node_name")
     if node.status not in _WORKFLOW_NODE_STATUSES:
@@ -171,6 +236,8 @@ def _validate_node_checkpoint(node: WorkflowNodeCheckpoint) -> None:
     _validate_optional_timestamp(node.finished_at_ms, "node finished_at_ms")
     _validate_json_value(node.output, path=f"nodes.{node.node_name}.output")
     _validate_json_value(node.metadata, path=f"nodes.{node.node_name}.metadata")
+    if node.suspension is not None:
+        _validate_json_value(node.suspension, path=f"nodes.{node.node_name}.suspension")
 
 
 def _validate_interrupt(interrupt: WorkflowInterrupt) -> None:
@@ -255,6 +322,7 @@ def _node_to_payload(node: WorkflowNodeCheckpoint) -> dict[str, Any]:
         "started_at_ms": node.started_at_ms,
         "finished_at_ms": node.finished_at_ms,
         "metadata": dict(node.metadata),
+        "suspension": dict(node.suspension) if node.suspension is not None else None,
     }
 
 
@@ -331,6 +399,7 @@ def _node_from_payload(payload: Any, *, fallback_name: str) -> WorkflowNodeCheck
         started_at_ms=item.get("started_at_ms"),
         finished_at_ms=item.get("finished_at_ms"),
         metadata=_mapping(item.get("metadata")),
+        suspension=_mapping(item.get("suspension")) if item.get("suspension") is not None else None,
     )
 
 
@@ -523,6 +592,85 @@ class InMemoryWorkflowCheckpointStore:
     async def list_checkpoints(self, run_id: str) -> list[WorkflowCheckpoint]:
         async with self._lock:
             return [_clone_checkpoint(item) for item in self._checkpoints.get(run_id, [])]
+
+
+class InMemoryWorkflowLeaseManager:
+    def __init__(self) -> None:
+        self._leases: dict[str, WorkflowExecutionLease] = {}
+        self._fencing_tokens: dict[str, int] = {}
+        self._lock = asyncio.Lock()
+
+    async def acquire(
+        self,
+        run_id: str,
+        *,
+        owner_id: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_owner_id, resolved_ttl = _validate_lease_request(
+            run_id,
+            owner_id,
+            ttl_ms,
+        )
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+        async with self._lock:
+            current = self._leases.get(resolved_run_id)
+            if current is not None and not current.is_expired(now_ms=effective_now):
+                return None
+            fencing_token = self._fencing_tokens.get(resolved_run_id, 0) + 1
+            self._fencing_tokens[resolved_run_id] = fencing_token
+            lease = WorkflowExecutionLease(
+                run_id=resolved_run_id,
+                owner_id=resolved_owner_id,
+                token=f"wfl_{uuid4().hex}",
+                fencing_token=fencing_token,
+                acquired_at_ms=effective_now,
+                renewed_at_ms=effective_now,
+                expires_at_ms=effective_now + resolved_ttl,
+            )
+            self._leases[resolved_run_id] = lease
+            return lease
+
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token, ttl_ms)
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+        async with self._lock:
+            current = self._leases.get(resolved_run_id)
+            if current is None or current.token != resolved_token or current.is_expired(now_ms=effective_now):
+                return None
+            renewed = WorkflowExecutionLease(
+                run_id=current.run_id,
+                owner_id=current.owner_id,
+                token=current.token,
+                fencing_token=current.fencing_token,
+                acquired_at_ms=current.acquired_at_ms,
+                renewed_at_ms=effective_now,
+                expires_at_ms=effective_now + ttl_ms,
+            )
+            self._leases[resolved_run_id] = renewed
+            return renewed
+
+    async def release(self, run_id: str, *, token: str) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+        async with self._lock:
+            current = self._leases.get(resolved_run_id)
+            if current is None or current.token != resolved_token:
+                return False
+            del self._leases[resolved_run_id]
+            return True
+
+    async def get(self, run_id: str) -> WorkflowExecutionLease | None:
+        resolved_run_id = _validate_non_empty(run_id, "lease run_id")
+        async with self._lock:
+            return self._leases.get(resolved_run_id)
 
 
 class SQLiteWorkflowCheckpointStore:
@@ -734,6 +882,224 @@ class SQLiteWorkflowCheckpointStore:
                     (self._namespace, run_id),
                 ).fetchall()
                 return [workflow_checkpoint_from_json(row[0]) for row in rows]
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+
+class SQLiteWorkflowLeaseManager:
+    def __init__(self, path: str, *, namespace: str = "default") -> None:
+        if not namespace.strip():
+            raise ValidationError("Workflow execution lease namespace must be a non-empty string.")
+        self._path = path
+        self._namespace = namespace
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS zhivex_workflow_leases (
+                    namespace TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    fencing_token INTEGER NOT NULL,
+                    acquired_at_ms INTEGER NOT NULL,
+                    renewed_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (namespace, run_id)
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _lease_from_row(row: tuple[Any, ...] | None) -> WorkflowExecutionLease | None:
+        if row is None:
+            return None
+        return WorkflowExecutionLease(
+            run_id=str(row[0]),
+            owner_id=str(row[1]),
+            token=str(row[2]),
+            fencing_token=int(row[3]),
+            acquired_at_ms=int(row[4]),
+            renewed_at_ms=int(row[5]),
+            expires_at_ms=int(row[6]),
+        )
+
+    async def acquire(
+        self,
+        run_id: str,
+        *,
+        owner_id: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_owner_id, resolved_ttl = _validate_lease_request(
+            run_id,
+            owner_id,
+            ttl_ms,
+        )
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+
+        def runner() -> WorkflowExecutionLease | None:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT run_id, owner_id, token, fencing_token,
+                           acquired_at_ms, renewed_at_ms, expires_at_ms
+                    FROM zhivex_workflow_leases
+                    WHERE namespace = ? AND run_id = ?
+                    """,
+                    (self._namespace, resolved_run_id),
+                ).fetchone()
+                current = self._lease_from_row(row)
+                if current is not None and not current.is_expired(now_ms=effective_now):
+                    connection.rollback()
+                    return None
+                fencing_token = (current.fencing_token if current is not None else 0) + 1
+                lease = WorkflowExecutionLease(
+                    run_id=resolved_run_id,
+                    owner_id=resolved_owner_id,
+                    token=f"wfl_{uuid4().hex}",
+                    fencing_token=fencing_token,
+                    acquired_at_ms=effective_now,
+                    renewed_at_ms=effective_now,
+                    expires_at_ms=effective_now + resolved_ttl,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO zhivex_workflow_leases (
+                        namespace, run_id, owner_id, token, fencing_token,
+                        acquired_at_ms, renewed_at_ms, expires_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(namespace, run_id) DO UPDATE SET
+                        owner_id = excluded.owner_id,
+                        token = excluded.token,
+                        fencing_token = excluded.fencing_token,
+                        acquired_at_ms = excluded.acquired_at_ms,
+                        renewed_at_ms = excluded.renewed_at_ms,
+                        expires_at_ms = excluded.expires_at_ms
+                    """,
+                    (
+                        self._namespace,
+                        lease.run_id,
+                        lease.owner_id,
+                        lease.token,
+                        lease.fencing_token,
+                        lease.acquired_at_ms,
+                        lease.renewed_at_ms,
+                        lease.expires_at_ms,
+                    ),
+                )
+                connection.commit()
+                return lease
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token, ttl_ms)
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+
+        def runner() -> WorkflowExecutionLease | None:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE zhivex_workflow_leases
+                    SET renewed_at_ms = ?, expires_at_ms = ?
+                    WHERE namespace = ? AND run_id = ? AND token = ? AND expires_at_ms > ?
+                    """,
+                    (
+                        effective_now,
+                        effective_now + ttl_ms,
+                        self._namespace,
+                        resolved_run_id,
+                        resolved_token,
+                        effective_now,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    return None
+                row = connection.execute(
+                    """
+                    SELECT run_id, owner_id, token, fencing_token,
+                           acquired_at_ms, renewed_at_ms, expires_at_ms
+                    FROM zhivex_workflow_leases
+                    WHERE namespace = ? AND run_id = ?
+                    """,
+                    (self._namespace, resolved_run_id),
+                ).fetchone()
+                connection.commit()
+                return self._lease_from_row(row)
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    async def release(self, run_id: str, *, token: str) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+
+        def runner() -> bool:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE zhivex_workflow_leases
+                    SET expires_at_ms = 0
+                    WHERE namespace = ? AND run_id = ? AND token = ? AND expires_at_ms != 0
+                    """,
+                    (self._namespace, resolved_run_id, resolved_token),
+                )
+                connection.commit()
+                return cursor.rowcount == 1
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    async def get(self, run_id: str) -> WorkflowExecutionLease | None:
+        resolved_run_id = _validate_non_empty(run_id, "lease run_id")
+
+        def runner() -> WorkflowExecutionLease | None:
+            connection = sqlite3.connect(self._path)
+            try:
+                row = connection.execute(
+                    """
+                    SELECT run_id, owner_id, token, fencing_token,
+                           acquired_at_ms, renewed_at_ms, expires_at_ms
+                    FROM zhivex_workflow_leases
+                    WHERE namespace = ? AND run_id = ?
+                    """,
+                    (self._namespace, resolved_run_id),
+                ).fetchone()
+                return self._lease_from_row(row)
             finally:
                 connection.close()
 
@@ -967,8 +1333,183 @@ class PostgresWorkflowCheckpointStore:
             await connection.close()
 
 
+class PostgresWorkflowLeaseManager:
+    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
+        self._dsn = dsn
+        prefix = _validate_postgres_table_prefix(table_prefix)
+        self._leases_table = f"{prefix}_workflow_leases"
+
+    async def _connect(self) -> Any:
+        try:
+            import asyncpg  # type: ignore[import-not-found,import-untyped]
+        except Exception as error:
+            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
+        connection = await asyncpg.connect(self._dsn)
+        try:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"zhivex-workflow-lease-schema:{self._leases_table}",
+                )
+                await connection.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self._leases_table} (
+                        run_id TEXT PRIMARY KEY,
+                        owner_id TEXT NOT NULL,
+                        token TEXT NOT NULL,
+                        fencing_token BIGINT NOT NULL,
+                        acquired_at_ms BIGINT NOT NULL,
+                        renewed_at_ms BIGINT NOT NULL,
+                        expires_at_ms BIGINT NOT NULL
+                    )
+                    """
+                )
+        except BaseException:
+            await connection.close()
+            raise
+        return connection
+
+    @staticmethod
+    def _lease_from_row(row: Any) -> WorkflowExecutionLease | None:
+        if row is None:
+            return None
+        return WorkflowExecutionLease(
+            run_id=str(row["run_id"]),
+            owner_id=str(row["owner_id"]),
+            token=str(row["token"]),
+            fencing_token=int(row["fencing_token"]),
+            acquired_at_ms=int(row["acquired_at_ms"]),
+            renewed_at_ms=int(row["renewed_at_ms"]),
+            expires_at_ms=int(row["expires_at_ms"]),
+        )
+
+    async def acquire(
+        self,
+        run_id: str,
+        *,
+        owner_id: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_owner_id, resolved_ttl = _validate_lease_request(
+            run_id,
+            owner_id,
+            ttl_ms,
+        )
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"zhivex-workflow-lease:{self._leases_table}:{resolved_run_id}",
+                )
+                row = await connection.fetchrow(
+                    f"SELECT * FROM {self._leases_table} WHERE run_id = $1 FOR UPDATE",
+                    resolved_run_id,
+                )
+                current = self._lease_from_row(row)
+                if current is not None and not current.is_expired(now_ms=effective_now):
+                    return None
+                lease = WorkflowExecutionLease(
+                    run_id=resolved_run_id,
+                    owner_id=resolved_owner_id,
+                    token=f"wfl_{uuid4().hex}",
+                    fencing_token=(current.fencing_token if current is not None else 0) + 1,
+                    acquired_at_ms=effective_now,
+                    renewed_at_ms=effective_now,
+                    expires_at_ms=effective_now + resolved_ttl,
+                )
+                await connection.execute(
+                    f"""
+                    INSERT INTO {self._leases_table} (
+                        run_id, owner_id, token, fencing_token,
+                        acquired_at_ms, renewed_at_ms, expires_at_ms
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        owner_id = EXCLUDED.owner_id,
+                        token = EXCLUDED.token,
+                        fencing_token = EXCLUDED.fencing_token,
+                        acquired_at_ms = EXCLUDED.acquired_at_ms,
+                        renewed_at_ms = EXCLUDED.renewed_at_ms,
+                        expires_at_ms = EXCLUDED.expires_at_ms
+                    """,
+                    lease.run_id,
+                    lease.owner_id,
+                    lease.token,
+                    lease.fencing_token,
+                    lease.acquired_at_ms,
+                    lease.renewed_at_ms,
+                    lease.expires_at_ms,
+                )
+                return lease
+        finally:
+            await connection.close()
+
+    async def renew(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        ttl_ms: int,
+        now_ms: int | None = None,
+    ) -> WorkflowExecutionLease | None:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token, ttl_ms)
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+        connection = await self._connect()
+        try:
+            row = await connection.fetchrow(
+                f"""
+                UPDATE {self._leases_table}
+                SET renewed_at_ms = $1, expires_at_ms = $2
+                WHERE run_id = $3 AND token = $4 AND expires_at_ms > $1
+                RETURNING *
+                """,
+                effective_now,
+                effective_now + ttl_ms,
+                resolved_run_id,
+                resolved_token,
+            )
+            return self._lease_from_row(row)
+        finally:
+            await connection.close()
+
+    async def release(self, run_id: str, *, token: str) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+        connection = await self._connect()
+        try:
+            status = await connection.execute(
+                f"""
+                UPDATE {self._leases_table}
+                SET expires_at_ms = 0
+                WHERE run_id = $1 AND token = $2 AND expires_at_ms != 0
+                """,
+                resolved_run_id,
+                resolved_token,
+            )
+            return status == "UPDATE 1"
+        finally:
+            await connection.close()
+
+    async def get(self, run_id: str) -> WorkflowExecutionLease | None:
+        resolved_run_id = _validate_non_empty(run_id, "lease run_id")
+        connection = await self._connect()
+        try:
+            row = await connection.fetchrow(
+                f"SELECT * FROM {self._leases_table} WHERE run_id = $1",
+                resolved_run_id,
+            )
+            return self._lease_from_row(row)
+        finally:
+            await connection.close()
+
+
 def create_in_memory_workflow_checkpoint_store() -> InMemoryWorkflowCheckpointStore:
     return InMemoryWorkflowCheckpointStore()
+
+
+def create_in_memory_workflow_lease_manager() -> InMemoryWorkflowLeaseManager:
+    return InMemoryWorkflowLeaseManager()
 
 
 def create_sqlite_workflow_checkpoint_store(
@@ -979,9 +1520,25 @@ def create_sqlite_workflow_checkpoint_store(
     return SQLiteWorkflowCheckpointStore(path, namespace=namespace)
 
 
+def create_sqlite_workflow_lease_manager(
+    path: str,
+    *,
+    namespace: str = "default",
+) -> SQLiteWorkflowLeaseManager:
+    return SQLiteWorkflowLeaseManager(path, namespace=namespace)
+
+
 def create_postgres_workflow_checkpoint_store(
     dsn: str,
     *,
     table_prefix: str = "zhivex_ai",
 ) -> PostgresWorkflowCheckpointStore:
     return PostgresWorkflowCheckpointStore(dsn, table_prefix=table_prefix)
+
+
+def create_postgres_workflow_lease_manager(
+    dsn: str,
+    *,
+    table_prefix: str = "zhivex_ai",
+) -> PostgresWorkflowLeaseManager:
+    return PostgresWorkflowLeaseManager(dsn, table_prefix=table_prefix)
