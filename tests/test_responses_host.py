@@ -274,6 +274,66 @@ class ResponsesFastAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         resolver.assert_not_called()
 
+    def test_stream_unknown_alias_returns_json_404_before_sse_starts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_responses_app(agents={"support": _agent("done")})
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/responses",
+                json={"model": "missing", "input": "help", "stream": True},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": 'Unknown model alias "missing".',
+                }
+            },
+        )
+
+    def test_stream_validation_returns_json_400_before_sse_starts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_responses_app(agents={"support": _agent("done")})
+        cases = (
+            (
+                {"model": "support", "input": 123, "stream": True},
+                "Responses input must be a non-empty string or item list.",
+            ),
+            (
+                {
+                    "model": "support",
+                    "input": "help",
+                    "stream": True,
+                    "tools": [],
+                },
+                "Unsupported Responses request field(s): tools.",
+            ),
+        )
+
+        with TestClient(app) as client:
+            for payload, message in cases:
+                with self.subTest(payload=payload):
+                    response = client.post("/v1/responses", json=payload)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(
+                        response.headers["content-type"], "application/json"
+                    )
+                    self.assertEqual(
+                        response.json(),
+                        {
+                            "error": {
+                                "type": "invalid_request_error",
+                                "message": message,
+                            }
+                        },
+                    )
+
     def test_non_stream_failures_do_not_expose_internal_error(self) -> None:
         from fastapi.testclient import TestClient
 

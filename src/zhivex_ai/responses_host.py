@@ -985,7 +985,12 @@ def _install_responses_routes(
                 request=request,
             )
             if payload.get("stream") is True:
-                source = host.stream(payload, invocation=invocation)
+                prepared = await host.prepare(payload)
+                source = host.stream_prepared(
+                    payload,
+                    prepared=prepared,
+                    invocation=invocation,
+                )
 
                 async def encoded():
                     async for item in source:
