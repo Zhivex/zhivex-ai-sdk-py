@@ -109,7 +109,7 @@ Use `replay_agent_run(...)` to inspect the agent-state projection without re-run
 
 ## Release Evidence
 
-For release candidates, run `make release-evidence` to write the local release gate output to `docs/releases/<version>-evidence.md`. Treat live provider smoke as a separate environment-dependent record and list every skipped provider with its missing credential or model environment variable.
+For release candidates, run `make release-evidence` to write the local release gate output to `docs/releases/<version>-evidence.md`. Generated evidence replaces repository, home, temporary, and Python installation paths with portable placeholders. To repair an existing file without rerunning its gates, run `python scripts/collect_release_evidence.py --sanitize-existing --output <path>`. Treat live provider smoke as a separate environment-dependent record and list every skipped provider with its missing credential or model environment variable.
 
 ## Security
 

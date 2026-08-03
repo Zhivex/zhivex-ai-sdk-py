@@ -280,7 +280,7 @@ The adapter layer defines JSON envelopes and callback boundaries for dispatching
 - Re-entering `WorkflowGraph.run(...)` with the same workflow idempotency key returns a terminal or suspended result. If the latest checkpoint is still `running`, the call fails closed by default.
 - With a lease manager configured, `run(..., recover_running=True)` can take over only after the prior lease expires; the new fencing token prevents the old owner from appending. Without a lease manager, the caller must first reconcile that the prior worker is gone. Recovery appends `workflow-recovered` and resets recorded running nodes to pending.
 - Recovery can re-dispatch a node whose external outcome is unknown. Every agent tool, functional executor, and callback activity that writes externally must deduplicate with its stable logical step idempotency key or reconcile before retrying.
-- Definition version and digest drift fail closed. `0.15.0` does not provide an automatic checkpoint migration engine; migration is an explicit application operation with its own audit record.
+- Definition version and digest drift fail closed. `0.16.0` still does not provide an automatic checkpoint migration engine; migration is an explicit application operation with its own audit record.
 - SQLite and Postgres stores keep append-only checkpoint history. Retention, archival, encryption, tenant authorization, backups, and deletion remain deployment responsibilities.
 - Checkpoints may contain prompts, model output, approval values, and business state. Treat them as sensitive records and avoid placing secrets in workflow state or metadata.
 - Adapter callbacks, local tools, and agent nodes can produce external effects. Durable orchestration is not a distributed transaction.

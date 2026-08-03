@@ -87,7 +87,32 @@ class DocsOnboardingTests(TestCase):
         self.assertIn("vLLM remains a tier-1 Python provider", matrix)
         data = json.loads((ROOT / "docs/parity_matrix.json").read_text("utf-8"))
         self.assertEqual(data["columns"], ["implemented", "documented", "offline_tested", "live_smoked", "stability"])
-        self.assertIn("Security and operations guides", {row["area"] for row in data["areas"]})
+        by_area = {row["area"]: row for row in data["areas"]}
+        for area in [
+            "Agent evaluations and CI gates",
+            "Agent protocols and hosting",
+            "General CLI and local playground",
+            "Security and operations guides",
+        ]:
+            self.assertIn(area, by_area)
+            self.assertIn(f"| {area} |", matrix)
+        workflow = by_area["Workflow orchestration and durable graphs"]
+        for capability in ["resume/fork/cancel", "execution leases", "heartbeat", "fencing"]:
+            self.assertIn(capability, workflow["implemented"])
+            self.assertIn(capability, matrix)
+
+    def test_current_release_docs_do_not_regress_to_the_previous_workflow_boundary(self) -> None:
+        workflows = (ROOT / "docs/WORKFLOWS.md").read_text("utf-8")
+        self.assertIn("`0.16.0` still does not provide an automatic checkpoint migration engine", workflows)
+        self.assertNotIn("`0.15.0` does not provide an automatic checkpoint migration engine", workflows)
+
+    def test_examples_readme_lists_the_complete_live_smoke_scope(self) -> None:
+        examples = (ROOT / "examples/README.md").read_text("utf-8")
+        expected = (
+            "OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, "
+            "DeepSeek, vLLM, and optional local Ollama"
+        )
+        self.assertIn(expected, examples)
 
     def test_docs_do_not_reference_missing_local_markdown_files(self) -> None:
         markdown_files = [

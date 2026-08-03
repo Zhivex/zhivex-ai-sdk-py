@@ -264,4 +264,4 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - Examples that read `.env` files use `python-dotenv` when available, but they still work if you export environment variables manually.
 - `transcribe_audio.py` expects a WAV file at `examples/audio/sample.wav`.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.
-- `make smoke` runs a stricter live pass against OpenAI, Gemini, Anthropic, Vertex, Qwen, and optional local Ollama/vLLM when the corresponding model IDs are configured.
+- `make smoke` runs a stricter live pass against OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, vLLM, and optional local Ollama when the corresponding credentials and model IDs are configured.

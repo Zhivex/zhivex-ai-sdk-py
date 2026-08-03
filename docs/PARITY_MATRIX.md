@@ -26,7 +26,10 @@ Legend:
 | Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
 | Durable human approvals | Yes | Yes | Yes | provider-dependent | stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |
-| Workflow orchestration and durable graphs | Yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork | Yes | Yes; SQLite reconstruction covered | Postgres integration gated | beta |
+| Workflow orchestration and durable graphs | Yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork/cancel, execution leases, heartbeat, and fencing | Yes | Yes; in-memory/SQLite ownership and recovery covered | Postgres checkpoint/lease integration gated | beta |
+| Agent evaluations and CI gates | Yes: repeated trials, bounded concurrency, custom metrics, baselines, regression gates, JSON/JUnit artifacts, and trace-derived datasets | Yes | Yes | optional provider-backed evaluation | beta |
+| Agent protocols and hosting | Yes: A2A v1, AG-UI, constrained Responses hosting, trusted run context, safe errors, limits, and optional stores/replay | Yes | Yes; official protocol packages exercised | provider-dependent | beta |
+| General CLI and local playground | Yes: inspect, run, eval, Responses/A2A serve, and loopback-only playground | Yes | Yes | N/A | beta |
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
 | Realtime/live agents | Yes | partial | Yes | optional | experimental |
 | Google native media/cache clients | Yes | provider docs | provider tests | optional | beta/native |

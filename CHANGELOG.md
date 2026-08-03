@@ -68,6 +68,7 @@ Related documents:
 - Reconciled concurrent idempotent workflow starts to the winning checkpoint instead of surfacing the losing append conflict.
 - Rejected unsupported Responses request/message/content fields instead of silently ignoring them, enforced actual body limits, and sanitized protocol failures by default.
 - Prevented active or stale workflow workers from recovering or committing through an invalid execution lease.
+- Sanitized repository, home, temporary, and Python installation paths in generated release evidence, including existing evidence repaired with `--sanitize-existing`.
 
 ### Deprecated
 
