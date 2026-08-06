@@ -218,7 +218,7 @@ def _contract_cases() -> list[ProviderContractCase]:
         ),
         ProviderContractCase(
             provider_name="qwen",
-            model_id="qwen3.7-plus",
+            model_id="qwen3.8-max",
             create_provider=lambda fetch: create_qwen(api_key="test", fetch=fetch),
             response_family="openai",
             expected_request_marker="/responses",
@@ -263,6 +263,8 @@ def _fake_fetch(case: ProviderContractCase, requests: list[dict[str, Any]]) -> C
         stream: bool = False,
     ) -> FakeResponse:
         requests.append({"url": url, "method": method, "headers": headers, "json": json_body, "body": body, "stream": stream})
+        if case.provider_name == "qwen" and url.endswith("/chat/completions"):
+            return _chat_completions_response(stream)
         if case.response_family == "anthropic":
             return _anthropic_response(stream)
         if case.response_family == "gemini":

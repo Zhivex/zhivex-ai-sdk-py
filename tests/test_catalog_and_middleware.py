@@ -112,6 +112,7 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("bedrock", "anthropic.claude-sonnet-5", {"reasoning", "tools", "vision"}),
             ("bedrock", "anthropic.claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("bedrock", "amazon.nova-premier-v1:0", {"reasoning", "tools", "vision"}),
+            ("qwen", "qwen3.8-max", {"chat", "reasoning", "tools", "vision"}),
             ("qwen", "qwen3.7-max", {"reasoning", "tools"}),
             ("qwen", "qwen3.7-max-2026-06-08", {"reasoning", "tools", "vision"}),
             ("qwen", "qwen3.7-plus", {"reasoning", "tools", "vision"}),

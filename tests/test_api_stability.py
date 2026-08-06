@@ -40,8 +40,46 @@ KNOWN_CATEGORIES = {
     "workflow",
 }
 
+TRANSITIVE_STABLE_EXPORTS = {
+    "AgentCheckpoint",
+    "AgentTrace",
+    "EmbedOutput",
+    "EmbeddingContent",
+    "EmbeddingModel",
+    "FinishReason",
+    "GenerateGroundedTextOutput",
+    "GenerateObjectOutput",
+    "GenerateTextOutput",
+    "GroundedLanguageModel",
+    "LanguageModel",
+    "ModelMessage",
+    "StreamEvent",
+    "StreamObjectResult",
+    "StreamTextResult",
+    "TokenUsage",
+    "ToolCall",
+}
+
 
 class ApiStabilityTests(TestCase):
+    def test_inevitable_transitive_contracts_are_stable(self) -> None:
+        self.assertTrue(TRANSITIVE_STABLE_EXPORTS.issubset(STABLE_EXPORTS))
+        for name in TRANSITIVE_STABLE_EXPORTS:
+            self.assertEqual(API_STABILITY[name].level, "stable")
+
+    def test_workflow_errors_are_beta_error_entries(self) -> None:
+        workflow_errors = {
+            "WorkflowConflictError",
+            "WorkflowDefinitionMismatchError",
+            "WorkflowInterruptError",
+            "WorkflowLeaseLostError",
+            "WorkflowRunNotFoundError",
+        }
+
+        for name in workflow_errors:
+            self.assertEqual(API_STABILITY[name].level, "beta")
+            self.assertEqual(API_STABILITY[name].category, "errors")
+
     def test_every_public_export_has_stability_metadata(self) -> None:
         self.assertEqual(set(zhivex_ai.__all__), set(API_STABILITY))
 

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from zhivex_ai.errors import ValidationError
+from zhivex_ai.errors import ValidationError, WorkflowConflictError, WorkflowLeaseLostError
 from zhivex_ai.workflow_state import (
     WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
     InMemoryWorkflowCheckpointStore,
@@ -205,6 +205,34 @@ class InMemoryWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
                 expected_sequence=0,
             )
 
+    async def test_fenced_append_rejects_a_replaced_owner_atomically(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        leases = create_in_memory_workflow_lease_manager()
+        await store.append(checkpoint())
+        first = await leases.acquire("run-1", owner_id="worker-a", ttl_ms=10_000)
+        assert first is not None
+        self.assertTrue(await leases.release("run-1", token=first.token))
+        replacement = await leases.acquire("run-1", owner_id="worker-b", ttl_ms=10_000)
+        assert replacement is not None
+
+        candidate = checkpoint(checkpoint_id="cp-1", sequence=1)
+        with self.assertRaises(WorkflowLeaseLostError):
+            await store.append_fenced(
+                candidate,
+                expected_sequence=0,
+                lease_manager=leases,
+                lease=first,
+            )
+        stored = await store.append_fenced(
+            candidate,
+            expected_sequence=0,
+            lease_manager=leases,
+            lease=replacement,
+        )
+
+        self.assertEqual(stored.sequence, 1)
+        self.assertEqual((await store.load_latest("run-1")).checkpoint_id, "cp-1")
+
 
 class SQLiteWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_survives_reinstantiation_and_preserves_append_only_history(self) -> None:
@@ -251,6 +279,34 @@ class SQLiteWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValidationError, "uniqueness constraint"):
                 await store.append(checkpoint(checkpoint_id="other-cp", run_id="run-2"))
 
+    async def test_fenced_append_shares_the_lease_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "workflow.sqlite3")
+            store = create_sqlite_workflow_checkpoint_store(path, namespace="tenant-a")
+            leases = create_sqlite_workflow_lease_manager(path, namespace="tenant-a")
+            await store.append(checkpoint())
+            first = await leases.acquire("run-1", owner_id="worker-a", ttl_ms=10_000)
+            assert first is not None
+            self.assertTrue(await leases.release("run-1", token=first.token))
+            replacement = await leases.acquire("run-1", owner_id="worker-b", ttl_ms=10_000)
+            assert replacement is not None
+
+            candidate = checkpoint(checkpoint_id="cp-1", sequence=1)
+            with self.assertRaises(WorkflowLeaseLostError):
+                await store.append_fenced(
+                    candidate,
+                    expected_sequence=0,
+                    lease_manager=leases,
+                    lease=first,
+                )
+            await store.append_fenced(
+                candidate,
+                expected_sequence=0,
+                lease_manager=leases,
+                lease=replacement,
+            )
+            self.assertEqual((await store.load_latest("run-1")).sequence, 1)
+
 
 class InMemoryWorkflowLeaseManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_owner_renews_and_expired_lease_is_fenced(self) -> None:
@@ -277,6 +333,22 @@ class InMemoryWorkflowLeaseManagerTests(unittest.IsolatedAsyncioTestCase):
         replacement = await manager.acquire("run-1", owner_id="replacement", ttl_ms=100, now_ms=1_150)
         assert replacement is not None
         self.assertEqual(replacement.fencing_token, 2)
+        self.assertFalse(
+            await manager.validate(
+                "run-1",
+                token=first.token,
+                fencing_token=first.fencing_token,
+                now_ms=1_150,
+            )
+        )
+        self.assertTrue(
+            await manager.validate(
+                "run-1",
+                token=replacement.token,
+                fencing_token=replacement.fencing_token,
+                now_ms=1_150,
+            )
+        )
         self.assertFalse(await manager.release("run-1", token=first.token))
         self.assertTrue(await manager.release("run-1", token=replacement.token))
 
@@ -298,6 +370,22 @@ class SQLiteWorkflowLeaseManagerTests(unittest.IsolatedAsyncioTestCase):
             replacement = await second.acquire("run-1", owner_id="worker-b", ttl_ms=100, now_ms=1_100)
             assert replacement is not None
             self.assertEqual(replacement.fencing_token, acquired.fencing_token + 1)
+            self.assertFalse(
+                await first.validate(
+                    "run-1",
+                    token=acquired.token,
+                    fencing_token=acquired.fencing_token,
+                    now_ms=1_100,
+                )
+            )
+            self.assertTrue(
+                await second.validate(
+                    "run-1",
+                    token=replacement.token,
+                    fencing_token=replacement.fencing_token,
+                    now_ms=1_100,
+                )
+            )
             self.assertIsNone(await first.renew("run-1", token=acquired.token, ttl_ms=100, now_ms=1_101))
             self.assertFalse(await first.release("run-1", token=acquired.token))
 
@@ -314,6 +402,22 @@ class PostgresWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
     def test_rejects_unsafe_table_prefix(self) -> None:
         with self.assertRaisesRegex(ValidationError, "SQL identifier"):
             create_postgres_workflow_checkpoint_store("postgres://example", table_prefix="bad-prefix")
+
+    def test_validates_namespace_and_pool_bounds(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "namespace"):
+            create_postgres_workflow_checkpoint_store("postgres://example", namespace=" ")
+        with self.assertRaisesRegex(ValidationError, "pool sizes"):
+            create_postgres_workflow_checkpoint_store(
+                "postgres://example",
+                pool_min_size=4,
+                pool_max_size=2,
+            )
+
+    async def test_compare_and_swap_raises_typed_conflict(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        await store.append(checkpoint())
+        with self.assertRaises(WorkflowConflictError):
+            await store.append(checkpoint(checkpoint_id="cp-1", sequence=1), expected_sequence=4)
 
     async def test_postgres_lease_manager_defers_asyncpg_import(self) -> None:
         manager = create_postgres_workflow_lease_manager("postgres://example")

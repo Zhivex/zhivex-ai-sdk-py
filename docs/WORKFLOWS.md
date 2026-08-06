@@ -6,13 +6,14 @@ The SDK owns orchestration mechanics. The application continues to own business 
 
 ## Stability
 
-The complete workflow surface introduced in `0.15.0` remains beta in `0.16.0`:
+The complete workflow surface introduced in `0.15.0` remains beta in `0.17.0`:
 
 - Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
 - Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, `fork_workflow`, and `cancel_workflow`
 - Functional graph steps: `WorkflowFunctionContext`, `WorkflowFunctionResult`, and `WorkflowFunctionExecutor`
 - Durable state: checkpoint schema/status aliases, `WorkflowCheckpoint`, `WorkflowNodeCheckpoint`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, serialization helpers, and the in-memory, SQLite, and Postgres workflow checkpoint stores
 - Execution ownership: `WorkflowExecutionLease`, `WorkflowLeaseManager`, and the in-memory, SQLite, and Postgres lease managers/factories
+- Operational failures: `WorkflowConflictError`, `WorkflowLeaseLostError`, `WorkflowDefinitionMismatchError`, `WorkflowRunNotFoundError`, and `WorkflowInterruptError`
 - Step retries: `WorkflowRetryPolicy`
 - External runtime contracts: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, and the DBOS, Temporal, Prefect, and Restate callback-adapter factories
 
@@ -57,6 +58,28 @@ result = await workflow.run(idempotency_key="loan-123")
 The builder validates non-empty unique step names, edge identities, references, entrypoints, reachability, globally unique output/metadata keys, positive concurrency, and acyclicity before execution.
 
 Ready nodes execute as a bounded parallel wave. Their declared `output_key`, `metadata_key`, and adapter `state_patch` values are merged before outgoing conditions are evaluated. Set `max_concurrency` on `build(...)` or `WorkflowGraph(...)` to constrain a wave.
+
+## Definition Identity
+
+The definition digest still captures the visible graph shape and callable source, but source inspection cannot reliably see agent configuration, closure values, policy versions, or runtime-decorated behavior. Set `WorkflowStep.definition_revision` and `WorkflowBuilder.add_edge(..., definition_revision=...)` for those application-owned inputs:
+
+```python
+WorkflowStep(
+    "risk",
+    risk_agent,
+    output_key="risk",
+    definition_revision="risk-agent-config:v3",
+)
+
+builder.add_edge(
+    "risk",
+    "review",
+    condition=requires_review,
+    definition_revision="review-policy:2026-08-06",
+)
+```
+
+Change a revision whenever the hidden behavior changes. A mismatched digest raises `WorkflowDefinitionMismatchError` and refuses resume/fork. Omitting the field preserves the exact legacy digest for existing `0.16.0` graphs.
 
 ## Functional Steps
 
@@ -133,9 +156,9 @@ Checkpoint stores have different operational guarantees:
 
 - `create_in_memory_workflow_checkpoint_store()` is deterministic and concurrency-safe inside one process, but it does not survive process exit.
 - `create_sqlite_workflow_checkpoint_store(path, namespace=...)` persists append-only history on one local filesystem and survives worker reconstruction. Coordinate filesystem ownership and backup outside the SDK.
-- `create_postgres_workflow_checkpoint_store(dsn, table_prefix=...)` uses the optional `postgres` extra and transactional sequence/idempotency constraints for shared workers. Validate it against the deployment database before production use.
+- `create_postgres_workflow_checkpoint_store(dsn, table_prefix=..., namespace=..., pool_min_size=..., pool_max_size=...)` uses the optional `postgres` extra, a bounded lazy pool, checked schema metadata, and transactional sequence/idempotency constraints for shared workers. Pass `pool=application_pool` instead of `dsn` to share an application-owned `asyncpg` pool. Validate it against the deployment database before production use.
 
-Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming.
+Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming. Schema-v1 payloads produced by `0.15.0` are covered by a committed compatibility fixture for deserialize, canonical reserialize, resume, and fork. Unsupported future checkpoint or Postgres backend schema versions fail closed; the SDK does not silently rewrite application history.
 
 ## Execution Leases And Fencing
 
@@ -143,26 +166,37 @@ For shared or restartable workers, attach a lease manager separately from the
 checkpoint store:
 
 ```python
+import asyncpg
+
 from zhivex_ai import (
     WorkflowBuilder,
     create_postgres_workflow_checkpoint_store,
     create_postgres_workflow_lease_manager,
 )
 
-workflow = WorkflowBuilder("publishing").add_step(...).build(
-    checkpoint_store=create_postgres_workflow_checkpoint_store(dsn),
-    lease_manager=create_postgres_workflow_lease_manager(dsn),
-    lease_ttl_ms=30_000,
-    lease_heartbeat_ms=10_000,
-)
+async with asyncpg.create_pool(dsn, min_size=1, max_size=10) as pool:
+    workflow = WorkflowBuilder("publishing").add_step(...).build(
+        checkpoint_store=create_postgres_workflow_checkpoint_store(
+            pool=pool,
+            namespace="tenant-a",
+        ),
+        lease_manager=create_postgres_workflow_lease_manager(
+            pool=pool,
+            namespace="tenant-a",
+        ),
+        lease_ttl_ms=30_000,
+        lease_heartbeat_ms=10_000,
+    )
+    result = await workflow.run(idempotency_key="publish-123")
 ```
 
-The graph acquires one run lease, renews it in the background, verifies it
-before durable progress, and releases it at the end. `resume_workflow(...)` and
+The graph acquires one run lease, renews it in the background, and atomically validates ownership while appending each durable checkpoint when the matching built-in checkpoint and lease backends are paired. `resume_workflow(...)` and
 `fork_workflow(...)` use the same ownership boundary. A takeover is allowed
 only after expiry and increments a monotonic fencing token; the former owner is
-then refused before it can append stale progress. Checkpoints retain the owner
+then refused inside the append transaction before it can commit stale progress. Postgres uses `clock_timestamp()` by default so application-host clock skew does not decide ownership. Checkpoints retain the owner
 reference and fencing token for correlation, never the secret lease token.
+
+Postgres stores created from a DSN own their pool and should be closed with `await store.close()` or `async with`. Stores created with `pool=...` borrow the pool and never close it. A checkpoint store and lease manager used by one graph must have the same backend, table prefix, and namespace for atomic fencing.
 
 Use the in-memory manager only in one process and the SQLite manager only where
 one shared filesystem/database has reviewed locking semantics. The Postgres
@@ -170,6 +204,8 @@ manager is the shared-worker implementation, but it still requires integration
 and contention tests against the deployment database and pool/proxy topology.
 Leases reduce concurrent orchestration writers; external side effects still
 need their own idempotency or fencing support.
+
+Operational callers can distinguish concurrency/ownership (`WorkflowConflictError`, `WorkflowLeaseLostError`), definition drift (`WorkflowDefinitionMismatchError`), missing durable state (`WorkflowRunNotFoundError`), and invalid resume state (`WorkflowInterruptError`) without parsing error messages. All remain subclasses of `ValidationError` for compatibility.
 
 ## Interrupt And Resume
 

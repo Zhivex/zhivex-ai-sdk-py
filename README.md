@@ -185,8 +185,9 @@ Tool support now follows the same rule everywhere:
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
-- Qwen follows Alibaba Cloud Model Studio's current OpenAI-compatible split: portable text/streaming/tools/structured output run through `/compatible-mode/v1/responses`, embeddings run through the OpenAI-compatible endpoint, and hosted web/code/file/MCP tools remain native/provider-specific. Mixed vision inputs use the Qwen Responses `input_text` / `input_image` content contract. `ReasoningConfig` maps all seven supported effort levels to `reasoning.effort`; the catalog distinguishes the multimodal `qwen3.7-max-2026-06-08` snapshot.
-- Qwen native support includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client. Web Extractor requires Web Search; reasoning-enabled requests must leave `tool_choice` on `auto` rather than force a required or named tool. Batch model availability is regional: Singapore currently documents the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
+- Qwen catalog guidance now starts with GA `qwen3.8-max` for pay-as-you-go Singapore. Text, streaming, image understanding, function tools, all seven portable reasoning efforts, and the five announced built-ins use the current `/compatible-mode/v1/responses` route. Mixed vision input follows Qwen's current Responses `text` / `image_url` content contract; the legacy `/api/v2/apps/protocols/compatible-mode/v1` route is not used.
+- `qwen3.8-max` transparently selects Chat Completions for native JSON Schema output, `FilePart` image/video inputs, or `ReasoningConfig.budget_tokens`, because those operations are not part of Qwen Responses. Structured output disables thinking, video uses `video_url`, and Chat reasoning state is preserved as Qwen `provider-data` for replay. Qwen hosted helpers cover `web_search`, `web_extractor`, `code_interpreter`, `web_search_image`, and `image_search`; Web Extractor still requires Web Search. The Token Plan continues to list the separate `qwen3.8-max-preview` ID, so it is not treated as a GA alias.
+- Qwen native support also includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client. Explicit reasoning-enabled requests must leave forced tool choice on `auto`; when no reasoning mode is selected, the `qwen3.8-max` adapter disables its default thinking only as needed to honor portable forced tool choice. Batch model availability is regional: Singapore currently documents the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
 - Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
 - Kimi native support includes K3 (`kimi-k3`) with always-on reasoning, `reasoning_effort` values `low`/`high`/`max`, native vision, callable tools and strict structured output. K2.6/K2.5 retain their separate `thinking` contract. Moonshot Files, Batch, token estimation and the beta `provider.formulas()` client remain available; embeddings, speech, and transcription are not claimed.
 - DeepSeek uses its official Chat Completions API for portable text generation, streaming, JSON structured output, callable tools, and V4 thinking. `create_deepseek()` reads `DEEPSEEK_API_KEY`, optionally `DEEPSEEK_BASE_URL`, and otherwise targets `https://api.deepseek.com`.
@@ -1189,15 +1190,16 @@ Qwen/Alibaba Cloud Model Studio native usage:
 ```python
 import asyncio
 
-from zhivex_ai import create_qwen, generate_text, qwen_web_search_tool
+from zhivex_ai import ReasoningConfig, create_qwen, generate_text, qwen_web_search_tool
 
 
 async def main() -> None:
-    provider = create_qwen(region="us")  # intl, us, or cn
+    provider = create_qwen(region="intl")  # qwen3.8-max GA pay-as-you-go
     result = await generate_text(
-        model=provider.native.language_model("qwen3.7-plus"),
+        model=provider.native.language_model("qwen3.8-max"),
         prompt="Summarize the latest Qwen hosted tool surface.",
         tools={"search": qwen_web_search_tool()},
+        reasoning=ReasoningConfig(effort="medium"),
     )
     print(result.text)
 
@@ -1205,9 +1207,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"` and uses the current `/compatible-mode/v1/responses` path; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Existing DashScope domains remain supported, while a workspace-specific domain can be supplied with `base_url=...`; reserve `responses_base_url=...` for a gateway whose Responses root differs. Use `provider("qwen-model")` for the portable text/streaming/tools/structured-output path, and `provider.native.*` for hosted tools/MCP, raw Responses settings, Files, Batch, Qwen3-ASR, and DashScope TTS. Web Extractor must be registered together with Web Search. When reasoning is enabled, do not force `tool_choice="required"` or `ToolChoiceName(...)`; use the default `auto` selection. Singapore Batch currently supports the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases, so check regional model availability before submitting a batch.
+`create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"` and uses the current `/compatible-mode/v1/responses` path; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Existing DashScope domains remain supported, while a workspace-specific domain can be supplied with `base_url=...`; reserve `responses_base_url=...` for a gateway whose Responses root differs. GA `qwen3.8-max` uses Responses for text, streaming, images, reasoning, functions, and hosted tools. The adapter selects `/chat/completions` only for native JSON Schema output, `FilePart(url=..., media_type="video/mp4")` input, or a reasoning token budget; structured output is always sent with thinking disabled. The Token Plan's exact `qwen3.8-max-preview` ID remains separate from the GA pay-as-you-go model. Web Extractor must be registered together with Web Search, and explicit thinking cannot be combined with forced required/named tool choice. Singapore Batch currently supports the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases, so check regional model availability before submitting a batch.
 
-See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen text, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
+See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen3.8 text/reasoning, JSON Schema output, optional video, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
 
 vLLM usage targets its OpenAI-compatible server:
 
@@ -1365,7 +1367,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Opus/Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, Qwen 3.7 including its multimodal June snapshot, and Kimi K3. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Opus/Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, GA Qwen3.8 Max plus retained Qwen3.7 guidance, and Kimi K3. It is guidance for model selection, not a separate execution path.
 
 To regenerate the markdown tables used above:
 
@@ -1545,9 +1547,9 @@ result = await resume_workflow(
 )
 ```
 
-`WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. Optional in-memory, SQLite, and Postgres lease managers add TTL, heartbeat, monotonic fencing, and stale-owner rejection; shared deployments should pair the Postgres checkpoint and lease managers and validate them against the actual database.
+`WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. Use step/edge `definition_revision` values for application configuration that callable source inspection cannot capture. Optional in-memory, SQLite, and Postgres lease managers add TTL, heartbeat, monotonic fencing, and atomic stale-owner rejection when paired with the matching checkpoint backend. Postgres also supports bounded or application-owned pools, namespaces, server-clock lease decisions, and checked schema metadata; validate it against the actual deployment database.
 
-`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.16.0`.
+`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.17.0`.
 
 Re-entering a still-running idempotent workflow fails closed. With a lease manager, `recover_running=True` can take over only after expiry and increments the fence; without one, it remains an operator-reconciled operation. Recovery cannot make unknown external effects safe without destination idempotency or reconciliation.
 
@@ -1774,7 +1776,7 @@ export ZHIVEX_SMOKE_GEMINI_MODEL=your-gemini-model
 export ZHIVEX_SMOKE_ANTHROPIC_MODEL=claude-opus-5
 export ZHIVEX_SMOKE_AZURE_OPENAI_MODEL=your-azure-openai-deployment
 export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
-export ZHIVEX_SMOKE_QWEN_MODEL=your-qwen-model
+export ZHIVEX_SMOKE_QWEN_MODEL=qwen3.8-max
 export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
 export ZHIVEX_SMOKE_DEEPSEEK_MODEL=deepseek-v4-flash
 export ZHIVEX_SMOKE_VLLM_MODEL=your-vllm-model

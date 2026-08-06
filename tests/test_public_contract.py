@@ -10,10 +10,28 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import zhivex_ai
-from zhivex_ai.api_stability import STABLE_EXPORTS
+from zhivex_ai.api_stability import BETA_EXPORTS, STABLE_EXPORTS
+from zhivex_ai.errors import ValidationError, WorkflowConflictError
 
 
 DOCUMENTED_STABLE_EXPORTS = {
+    "AgentCheckpoint",
+    "AgentTrace",
+    "EmbedOutput",
+    "EmbeddingContent",
+    "EmbeddingModel",
+    "FinishReason",
+    "GenerateGroundedTextOutput",
+    "GenerateObjectOutput",
+    "GenerateTextOutput",
+    "GroundedLanguageModel",
+    "LanguageModel",
+    "ModelMessage",
+    "StreamEvent",
+    "StreamObjectResult",
+    "StreamTextResult",
+    "TokenUsage",
+    "ToolCall",
     "create_openai",
     "create_anthropic",
     "create_azure_openai",
@@ -129,6 +147,23 @@ DOCUMENTED_STABLE_EXPORTS = {
 
 
 class PublicContractTests(TestCase):
+    def test_workflow_errors_are_typed_beta_top_level_exports(self) -> None:
+        workflow_errors = {
+            "WorkflowConflictError",
+            "WorkflowDefinitionMismatchError",
+            "WorkflowInterruptError",
+            "WorkflowLeaseLostError",
+            "WorkflowRunNotFoundError",
+        }
+
+        self.assertTrue(workflow_errors.issubset(zhivex_ai.__all__))
+        self.assertTrue(workflow_errors.issubset(BETA_EXPORTS))
+        for name in workflow_errors:
+            error_type = getattr(zhivex_ai, name)
+            self.assertTrue(issubclass(error_type, ValidationError))
+            self.assertIs(error_type, getattr(sys.modules["zhivex_ai.errors"], name))
+        self.assertTrue(issubclass(zhivex_ai.WorkflowLeaseLostError, WorkflowConflictError))
+
     def test_stable_exports_are_available_from_top_level_package(self) -> None:
         exported = set(zhivex_ai.__all__)
         self.assertTrue(DOCUMENTED_STABLE_EXPORTS.issubset(exported))
@@ -179,7 +214,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.16.0"', pyproject)
+        self.assertIn('version = "0.17.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

@@ -82,6 +82,15 @@ class WorkflowRetryPolicy:
 
 @dataclass(slots=True)
 class WorkflowStep:
+    """A workflow node and its runtime configuration.
+
+    ``definition_revision`` is an application-owned stable token for semantic
+    configuration that the SDK cannot inspect reliably, such as agent model or
+    instruction changes, tool configuration, and values captured by an
+    executor closure. Change it whenever that external configuration changes
+    so durable resume and fork operations fail closed on the new definition.
+    """
+
     name: str
     agent: Agent | None = None
     prompt: str | None = None
@@ -96,6 +105,7 @@ class WorkflowStep:
     executor_ref: str | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
     executor: WorkflowFunctionExecutor | None = None
+    definition_revision: str | None = None
 
 
 @dataclass(slots=True)

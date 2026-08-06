@@ -193,16 +193,17 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
                 os.environ,
                 {
                     "QWEN_API_KEY": "test-key",
-                    "ZHIVEX_SMOKE_QWEN_MODEL": "qwen3.7-plus",
+                    "ZHIVEX_SMOKE_QWEN_MODEL": "qwen3.8-max",
                 },
                 clear=True,
             ),
             patch.object(run_live_smoke, "create_qwen", return_value=provider),
-            patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)),
+            patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)) as generate,
         ):
             result = await run_live_smoke._run_qwen()
 
-        self.assertEqual(result, ("qwen", True, "ok: qwen3.7-plus, region=intl", False))
+        self.assertEqual(result, ("qwen", True, "ok: qwen3.8-max, region=intl", False))
+        self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
 
     async def test_deepseek_smoke_disables_thinking_for_exact_token_check(self) -> None:
         provider = MagicMock()

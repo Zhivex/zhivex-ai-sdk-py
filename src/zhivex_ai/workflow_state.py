@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import re
 import sqlite3
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from .errors import ValidationError
+from .errors import ValidationError, WorkflowConflictError, WorkflowLeaseLostError
 from .types import JsonValue
 
 
 WORKFLOW_CHECKPOINT_SCHEMA_VERSION = 1
+WORKFLOW_POSTGRES_SCHEMA_VERSION = 1
 
 WorkflowNodeStatus = Literal[
     "pending",
@@ -68,6 +72,32 @@ def _validate_postgres_table_prefix(table_prefix: str) -> str:
             'The "table_prefix" field must match the SQL identifier pattern [A-Za-z_][A-Za-z0-9_]*.'
         )
     return table_prefix
+
+
+def _validate_namespace(namespace: str, *, field_name: str) -> str:
+    if not isinstance(namespace, str) or not namespace.strip():
+        raise ValidationError(f"Workflow {field_name} namespace must be a non-empty string.")
+    return namespace.strip()
+
+
+def _validate_pool_bounds(min_size: int, max_size: int) -> tuple[int, int]:
+    if (
+        isinstance(min_size, bool)
+        or not isinstance(min_size, int)
+        or min_size < 0
+        or isinstance(max_size, bool)
+        or not isinstance(max_size, int)
+        or max_size <= 0
+        or min_size > max_size
+    ):
+        raise ValidationError(
+            "Workflow Postgres pool sizes must be integers with 0 <= pool_min_size <= pool_max_size."
+        )
+    return min_size, max_size
+
+
+def _postgres_server_time_expression() -> str:
+    return "FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT"
 
 
 def _validate_lease_request(run_id: str, owner_id: str, ttl_ms: int) -> tuple[str, str, int]:
@@ -225,6 +255,15 @@ class WorkflowLeaseManager(Protocol):
     async def release(self, run_id: str, *, token: str) -> bool: ...
 
     async def get(self, run_id: str) -> WorkflowExecutionLease | None: ...
+
+    async def validate(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        fencing_token: int,
+        now_ms: int | None = None,
+    ) -> bool: ...
 
 
 def _validate_node_checkpoint(node: WorkflowNodeCheckpoint) -> None:
@@ -493,28 +532,28 @@ def _prepare_append(
     candidate = _clone_checkpoint(checkpoint)
     if current is None:
         if expected_sequence is not None:
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{candidate.run_id}" does not exist; expected_sequence must be None for its first checkpoint.'
             )
         if candidate.sequence != 0:
             raise ValidationError(f'Workflow run "{candidate.run_id}" must start at checkpoint sequence 0.')
     else:
         if expected_sequence is None:
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{candidate.run_id}" already exists; expected_sequence is required for append.'
             )
         _validate_non_negative_integer(expected_sequence, "expected_sequence")
         if expected_sequence != current.sequence:
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{candidate.run_id}" sequence conflict: expected {expected_sequence}, '
                 f"stored sequence is {current.sequence}. Reload the latest checkpoint before retrying."
             )
         if current.status in _TERMINAL_WORKFLOW_CHECKPOINT_STATUSES:
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{candidate.run_id}" is terminal with status "{current.status}" and cannot be appended.'
             )
         if candidate.sequence != current.sequence + 1:
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{candidate.run_id}" next checkpoint sequence must be {current.sequence + 1}, '
                 f"got {candidate.sequence}."
             )
@@ -549,27 +588,61 @@ class InMemoryWorkflowCheckpointStore:
         expected_sequence: int | None = None,
     ) -> WorkflowCheckpoint:
         async with self._lock:
-            items = self._checkpoints.get(checkpoint.run_id, [])
-            current = items[-1] if items else None
-            candidate = _prepare_append(
-                checkpoint,
-                current=current,
-                expected_sequence=expected_sequence,
+            return self._append_locked(checkpoint, expected_sequence=expected_sequence)
+
+    def _append_locked(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int | None,
+    ) -> WorkflowCheckpoint:
+        items = self._checkpoints.get(checkpoint.run_id, [])
+        current = items[-1] if items else None
+        candidate = _prepare_append(
+            checkpoint,
+            current=current,
+            expected_sequence=expected_sequence,
+        )
+        if candidate.checkpoint_id in self._checkpoint_ids:
+            raise WorkflowConflictError(f'Workflow checkpoint "{candidate.checkpoint_id}" already exists.')
+        if candidate.idempotency_key is not None:
+            claimed_run_id = self._idempotency_runs.get(candidate.idempotency_key)
+            if claimed_run_id is not None and claimed_run_id != candidate.run_id:
+                raise WorkflowConflictError(
+                    f'Workflow idempotency key "{candidate.idempotency_key}" is already claimed '
+                    f'by run "{claimed_run_id}".'
+                )
+            self._idempotency_runs[candidate.idempotency_key] = candidate.run_id
+        stored = _clone_checkpoint(candidate)
+        self._checkpoints.setdefault(candidate.run_id, []).append(stored)
+        self._checkpoint_ids[candidate.checkpoint_id] = stored
+        return _clone_checkpoint(stored)
+
+    async def append_fenced(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int,
+        lease_manager: WorkflowLeaseManager,
+        lease: WorkflowExecutionLease,
+    ) -> WorkflowCheckpoint:
+        if not isinstance(lease_manager, InMemoryWorkflowLeaseManager):
+            raise WorkflowLeaseLostError(
+                "Atomic workflow append requires matching in-memory checkpoint and lease backends."
             )
-            if candidate.checkpoint_id in self._checkpoint_ids:
-                raise ValidationError(f'Workflow checkpoint "{candidate.checkpoint_id}" already exists.')
-            if candidate.idempotency_key is not None:
-                claimed_run_id = self._idempotency_runs.get(candidate.idempotency_key)
-                if claimed_run_id is not None and claimed_run_id != candidate.run_id:
-                    raise ValidationError(
-                        f'Workflow idempotency key "{candidate.idempotency_key}" is already claimed '
-                        f'by run "{claimed_run_id}".'
-                    )
-                self._idempotency_runs[candidate.idempotency_key] = candidate.run_id
-            stored = _clone_checkpoint(candidate)
-            self._checkpoints.setdefault(candidate.run_id, []).append(stored)
-            self._checkpoint_ids[candidate.checkpoint_id] = stored
-            return _clone_checkpoint(stored)
+        async with lease_manager._lock:
+            current_lease = lease_manager._leases.get(lease.run_id)
+            if (
+                current_lease is None
+                or current_lease.token != lease.token
+                or current_lease.fencing_token != lease.fencing_token
+                or current_lease.is_expired()
+            ):
+                raise WorkflowLeaseLostError(
+                    f'Workflow execution lease for run "{lease.run_id}" was lost before checkpoint append.'
+                )
+            async with self._lock:
+                return self._append_locked(checkpoint, expected_sequence=expected_sequence)
 
     async def load_latest(self, run_id: str) -> WorkflowCheckpoint | None:
         async with self._lock:
@@ -672,6 +745,26 @@ class InMemoryWorkflowLeaseManager:
         async with self._lock:
             return self._leases.get(resolved_run_id)
 
+    async def validate(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        fencing_token: int,
+        now_ms: int | None = None,
+    ) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+        resolved_fence = _validate_non_negative_integer(fencing_token, "lease fencing_token")
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
+        async with self._lock:
+            current = self._leases.get(resolved_run_id)
+            return bool(
+                current is not None
+                and current.token == resolved_token
+                and current.fencing_token == resolved_fence
+                and not current.is_expired(now_ms=effective_now)
+            )
+
 
 class SQLiteWorkflowCheckpointStore:
     def __init__(self, path: str, *, namespace: str = "default") -> None:
@@ -734,69 +827,140 @@ class SQLiteWorkflowCheckpointStore:
             connection = sqlite3.connect(self._path)
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                row = connection.execute(
-                    """
-                    SELECT latest_sequence
-                    FROM zhivex_workflow_runs
-                    WHERE namespace = ? AND run_id = ?
-                    """,
-                    (self._namespace, checkpoint.run_id),
-                ).fetchone()
-                current = self._load_latest_with_connection(connection, checkpoint.run_id) if row is not None else None
-                candidate = _prepare_append(
+                candidate = self._append_with_connection(
+                    connection,
                     checkpoint,
-                    current=current,
                     expected_sequence=expected_sequence,
                 )
-                if row is None:
-                    connection.execute(
-                        """
-                        INSERT INTO zhivex_workflow_runs (
-                            namespace, run_id, idempotency_key, workflow_name,
-                            definition_version, definition_digest, latest_sequence
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            self._namespace,
-                            candidate.run_id,
-                            candidate.idempotency_key,
-                            candidate.workflow_name,
-                            candidate.definition_version,
-                            candidate.definition_digest,
-                            candidate.sequence,
-                        ),
-                    )
-                else:
-                    cursor = connection.execute(
-                        """
-                        UPDATE zhivex_workflow_runs
-                        SET latest_sequence = ?
-                        WHERE namespace = ? AND run_id = ? AND latest_sequence = ?
-                        """,
-                        (candidate.sequence, self._namespace, candidate.run_id, expected_sequence),
-                    )
-                    if cursor.rowcount != 1:
-                        raise ValidationError(f'Workflow run "{candidate.run_id}" changed during append.')
-                connection.execute(
+                connection.commit()
+                return candidate
+            except sqlite3.IntegrityError as error:
+                connection.rollback()
+                raise WorkflowConflictError(
+                    f"Workflow checkpoint append violated a uniqueness constraint: {error}."
+                ) from error
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return await asyncio.to_thread(runner)
+
+    def _append_with_connection(
+        self,
+        connection: sqlite3.Connection,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int | None,
+    ) -> WorkflowCheckpoint:
+        row = connection.execute(
+            """
+            SELECT latest_sequence
+            FROM zhivex_workflow_runs
+            WHERE namespace = ? AND run_id = ?
+            """,
+            (self._namespace, checkpoint.run_id),
+        ).fetchone()
+        current = self._load_latest_with_connection(connection, checkpoint.run_id) if row is not None else None
+        candidate = _prepare_append(
+            checkpoint,
+            current=current,
+            expected_sequence=expected_sequence,
+        )
+        if row is None:
+            connection.execute(
+                """
+                INSERT INTO zhivex_workflow_runs (
+                    namespace, run_id, idempotency_key, workflow_name,
+                    definition_version, definition_digest, latest_sequence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self._namespace,
+                    candidate.run_id,
+                    candidate.idempotency_key,
+                    candidate.workflow_name,
+                    candidate.definition_version,
+                    candidate.definition_digest,
+                    candidate.sequence,
+                ),
+            )
+        else:
+            cursor = connection.execute(
+                """
+                UPDATE zhivex_workflow_runs
+                SET latest_sequence = ?
+                WHERE namespace = ? AND run_id = ? AND latest_sequence = ?
+                """,
+                (candidate.sequence, self._namespace, candidate.run_id, expected_sequence),
+            )
+            if cursor.rowcount != 1:
+                raise WorkflowConflictError(f'Workflow run "{candidate.run_id}" changed during append.')
+        connection.execute(
+            """
+            INSERT INTO zhivex_workflow_checkpoints (
+                namespace, checkpoint_id, run_id, sequence, checkpoint_json, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                self._namespace,
+                candidate.checkpoint_id,
+                candidate.run_id,
+                candidate.sequence,
+                workflow_checkpoint_to_json(candidate),
+                candidate.created_at_ms or 0,
+            ),
+        )
+        return _clone_checkpoint(candidate)
+
+    async def append_fenced(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int,
+        lease_manager: WorkflowLeaseManager,
+        lease: WorkflowExecutionLease,
+    ) -> WorkflowCheckpoint:
+        if (
+            not isinstance(lease_manager, SQLiteWorkflowLeaseManager)
+            or lease_manager._path != self._path
+            or lease_manager._namespace != self._namespace
+        ):
+            raise WorkflowLeaseLostError(
+                "Atomic workflow append requires SQLite checkpoint and lease backends with the same path and namespace."
+            )
+
+        def runner() -> WorkflowCheckpoint:
+            connection = sqlite3.connect(self._path)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
                     """
-                    INSERT INTO zhivex_workflow_checkpoints (
-                        namespace, checkpoint_id, run_id, sequence, checkpoint_json, created_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    SELECT 1
+                    FROM zhivex_workflow_leases
+                    WHERE namespace = ? AND run_id = ? AND token = ?
+                      AND fencing_token = ? AND expires_at_ms > ?
                     """,
                     (
                         self._namespace,
-                        candidate.checkpoint_id,
-                        candidate.run_id,
-                        candidate.sequence,
-                        workflow_checkpoint_to_json(candidate),
-                        candidate.created_at_ms or 0,
+                        lease.run_id,
+                        lease.token,
+                        lease.fencing_token,
+                        _now_ms(),
                     ),
+                ).fetchone()
+                if row is None:
+                    raise WorkflowLeaseLostError(
+                        f'Workflow execution lease for run "{lease.run_id}" was lost before checkpoint append.'
+                    )
+                candidate = self._append_with_connection(
+                    connection,
+                    checkpoint,
+                    expected_sequence=expected_sequence,
                 )
                 connection.commit()
-                return _clone_checkpoint(candidate)
-            except sqlite3.IntegrityError as error:
-                connection.rollback()
-                raise ValidationError(f"Workflow checkpoint append violated a uniqueness constraint: {error}.") from error
+                return candidate
             except BaseException:
                 connection.rollback()
                 raise
@@ -1105,33 +1269,210 @@ class SQLiteWorkflowLeaseManager:
 
         return await asyncio.to_thread(runner)
 
+    async def validate(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        fencing_token: int,
+        now_ms: int | None = None,
+    ) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+        resolved_fence = _validate_non_negative_integer(fencing_token, "lease fencing_token")
+        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
 
-class PostgresWorkflowCheckpointStore:
-    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
-        self._dsn = dsn
-        prefix = _validate_postgres_table_prefix(table_prefix)
-        self._runs_table = f"{prefix}_workflow_runs"
-        self._checkpoints_table = f"{prefix}_workflow_checkpoints"
+        def runner() -> bool:
+            connection = sqlite3.connect(self._path)
+            try:
+                row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM zhivex_workflow_leases
+                    WHERE namespace = ? AND run_id = ? AND token = ?
+                      AND fencing_token = ? AND expires_at_ms > ?
+                    """,
+                    (
+                        self._namespace,
+                        resolved_run_id,
+                        resolved_token,
+                        resolved_fence,
+                        effective_now,
+                    ),
+                ).fetchone()
+                return row is not None
+            finally:
+                connection.close()
 
-    async def _connect(self) -> Any:
-        try:
-            import asyncpg  # type: ignore[import-not-found,import-untyped]
-        except Exception as error:
-            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
-        connection = await asyncpg.connect(self._dsn)
-        try:
-            await self._ensure_schema(connection)
-        except BaseException:
-            await connection.close()
-            raise
-        return connection
+        return await asyncio.to_thread(runner)
+
+
+class _PostgresPoolOwner:
+    def __init__(
+        self,
+        dsn: str | None,
+        *,
+        pool: Any | None,
+        pool_min_size: int,
+        pool_max_size: int,
+    ) -> None:
+        if pool is None and (not isinstance(dsn, str) or not dsn.strip()):
+            raise ValidationError('Workflow Postgres storage requires either a non-empty "dsn" or an asyncpg pool.')
+        self._dsn = dsn.strip() if isinstance(dsn, str) else None
+        self._pool = pool
+        self._pool_min_size, self._pool_max_size = _validate_pool_bounds(pool_min_size, pool_max_size)
+        self._owns_pool = False
+        self._pool_lock = asyncio.Lock()
+
+    @property
+    def identity(self) -> tuple[str, object]:
+        if self._pool is not None and not self._owns_pool:
+            return ("pool", id(self._pool))
+        return ("dsn", self._dsn or "")
+
+    async def _get_pool(self) -> Any:
+        if self._pool is not None:
+            return self._pool
+        async with self._pool_lock:
+            if self._pool is None:
+                try:
+                    import asyncpg  # type: ignore[import-not-found,import-untyped]
+                except Exception as error:
+                    raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
+                self._pool = await asyncpg.create_pool(
+                    dsn=self._dsn,
+                    min_size=self._pool_min_size,
+                    max_size=self._pool_max_size,
+                )
+                self._owns_pool = True
+        return self._pool
+
+    @asynccontextmanager
+    async def connection(self) -> AsyncIterator[Any]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            yield connection
+
+    async def close(self) -> None:
+        async with self._pool_lock:
+            pool = self._pool
+            if pool is not None and self._owns_pool:
+                await pool.close()
+                self._pool = None
+                self._owns_pool = False
+
+
+class _PostgresWorkflowBackend:
+    def __init__(
+        self,
+        dsn: str | None,
+        *,
+        table_prefix: str,
+        namespace: str,
+        pool: Any | None,
+        pool_min_size: int,
+        pool_max_size: int,
+    ) -> None:
+        self._prefix = _validate_postgres_table_prefix(table_prefix)
+        self._namespace = _validate_namespace(namespace, field_name="Postgres")
+        self._namespace_prefix = (
+            "" if self._namespace == "default" else f"ns_{hashlib.sha256(self._namespace.encode()).hexdigest()[:24]}:"
+        )
+        self._pool_owner = _PostgresPoolOwner(
+            dsn,
+            pool=pool,
+            pool_min_size=pool_min_size,
+            pool_max_size=pool_max_size,
+        )
+        self._schema_table = f"{self._prefix}_workflow_schema"
+        self._schema_ready = False
+        self._schema_lock = asyncio.Lock()
+
+    def _storage_key(self, value: str) -> str:
+        return f"{self._namespace_prefix}{value}"
+
+    @property
+    def _backend_identity(self) -> tuple[str, str, tuple[str, object]]:
+        return (self._prefix, self._namespace, self._pool_owner.identity)
+
+    async def _record_schema_version(self, connection: Any, *, component: str) -> None:
+        await connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._schema_table} (
+                component TEXT PRIMARY KEY,
+                version INTEGER NOT NULL CHECK (version > 0),
+                updated_at_ms BIGINT NOT NULL
+            )
+            """
+        )
+        await connection.execute(
+            f"""
+            INSERT INTO {self._schema_table} (component, version, updated_at_ms)
+            VALUES ($1, $2, {_postgres_server_time_expression()})
+            ON CONFLICT (component) DO NOTHING
+            """,
+            component,
+            WORKFLOW_POSTGRES_SCHEMA_VERSION,
+        )
+        version = await connection.fetchval(
+            f"SELECT version FROM {self._schema_table} WHERE component = $1",
+            component,
+        )
+        if version != WORKFLOW_POSTGRES_SCHEMA_VERSION:
+            raise RuntimeError(
+                f'Unsupported workflow Postgres {component} schema version {version}; '
+                f"expected {WORKFLOW_POSTGRES_SCHEMA_VERSION}."
+            )
+
+    async def close(self) -> None:
+        await self._pool_owner.close()
+
+    async def __aenter__(self) -> _PostgresWorkflowBackend:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        await self.close()
+
+
+class PostgresWorkflowCheckpointStore(_PostgresWorkflowBackend):
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        table_prefix: str = "zhivex_ai",
+        namespace: str = "default",
+        pool: Any | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 5,
+    ) -> None:
+        super().__init__(
+            dsn,
+            table_prefix=table_prefix,
+            namespace=namespace,
+            pool=pool,
+            pool_min_size=pool_min_size,
+            pool_max_size=pool_max_size,
+        )
+        self._runs_table = f"{self._prefix}_workflow_runs"
+        self._checkpoints_table = f"{self._prefix}_workflow_checkpoints"
+        self._leases_table = f"{self._prefix}_workflow_leases"
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[Any]:
+        async with self._pool_owner.connection() as connection:
+            if not self._schema_ready:
+                async with self._schema_lock:
+                    if not self._schema_ready:
+                        await self._ensure_schema(connection)
+                        self._schema_ready = True
+            yield connection
 
     async def _ensure_schema(self, connection: Any) -> None:
         async with connection.transaction():
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext($1))",
-                f"zhivex-workflow-schema:{self._runs_table}",
+                f"zhivex-workflow-schema:{self._prefix}",
             )
+            await self._record_schema_version(connection, component="checkpoint")
             await connection.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self._runs_table} (
@@ -1166,104 +1507,175 @@ class PostgresWorkflowCheckpointStore:
         payload = row["checkpoint_json"]
         return payload if isinstance(payload, dict) else json.loads(payload)
 
+    async def _append_locked(
+        self,
+        connection: Any,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int | None,
+    ) -> WorkflowCheckpoint:
+        storage_run_id = self._storage_key(checkpoint.run_id)
+        storage_idempotency_key = (
+            self._storage_key(checkpoint.idempotency_key) if checkpoint.idempotency_key is not None else None
+        )
+        await connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext($1))",
+            f"zhivex-workflow-run:{self._runs_table}:{storage_run_id}",
+        )
+        if storage_idempotency_key is not None:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-workflow-idempotency:{self._runs_table}:{storage_idempotency_key}",
+            )
+        row = await connection.fetchrow(
+            f"SELECT latest_sequence FROM {self._runs_table} WHERE run_id = $1 FOR UPDATE",
+            storage_run_id,
+        )
+        current = None
+        if row is not None:
+            current_row = await connection.fetchrow(
+                f"""
+                SELECT checkpoint_json
+                FROM {self._checkpoints_table}
+                WHERE run_id = $1
+                ORDER BY sequence DESC
+                LIMIT 1
+                """,
+                storage_run_id,
+            )
+            if current_row is not None:
+                current = deserialize_workflow_checkpoint(self._payload_from_row(current_row))
+        candidate = _prepare_append(
+            checkpoint,
+            current=current,
+            expected_sequence=expected_sequence,
+        )
+        if row is None:
+            if storage_idempotency_key is not None:
+                claimed = await connection.fetchrow(
+                    f"SELECT run_id FROM {self._runs_table} WHERE idempotency_key = $1",
+                    storage_idempotency_key,
+                )
+                if claimed is not None:
+                    raise WorkflowConflictError(
+                        f'Workflow idempotency key "{candidate.idempotency_key}" is already claimed.'
+                    )
+            await connection.execute(
+                f"""
+                INSERT INTO {self._runs_table} (
+                    run_id, idempotency_key, workflow_name,
+                    definition_version, definition_digest, latest_sequence
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                storage_run_id,
+                storage_idempotency_key,
+                candidate.workflow_name,
+                candidate.definition_version,
+                candidate.definition_digest,
+                candidate.sequence,
+            )
+        else:
+            status = await connection.execute(
+                f"""
+                UPDATE {self._runs_table}
+                SET latest_sequence = $1
+                WHERE run_id = $2 AND latest_sequence = $3
+                """,
+                candidate.sequence,
+                storage_run_id,
+                expected_sequence,
+            )
+            if status != "UPDATE 1":
+                raise WorkflowConflictError(f'Workflow run "{candidate.run_id}" changed during append.')
+        await connection.execute(
+            f"""
+            INSERT INTO {self._checkpoints_table} (
+                checkpoint_id, run_id, sequence, checkpoint_json, created_at_ms
+            ) VALUES ($1, $2, $3, $4::jsonb, $5)
+            """,
+            self._storage_key(candidate.checkpoint_id),
+            storage_run_id,
+            candidate.sequence,
+            workflow_checkpoint_to_json(candidate),
+            candidate.created_at_ms or 0,
+        )
+        return _clone_checkpoint(candidate)
+
     async def append(
         self,
         checkpoint: WorkflowCheckpoint,
         *,
         expected_sequence: int | None = None,
     ) -> WorkflowCheckpoint:
-        connection = await self._connect()
         try:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))",
-                    f"zhivex-workflow-run:{self._runs_table}:{checkpoint.run_id}",
-                )
-                if checkpoint.idempotency_key is not None:
-                    await connection.execute(
-                        "SELECT pg_advisory_xact_lock(hashtext($1))",
-                        f"zhivex-workflow-idempotency:{self._runs_table}:{checkpoint.idempotency_key}",
-                    )
-                row = await connection.fetchrow(
-                    f"SELECT latest_sequence FROM {self._runs_table} WHERE run_id = $1 FOR UPDATE",
-                    checkpoint.run_id,
-                )
-                current = None
-                if row is not None:
-                    current_row = await connection.fetchrow(
-                        f"""
-                        SELECT checkpoint_json
-                        FROM {self._checkpoints_table}
-                        WHERE run_id = $1
-                        ORDER BY sequence DESC
-                        LIMIT 1
-                        """,
-                        checkpoint.run_id,
-                    )
-                    if current_row is not None:
-                        current = deserialize_workflow_checkpoint(self._payload_from_row(current_row))
-                candidate = _prepare_append(
+            async with self._connection() as connection, connection.transaction():
+                return await self._append_locked(
+                    connection,
                     checkpoint,
-                    current=current,
                     expected_sequence=expected_sequence,
                 )
-                if row is None:
-                    if candidate.idempotency_key is not None:
-                        claimed = await connection.fetchrow(
-                            f"SELECT run_id FROM {self._runs_table} WHERE idempotency_key = $1",
-                            candidate.idempotency_key,
-                        )
-                        if claimed is not None:
-                            raise ValidationError(
-                                f'Workflow idempotency key "{candidate.idempotency_key}" is already claimed '
-                                f'by run "{claimed["run_id"]}".'
-                            )
-                    await connection.execute(
-                        f"""
-                        INSERT INTO {self._runs_table} (
-                            run_id, idempotency_key, workflow_name,
-                            definition_version, definition_digest, latest_sequence
-                        ) VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        candidate.run_id,
-                        candidate.idempotency_key,
-                        candidate.workflow_name,
-                        candidate.definition_version,
-                        candidate.definition_digest,
-                        candidate.sequence,
-                    )
-                else:
-                    status = await connection.execute(
-                        f"""
-                        UPDATE {self._runs_table}
-                        SET latest_sequence = $1
-                        WHERE run_id = $2 AND latest_sequence = $3
-                        """,
-                        candidate.sequence,
-                        candidate.run_id,
-                        expected_sequence,
-                    )
-                    if status != "UPDATE 1":
-                        raise ValidationError(f'Workflow run "{candidate.run_id}" changed during append.')
+        except Exception as error:
+            if error.__class__.__name__ == "UniqueViolationError":
+                raise WorkflowConflictError(
+                    f"Workflow checkpoint append violated a uniqueness constraint: {error}."
+                ) from error
+            raise
+
+    async def append_fenced(
+        self,
+        checkpoint: WorkflowCheckpoint,
+        *,
+        expected_sequence: int,
+        lease_manager: WorkflowLeaseManager,
+        lease: WorkflowExecutionLease,
+    ) -> WorkflowCheckpoint:
+        if (
+            not isinstance(lease_manager, PostgresWorkflowLeaseManager)
+            or lease_manager._backend_identity != self._backend_identity
+        ):
+            raise WorkflowLeaseLostError(
+                "Atomic workflow append requires Postgres checkpoint and lease backends with the same DSN/pool, prefix, and namespace."
+            )
+        try:
+            async with self._connection() as connection, connection.transaction():
+                storage_run_id = self._storage_key(lease.run_id)
                 await connection.execute(
-                    f"""
-                    INSERT INTO {self._checkpoints_table} (
-                        checkpoint_id, run_id, sequence, checkpoint_json, created_at_ms
-                    ) VALUES ($1, $2, $3, $4::jsonb, $5)
-                    """,
-                    candidate.checkpoint_id,
-                    candidate.run_id,
-                    candidate.sequence,
-                    workflow_checkpoint_to_json(candidate),
-                    candidate.created_at_ms or 0,
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"zhivex-workflow-lease:{self._leases_table}:{storage_run_id}",
                 )
-                return _clone_checkpoint(candidate)
-        finally:
-            await connection.close()
+                row = await connection.fetchrow(
+                    f"""
+                    SELECT token, fencing_token, expires_at_ms,
+                           {_postgres_server_time_expression()} AS server_now_ms
+                    FROM {self._leases_table}
+                    WHERE run_id = $1
+                    FOR SHARE
+                    """,
+                    storage_run_id,
+                )
+                if (
+                    row is None
+                    or row["token"] != lease.token
+                    or int(row["fencing_token"]) != lease.fencing_token
+                    or int(row["expires_at_ms"]) <= int(row["server_now_ms"])
+                ):
+                    raise WorkflowLeaseLostError(
+                        f'Workflow execution lease for run "{lease.run_id}" was lost before checkpoint append.'
+                    )
+                return await self._append_locked(
+                    connection,
+                    checkpoint,
+                    expected_sequence=expected_sequence,
+                )
+        except Exception as error:
+            if error.__class__.__name__ == "UniqueViolationError":
+                raise WorkflowConflictError(
+                    f"Workflow checkpoint append violated a uniqueness constraint: {error}."
+                ) from error
+            raise
 
     async def load_latest(self, run_id: str) -> WorkflowCheckpoint | None:
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             row = await connection.fetchrow(
                 f"""
                 SELECT checkpoint_json
@@ -1272,29 +1684,23 @@ class PostgresWorkflowCheckpointStore:
                 ORDER BY sequence DESC
                 LIMIT 1
                 """,
-                run_id,
+                self._storage_key(run_id),
             )
             return deserialize_workflow_checkpoint(self._payload_from_row(row)) if row is not None else None
-        finally:
-            await connection.close()
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             row = await connection.fetchrow(
                 f"SELECT checkpoint_json FROM {self._checkpoints_table} WHERE checkpoint_id = $1",
-                checkpoint_id,
+                self._storage_key(checkpoint_id),
             )
             return deserialize_workflow_checkpoint(self._payload_from_row(row)) if row is not None else None
-        finally:
-            await connection.close()
 
     async def find_by_idempotency_key(self, idempotency_key: str) -> WorkflowCheckpoint | None:
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             row = await connection.fetchrow(
                 f"SELECT run_id FROM {self._runs_table} WHERE idempotency_key = $1",
-                idempotency_key,
+                self._storage_key(idempotency_key),
             )
             if row is None:
                 return None
@@ -1313,12 +1719,9 @@ class PostgresWorkflowCheckpointStore:
                 if checkpoint_row is not None
                 else None
             )
-        finally:
-            await connection.close()
 
     async def list_checkpoints(self, run_id: str) -> list[WorkflowCheckpoint]:
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             rows = await connection.fetch(
                 f"""
                 SELECT checkpoint_json
@@ -1326,55 +1729,69 @@ class PostgresWorkflowCheckpointStore:
                 WHERE run_id = $1
                 ORDER BY sequence ASC
                 """,
-                run_id,
+                self._storage_key(run_id),
             )
             return [deserialize_workflow_checkpoint(self._payload_from_row(row)) for row in rows]
-        finally:
-            await connection.close()
 
 
-class PostgresWorkflowLeaseManager:
-    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
-        self._dsn = dsn
-        prefix = _validate_postgres_table_prefix(table_prefix)
-        self._leases_table = f"{prefix}_workflow_leases"
+class PostgresWorkflowLeaseManager(_PostgresWorkflowBackend):
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        table_prefix: str = "zhivex_ai",
+        namespace: str = "default",
+        pool: Any | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 5,
+    ) -> None:
+        super().__init__(
+            dsn,
+            table_prefix=table_prefix,
+            namespace=namespace,
+            pool=pool,
+            pool_min_size=pool_min_size,
+            pool_max_size=pool_max_size,
+        )
+        self._leases_table = f"{self._prefix}_workflow_leases"
 
-    async def _connect(self) -> Any:
-        try:
-            import asyncpg  # type: ignore[import-not-found,import-untyped]
-        except Exception as error:
-            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
-        connection = await asyncpg.connect(self._dsn)
-        try:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))",
-                    f"zhivex-workflow-lease-schema:{self._leases_table}",
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[Any]:
+        async with self._pool_owner.connection() as connection:
+            if not self._schema_ready:
+                async with self._schema_lock:
+                    if not self._schema_ready:
+                        await self._ensure_schema(connection)
+                        self._schema_ready = True
+            yield connection
+
+    async def _ensure_schema(self, connection: Any) -> None:
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-workflow-schema:{self._prefix}",
+            )
+            await self._record_schema_version(connection, component="lease")
+            await connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self._leases_table} (
+                    run_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    fencing_token BIGINT NOT NULL,
+                    acquired_at_ms BIGINT NOT NULL,
+                    renewed_at_ms BIGINT NOT NULL,
+                    expires_at_ms BIGINT NOT NULL
                 )
-                await connection.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {self._leases_table} (
-                        run_id TEXT PRIMARY KEY,
-                        owner_id TEXT NOT NULL,
-                        token TEXT NOT NULL,
-                        fencing_token BIGINT NOT NULL,
-                        acquired_at_ms BIGINT NOT NULL,
-                        renewed_at_ms BIGINT NOT NULL,
-                        expires_at_ms BIGINT NOT NULL
-                    )
-                    """
-                )
-        except BaseException:
-            await connection.close()
-            raise
-        return connection
+                """
+            )
 
     @staticmethod
-    def _lease_from_row(row: Any) -> WorkflowExecutionLease | None:
+    def _lease_from_row(row: Any, *, run_id: str) -> WorkflowExecutionLease | None:
         if row is None:
             return None
         return WorkflowExecutionLease(
-            run_id=str(row["run_id"]),
+            run_id=run_id,
             owner_id=str(row["owner_id"]),
             token=str(row["token"]),
             fencing_token=int(row["fencing_token"]),
@@ -1382,6 +1799,13 @@ class PostgresWorkflowLeaseManager:
             renewed_at_ms=int(row["renewed_at_ms"]),
             expires_at_ms=int(row["expires_at_ms"]),
         )
+
+    @staticmethod
+    async def _effective_now(connection: Any, now_ms: int | None) -> int:
+        if now_ms is not None:
+            return _validate_non_negative_integer(now_ms, "lease now_ms")
+        value = await connection.fetchval(f"SELECT {_postgres_server_time_expression()}")
+        return int(value)
 
     async def acquire(
         self,
@@ -1391,60 +1815,53 @@ class PostgresWorkflowLeaseManager:
         ttl_ms: int,
         now_ms: int | None = None,
     ) -> WorkflowExecutionLease | None:
-        resolved_run_id, resolved_owner_id, resolved_ttl = _validate_lease_request(
-            run_id,
-            owner_id,
-            ttl_ms,
-        )
-        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
-        connection = await self._connect()
-        try:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))",
-                    f"zhivex-workflow-lease:{self._leases_table}:{resolved_run_id}",
-                )
-                row = await connection.fetchrow(
-                    f"SELECT * FROM {self._leases_table} WHERE run_id = $1 FOR UPDATE",
-                    resolved_run_id,
-                )
-                current = self._lease_from_row(row)
-                if current is not None and not current.is_expired(now_ms=effective_now):
-                    return None
-                lease = WorkflowExecutionLease(
-                    run_id=resolved_run_id,
-                    owner_id=resolved_owner_id,
-                    token=f"wfl_{uuid4().hex}",
-                    fencing_token=(current.fencing_token if current is not None else 0) + 1,
-                    acquired_at_ms=effective_now,
-                    renewed_at_ms=effective_now,
-                    expires_at_ms=effective_now + resolved_ttl,
-                )
-                await connection.execute(
-                    f"""
-                    INSERT INTO {self._leases_table} (
-                        run_id, owner_id, token, fencing_token,
-                        acquired_at_ms, renewed_at_ms, expires_at_ms
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (run_id) DO UPDATE SET
-                        owner_id = EXCLUDED.owner_id,
-                        token = EXCLUDED.token,
-                        fencing_token = EXCLUDED.fencing_token,
-                        acquired_at_ms = EXCLUDED.acquired_at_ms,
-                        renewed_at_ms = EXCLUDED.renewed_at_ms,
-                        expires_at_ms = EXCLUDED.expires_at_ms
-                    """,
-                    lease.run_id,
-                    lease.owner_id,
-                    lease.token,
-                    lease.fencing_token,
-                    lease.acquired_at_ms,
-                    lease.renewed_at_ms,
-                    lease.expires_at_ms,
-                )
-                return lease
-        finally:
-            await connection.close()
+        resolved_run_id, resolved_owner_id, resolved_ttl = _validate_lease_request(run_id, owner_id, ttl_ms)
+        storage_run_id = self._storage_key(resolved_run_id)
+        async with self._connection() as connection, connection.transaction():
+            effective_now = await self._effective_now(connection, now_ms)
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-workflow-lease:{self._leases_table}:{storage_run_id}",
+            )
+            row = await connection.fetchrow(
+                f"SELECT * FROM {self._leases_table} WHERE run_id = $1 FOR UPDATE",
+                storage_run_id,
+            )
+            current = self._lease_from_row(row, run_id=resolved_run_id)
+            if current is not None and not current.is_expired(now_ms=effective_now):
+                return None
+            lease = WorkflowExecutionLease(
+                run_id=resolved_run_id,
+                owner_id=resolved_owner_id,
+                token=f"wfl_{uuid4().hex}",
+                fencing_token=(current.fencing_token if current is not None else 0) + 1,
+                acquired_at_ms=effective_now,
+                renewed_at_ms=effective_now,
+                expires_at_ms=effective_now + resolved_ttl,
+            )
+            await connection.execute(
+                f"""
+                INSERT INTO {self._leases_table} (
+                    run_id, owner_id, token, fencing_token,
+                    acquired_at_ms, renewed_at_ms, expires_at_ms
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    owner_id = EXCLUDED.owner_id,
+                    token = EXCLUDED.token,
+                    fencing_token = EXCLUDED.fencing_token,
+                    acquired_at_ms = EXCLUDED.acquired_at_ms,
+                    renewed_at_ms = EXCLUDED.renewed_at_ms,
+                    expires_at_ms = EXCLUDED.expires_at_ms
+                """,
+                storage_run_id,
+                lease.owner_id,
+                lease.token,
+                lease.fencing_token,
+                lease.acquired_at_ms,
+                lease.renewed_at_ms,
+                lease.expires_at_ms,
+            )
+            return lease
 
     async def renew(
         self,
@@ -1455,9 +1872,9 @@ class PostgresWorkflowLeaseManager:
         now_ms: int | None = None,
     ) -> WorkflowExecutionLease | None:
         resolved_run_id, resolved_token = _validate_lease_token(run_id, token, ttl_ms)
-        effective_now = _now_ms() if now_ms is None else _validate_non_negative_integer(now_ms, "lease now_ms")
-        connection = await self._connect()
-        try:
+        storage_run_id = self._storage_key(resolved_run_id)
+        async with self._connection() as connection:
+            effective_now = await self._effective_now(connection, now_ms)
             row = await connection.fetchrow(
                 f"""
                 UPDATE {self._leases_table}
@@ -1467,41 +1884,58 @@ class PostgresWorkflowLeaseManager:
                 """,
                 effective_now,
                 effective_now + ttl_ms,
-                resolved_run_id,
+                storage_run_id,
                 resolved_token,
             )
-            return self._lease_from_row(row)
-        finally:
-            await connection.close()
+            return self._lease_from_row(row, run_id=resolved_run_id)
 
     async def release(self, run_id: str, *, token: str) -> bool:
         resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             status = await connection.execute(
                 f"""
                 UPDATE {self._leases_table}
                 SET expires_at_ms = 0
                 WHERE run_id = $1 AND token = $2 AND expires_at_ms != 0
                 """,
-                resolved_run_id,
+                self._storage_key(resolved_run_id),
                 resolved_token,
             )
             return status == "UPDATE 1"
-        finally:
-            await connection.close()
 
     async def get(self, run_id: str) -> WorkflowExecutionLease | None:
         resolved_run_id = _validate_non_empty(run_id, "lease run_id")
-        connection = await self._connect()
-        try:
+        async with self._connection() as connection:
             row = await connection.fetchrow(
                 f"SELECT * FROM {self._leases_table} WHERE run_id = $1",
-                resolved_run_id,
+                self._storage_key(resolved_run_id),
             )
-            return self._lease_from_row(row)
-        finally:
-            await connection.close()
+            return self._lease_from_row(row, run_id=resolved_run_id)
+
+    async def validate(
+        self,
+        run_id: str,
+        *,
+        token: str,
+        fencing_token: int,
+        now_ms: int | None = None,
+    ) -> bool:
+        resolved_run_id, resolved_token = _validate_lease_token(run_id, token)
+        resolved_fence = _validate_non_negative_integer(fencing_token, "lease fencing_token")
+        async with self._connection() as connection:
+            effective_now = await self._effective_now(connection, now_ms)
+            row = await connection.fetchrow(
+                f"""
+                SELECT 1
+                FROM {self._leases_table}
+                WHERE run_id = $1 AND token = $2 AND fencing_token = $3 AND expires_at_ms > $4
+                """,
+                self._storage_key(resolved_run_id),
+                resolved_token,
+                resolved_fence,
+                effective_now,
+            )
+            return row is not None
 
 
 def create_in_memory_workflow_checkpoint_store() -> InMemoryWorkflowCheckpointStore:
@@ -1529,16 +1963,38 @@ def create_sqlite_workflow_lease_manager(
 
 
 def create_postgres_workflow_checkpoint_store(
-    dsn: str,
+    dsn: str | None = None,
     *,
     table_prefix: str = "zhivex_ai",
+    namespace: str = "default",
+    pool: Any | None = None,
+    pool_min_size: int = 1,
+    pool_max_size: int = 5,
 ) -> PostgresWorkflowCheckpointStore:
-    return PostgresWorkflowCheckpointStore(dsn, table_prefix=table_prefix)
+    return PostgresWorkflowCheckpointStore(
+        dsn,
+        table_prefix=table_prefix,
+        namespace=namespace,
+        pool=pool,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+    )
 
 
 def create_postgres_workflow_lease_manager(
-    dsn: str,
+    dsn: str | None = None,
     *,
     table_prefix: str = "zhivex_ai",
+    namespace: str = "default",
+    pool: Any | None = None,
+    pool_min_size: int = 1,
+    pool_max_size: int = 5,
 ) -> PostgresWorkflowLeaseManager:
-    return PostgresWorkflowLeaseManager(dsn, table_prefix=table_prefix)
+    return PostgresWorkflowLeaseManager(
+        dsn,
+        table_prefix=table_prefix,
+        namespace=namespace,
+        pool=pool,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+    )

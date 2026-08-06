@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Literal, cast
 
+from pydantic import BaseModel, ConfigDict
+
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1]
 if str(EXAMPLES_ROOT) not in sys.path:
     sys.path.insert(0, str(EXAMPLES_ROOT))
@@ -16,9 +18,13 @@ load_dotenv_if_available()
 
 from zhivex_ai import (  # noqa: E402
     AudioInput,
+    FilePart,
+    ModelMessage,
     ReasoningConfig,
+    TextPart,
     create_qwen,
     embed,
+    generate_object,
     generate_speech,
     generate_text,
     qwen_web_search_tool,
@@ -26,6 +32,13 @@ from zhivex_ai import (  # noqa: E402
 )
 
 QwenRegion = Literal["intl", "us", "cn"]
+
+
+class QwenSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    key_capability: str
 
 
 def _env(name: str, default: str) -> str:
@@ -40,20 +53,44 @@ async def main() -> None:
         base_url=os.getenv("QWEN_BASE_URL"),
         responses_base_url=os.getenv("QWEN_RESPONSES_BASE_URL"),
     )
-    chat_model = _env("QWEN_MODEL", "qwen3.7-plus")
+    chat_model = _env("QWEN_MODEL", "qwen3.8-max")
 
     chat = await generate_text(
         model=qwen.native.language_model(chat_model),
         prompt="Explain Qwen support in Zhivex AI SDK in one sentence.",
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="medium"),
     )
     print("chat:", chat.text)
+
+    structured = await generate_object(
+        model=qwen.native.language_model(chat_model),
+        prompt="Summarize Qwen3.8-Max support and name its main multimodal capability.",
+        schema=QwenSummary,
+    )
+    print("structured:", structured.object.model_dump())
+
+    video_url = os.getenv("QWEN_VIDEO_URL")
+    if video_url:
+        video = await generate_text(
+            model=qwen.native.language_model(chat_model),
+            messages=[
+                ModelMessage(
+                    role="user",
+                    parts=[
+                        TextPart(text="Describe this video in one sentence."),
+                        FilePart(url=video_url, media_type=_env("QWEN_VIDEO_MEDIA_TYPE", "video/mp4")),
+                    ],
+                )
+            ],
+            reasoning=ReasoningConfig(effort="medium"),
+        )
+        print("video:", video.text)
 
     search = await generate_text(
         model=qwen.native.language_model(chat_model),
         prompt="Summarize Alibaba Cloud Model Studio hosted tools in one sentence.",
         tools={"search": qwen_web_search_tool()},
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=ReasoningConfig(effort="medium"),
     )
     print("hosted tool:", search.text)
 

@@ -372,12 +372,12 @@ def _map_qwen_message_content(message: ModelMessage) -> str | list[dict[str, Any
     for part in message.parts:
         if part.type == "text":
             text_chunks.append(part.text)
-            content.append({"type": "input_text", "text": part.text})
+            content.append({"type": "text", "text": part.text})
         elif part.type == "image":
-            content.append({"type": "input_image", "image_url": part.image})
+            content.append({"type": "image_url", "image_url": {"url": part.image}})
         elif part.type == "file":
             content.append(_map_file_part(part))
-    if content and all(item.get("type") == "input_text" for item in content):
+    if content and all(item.get("type") == "text" for item in content):
         return "".join(text_chunks)
     return content
 
@@ -834,8 +834,16 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
     return {"effort": input.reasoning.effort}
 
 
-def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
+def _qwen_reasoning_options(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
     if input.reasoning is None:
+        if model_id.strip().lower() == "qwen3.8-max" and (
+            input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
+        ):
+            # Qwen3.8-Max reasons at xhigh by default, while forced tool choice
+            # requires non-thinking mode. Preserve the portable tool-choice
+            # contract by disabling thinking when the caller did not select an
+            # explicit reasoning mode.
+            return {"reasoning": {"effort": "none"}}
         return {}
     if input.reasoning.budget_tokens is not None:
         raise UnsupportedFeatureError('Provider "qwen" does not support "reasoning.budgetTokens" through the Responses API.')
@@ -844,7 +852,11 @@ def _qwen_reasoning_options(input: ModelGenerateInput) -> dict[str, Any]:
     return {"reasoning": {"effort": input.reasoning.effort}}
 
 
-def _validate_qwen_responses_tools(input: ModelGenerateInput, mapped_tools: list[dict[str, Any]]) -> None:
+def _validate_qwen_responses_tools(
+    model_id: str,
+    input: ModelGenerateInput,
+    mapped_tools: list[dict[str, Any]],
+) -> None:
     tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
     reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
     thinking_enabled = reasoning_effort not in {None, "none"}
@@ -1024,7 +1036,7 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
     if provider_name == "qwen":
-        _validate_qwen_responses_tools(input, merged_tools)
+        _validate_qwen_responses_tools(model_id, input, merged_tools)
     if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
         raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')
     body = {
@@ -1039,7 +1051,7 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         "reasoning": None if provider_name == "qwen" else _map_reasoning(input, provider_name),
         "parallel_tool_calls": None if provider_name == "qwen" else True if merged_tools else None,
         **provider_options,
-        **(_qwen_reasoning_options(input) if provider_name == "qwen" else {}),
+        **(_qwen_reasoning_options(model_id, input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
     return drop_none(body)
@@ -2953,6 +2965,12 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                 payload = json.loads(event.data)
                 if payload.get("type") == "response.output_text.delta":
                     yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
+                    continue
+                if payload.get("type") in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_summary_text.done",
+                }:
+                    yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(payload))
                     continue
                 if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
                     item = payload.get("item") or {}

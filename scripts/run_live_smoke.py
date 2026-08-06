@@ -169,6 +169,7 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
         max_steps=3,
         temperature=generation_options["temperature"],
         max_tokens=generation_options["max_tokens"],
+        reasoning=ReasoningConfig(effort="none") if provider == "qwen" else None,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=30_000,
@@ -417,6 +418,7 @@ async def _run_qwen() -> tuple[str, bool, str, bool]:
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly QWEN_SMOKE_OK.",
+        reasoning=ReasoningConfig(effort="none"),
         max_tokens=20,
         max_retries=1,
         retry_backoff_ms=250,

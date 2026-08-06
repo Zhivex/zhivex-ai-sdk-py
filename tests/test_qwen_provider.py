@@ -20,8 +20,10 @@ if str(SRC) not in sys.path:
 from zhivex_ai import (
     AudioInput,
     ConfigurationError,
+    FilePart,
     ImagePart,
     ModelMessage,
+    ProviderDataPart,
     ReasoningConfig,
     TextPart,
     ToolChoiceName,
@@ -29,13 +31,16 @@ from zhivex_ai import (
     ValidationError,
     create_qwen,
     embed,
+    generate_object,
     generate_speech,
     generate_text,
     qwen_code_interpreter_tool,
     qwen_file_search_tool,
+    qwen_image_search_tool,
     qwen_mcp_tool,
     qwen_web_extractor_tool,
     qwen_web_search_tool,
+    qwen_web_search_image_tool,
     stream_text,
     tool,
     transcribe_audio,
@@ -73,6 +78,12 @@ class FakeResponse:
 class WeatherToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     city: str
+
+
+class Forecast(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: str
+    summary: str
 
 
 class QwenProviderTests(IsolatedAsyncioTestCase):
@@ -201,7 +212,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["json"]["previous_response_id"], "resp_previous")
         self.assertEqual(requests[0]["json"]["conversation"], "conv_123")
 
-    async def test_qwen_maps_mixed_multimodal_content_to_responses_input_types(self) -> None:
+    async def test_qwen_maps_mixed_multimodal_content_to_current_responses_input_types(self) -> None:
         requests: list[dict[str, Any]] = []
 
         async def fetch(
@@ -226,27 +237,217 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
             )
 
         provider = create_qwen(api_key="test", fetch=fetch)
+        for model_id in ("qwen3.7-max-2026-06-08", "qwen3.8-max"):
+            with self.subTest(model_id=model_id):
+                result = await generate_text(
+                    model=provider.native.language_model(model_id),
+                    messages=[
+                        ModelMessage(
+                            role="user",
+                            parts=[
+                                TextPart(text="What color is this?"),
+                                ImagePart(image="data:image/png;base64,iVBORw0KGgo="),
+                            ],
+                        )
+                    ],
+                )
+
+                self.assertEqual(result.text, "blue")
+                self.assertEqual(
+                    requests[-1]["json"]["input"][0]["content"],
+                    [
+                        {"type": "text", "text": "What color is this?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    requests[-1]["url"],
+                    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+                )
+
+    async def test_qwen38_routes_json_schema_output_to_non_thinking_chat(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"city":"Buenos Aires","summary":"sunny"}',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12},
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        result = await generate_object(
+            model=provider.native.language_model("qwen3.8-max"),
+            prompt="Return the weather.",
+            schema=Forecast,
+        )
+
+        self.assertEqual(result.object.summary, "sunny")
+        self.assertEqual(
+            requests[0]["url"],
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        )
+        self.assertFalse(requests[0]["json"]["enable_thinking"])
+        self.assertEqual(requests[0]["json"]["response_format"]["type"], "json_schema")
+        self.assertEqual(
+            requests[0]["json"]["response_format"]["json_schema"]["schema"]["properties"].keys(),
+            {"city", "summary"},
+        )
+
+    async def test_qwen38_rejects_thinking_structured_output_before_fetch(self) -> None:
+        fetch = AsyncMock()
+        provider = create_qwen(api_key="test", fetch=fetch)
+
+        with self.assertRaisesRegex(UnsupportedFeatureError, "structured output requires"):
+            await generate_object(
+                model=provider.native.language_model("qwen3.8-max"),
+                prompt="Return the weather.",
+                schema=Forecast,
+                reasoning=ReasoningConfig(effort="high"),
+            )
+
+        fetch.assert_not_called()
+
+    async def test_qwen38_routes_video_file_parts_to_chat(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "A short demo."},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        model = provider.native.language_model("qwen3.8-max")
+        self.assertTrue(model.capabilities.files)
         result = await generate_text(
-            model=provider.native.language_model("qwen3.7-max-2026-06-08"),
+            model=model,
             messages=[
                 ModelMessage(
                     role="user",
                     parts=[
-                        TextPart(text="What color is this?"),
-                        ImagePart(image="data:image/png;base64,iVBORw0KGgo="),
+                        TextPart(text="Describe this video."),
+                        FilePart(url="https://example.com/demo.mp4", media_type="video/mp4"),
                     ],
                 )
             ],
+            reasoning=ReasoningConfig(effort="medium"),
         )
 
-        self.assertEqual(result.text, "blue")
+        self.assertEqual(result.text, "A short demo.")
+        self.assertTrue(requests[0]["url"].endswith("/chat/completions"))
         self.assertEqual(
-            requests[0]["json"]["input"][0]["content"],
+            requests[0]["json"]["messages"][0]["content"],
             [
-                {"type": "input_text", "text": "What color is this?"},
-                {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo="},
+                {"type": "text", "text": "Describe this video."},
+                {
+                    "type": "video_url",
+                    "video_url": {"url": "https://example.com/demo.mp4"},
+                },
             ],
         )
+        self.assertEqual(requests[0]["json"]["reasoning_effort"], "medium")
+        self.assertTrue(requests[0]["json"]["enable_thinking"])
+
+    async def test_qwen38_routes_reasoning_budgets_to_chat_and_preserves_history(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "reasoning_content": "new reasoning",
+                                "content": "done",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        result = await generate_text(
+            model=provider.native.language_model("qwen3.8-max"),
+            messages=[
+                ModelMessage(
+                    role="assistant",
+                    parts=[
+                        TextPart(text="previous answer"),
+                        ProviderDataPart(
+                            provider="qwen",
+                            data={"reasoning_content": "previous reasoning"},
+                        ),
+                    ],
+                ),
+                ModelMessage(role="user", parts=[TextPart(text="continue")]),
+            ],
+            reasoning=ReasoningConfig(budget_tokens=16_384),
+        )
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(requests[0]["json"]["thinking_budget"], 16_384)
+        self.assertTrue(requests[0]["json"]["enable_thinking"])
+        self.assertEqual(requests[0]["json"]["messages"][0]["reasoning_content"], "previous reasoning")
+        reasoning_parts = [
+            part
+            for part in result.steps[0].response.messages[0].parts
+            if isinstance(part, ProviderDataPart)
+        ]
+        self.assertEqual(reasoning_parts[0].data, {"reasoning_content": "new reasoning"})
 
     async def test_qwen_streams_responses_with_tools_and_provider_data(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -265,6 +466,7 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
+                    'data: {"type":"response.reasoning_summary_text.delta","delta":"thinking"}\n\n'
                     'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
                     'data: {"type":"response.output_text.delta","delta":" qwen"}\n\n'
                     'data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"search_1","action":{"query":"Alibaba Cloud"}}}\n\n'
@@ -289,7 +491,15 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(requests[0]["json"]["stream"])
         self.assertEqual(requests[0]["json"]["previous_response_id"], "resp_previous")
         self.assertEqual(requests[0]["json"]["tools"][0]["type"], "web_search")
-        self.assertTrue(any(event.type == "provider-data" for event in events))
+        provider_events = [event for event in events if event.type == "provider-data"]
+        self.assertTrue(provider_events)
+        self.assertTrue(
+            any(
+                isinstance(event.data, dict)
+                and event.data.get("type") == "response.reasoning_summary_text.delta"
+                for event in provider_events
+            )
+        )
 
     async def test_qwen_keeps_embeddings_on_openai_compatible_endpoint(self) -> None:
         requests: list[dict[str, Any]] = []
@@ -337,6 +547,8 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                     "output": [
                         {"type": "reasoning", "summary": [{"text": "thinking"}]},
                         {"type": "web_search_call", "id": "search_1", "action": {"query": "Alibaba Cloud"}},
+                        {"type": "web_search_image_call", "id": "t2i_1", "action": {"query": "Qwen logo"}},
+                        {"type": "image_search_call", "id": "i2i_1", "action": {"image_url": "https://example.com/logo.png"}},
                         {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
                     ],
                 },
@@ -350,6 +562,8 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                 "search": qwen_web_search_tool(),
                 "extract": qwen_web_extractor_tool(),
                 "code": qwen_code_interpreter_tool(),
+                "t2i": qwen_web_search_image_tool(),
+                "i2i": qwen_image_search_tool(),
                 "files": qwen_file_search_tool(vector_store_ids=["vs_123"]),
                 "weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"ok": True}),
             },
@@ -359,14 +573,29 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "done")
         self.assertEqual(
             [item["type"] for item in requests[0]["json"]["tools"]],
-            ["web_search", "web_extractor", "code_interpreter", "file_search", "function"],
+            [
+                "web_search",
+                "web_extractor",
+                "code_interpreter",
+                "web_search_image",
+                "image_search",
+                "file_search",
+                "function",
+            ],
         )
-        self.assertEqual(requests[0]["json"]["tools"][3]["vector_store_ids"], ["vs_123"])
+        self.assertEqual(requests[0]["json"]["tools"][5]["vector_store_ids"], ["vs_123"])
         self.assertNotIn("tool_choice", requests[0]["json"])
         self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "high"})
         self.assertNotIn("enable_thinking", requests[0]["json"])
         provider_parts = [part for part in result.steps[0].response.messages[0].parts if getattr(part, "type", None) == "provider-data"]
         self.assertEqual(provider_parts[0].provider, "qwen")
+        managed_calls = [
+            part.tool_call.name
+            for part in result.steps[0].response.messages[0].parts
+            if getattr(part, "type", None) == "tool-call"
+        ]
+        self.assertIn("web_search_image", managed_calls)
+        self.assertIn("image_search", managed_calls)
 
     async def test_qwen_rejects_invalid_hosted_tool_combinations_before_fetch(self) -> None:
         fetch = AsyncMock()
@@ -531,13 +760,58 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
         for effort in efforts:
             await generate_text(
-                model=provider.native.language_model("qwen3.7-plus"),
+                model=provider.native.language_model("qwen3.8-max"),
                 prompt="hello",
                 reasoning=ReasoningConfig(effort=effort),  # type: ignore[arg-type]
             )
 
         self.assertEqual([request["reasoning"]["effort"] for request in requests], efforts)
         self.assertTrue(all("enable_thinking" not in request for request in requests))
+
+    async def test_qwen38_disables_default_thinking_for_forced_tool_choice(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "ok"}],
+                        }
+                    ],
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("qwen3.8-max"),
+            prompt="weather",
+            tools={
+                "weather": tool(
+                    name="weather",
+                    schema=WeatherToolInput,
+                    execute=lambda input: {"ok": True},
+                )
+            },
+            tool_choice=ToolChoiceName(tool_name="weather"),
+        )
+
+        self.assertTrue(requests[0]["url"].endswith("/responses"))
+        self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "none"})
 
     async def test_qwen_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
