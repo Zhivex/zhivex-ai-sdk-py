@@ -15,7 +15,15 @@ from uuid import uuid4
 
 from .agent import AgentObserver, AgentRunResult, AgentSession, create_agent_session, resume_agent_run, run_agent
 from .agent_state import AgentChildRun, AgentRunState, AgentRunStep, AgentRunStore
-from .errors import ProviderHTTPError, ValidationError
+from .errors import (
+    ProviderHTTPError,
+    ValidationError,
+    WorkflowConflictError,
+    WorkflowDefinitionMismatchError,
+    WorkflowInterruptError,
+    WorkflowLeaseLostError,
+    WorkflowRunNotFoundError,
+)
 from .types import JsonValue
 from .workflow import (
     WorkflowRetryPolicy,
@@ -86,10 +94,17 @@ class WorkflowContext:
 
 @dataclass(slots=True, frozen=True)
 class WorkflowEdge:
+    """A directed workflow edge with optional application-owned identity.
+
+    Set ``definition_revision`` when the condition depends on configuration or
+    closure values that cannot be represented reliably by its Python source.
+    """
+
     source: str
     target: str
     condition: WorkflowEdgeCondition | None = None
     name: str | None = None
+    definition_revision: str | None = None
 
     @property
     def id(self) -> str:
@@ -152,8 +167,17 @@ class WorkflowBuilder:
         *,
         condition: WorkflowEdgeCondition | None = None,
         name: str | None = None,
+        definition_revision: str | None = None,
     ) -> WorkflowBuilder:
-        self._edges.append(WorkflowEdge(source=source, target=target, condition=condition, name=name))
+        self._edges.append(
+            WorkflowEdge(
+                source=source,
+                target=target,
+                condition=condition,
+                name=name,
+                definition_revision=definition_revision,
+            )
+        )
         return self
 
     def interrupt_before(self, step_name: str, *, reason: str | None = None) -> WorkflowBuilder:
@@ -268,6 +292,10 @@ class WorkflowGraph:
         if len(set(edge_ids)) != len(edge_ids):
             raise ValidationError("WorkflowGraph edge names must be unique.")
         for edge in self.edges:
+            self._validate_definition_revision(
+                edge.definition_revision,
+                owner=f'Workflow edge "{edge.id}"',
+            )
             if edge.source not in self._steps or edge.target not in self._steps:
                 raise ValidationError(
                     f'Workflow edge "{edge.id}" references an unknown source or target step.'
@@ -305,6 +333,10 @@ class WorkflowGraph:
                     "WorkflowGraph.lease_heartbeat_ms must be a positive integer smaller than lease_ttl_ms."
                 )
         for step in self.steps:
+            self._validate_definition_revision(
+                step.definition_revision,
+                owner=f'Workflow step "{step.name}"',
+            )
             self._validate_durable_payload(step.metadata)
             if self.adapter is not None:
                 if not step.executor_ref:
@@ -329,6 +361,11 @@ class WorkflowGraph:
                 + "."
             )
         self._validate_acyclic()
+
+    @staticmethod
+    def _validate_definition_revision(value: str | None, *, owner: str) -> None:
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValidationError(f"{owner}.definition_revision must be a non-empty string when set.")
 
     def _validate_acyclic(self) -> None:
         outgoing: dict[str, list[str]] = {name: [] for name in self._steps}
@@ -368,44 +405,52 @@ class WorkflowGraph:
             )
 
     def _definition_digest(self) -> str:
+        steps: list[dict[str, Any]] = []
+        for step in self.steps:
+            step_payload: dict[str, Any] = {
+                "name": step.name,
+                "agent": step.agent.name if step.agent is not None else None,
+                "executor": _callable_identity(step.executor),
+                "prompt": step.prompt,
+                "input_template": step.input_template,
+                "output_key": step.output_key,
+                "metadata_key": step.metadata_key,
+                "error_policy": step.error_policy,
+                "timeout_ms": step.timeout_ms,
+                "max_retries": step.max_retries,
+                "executor_ref": step.executor_ref,
+                "idempotency_key": step.idempotency_key,
+                "metadata": step.metadata,
+                "retry": {
+                    "max_attempts": step.retry_policy.max_attempts,
+                    "backoff_ms": step.retry_policy.backoff_ms,
+                    "max_backoff_ms": step.retry_policy.max_backoff_ms,
+                    "retry_if": _callable_identity(step.retry_policy.retry_if),
+                }
+                if step.retry_policy is not None
+                else None,
+            }
+            if step.definition_revision is not None:
+                step_payload["definition_revision"] = step.definition_revision
+            steps.append(step_payload)
+
+        edges: list[dict[str, Any]] = []
+        for edge in self.edges:
+            edge_payload: dict[str, Any] = {
+                "id": edge.id,
+                "source": edge.source,
+                "target": edge.target,
+                "condition": _callable_identity(edge.condition),
+            }
+            if edge.definition_revision is not None:
+                edge_payload["definition_revision"] = edge.definition_revision
+            edges.append(edge_payload)
+
         payload = {
             "name": self.name,
             "version": self.definition_version,
-            "steps": [
-                {
-                    "name": step.name,
-                    "agent": step.agent.name if step.agent is not None else None,
-                    "executor": _callable_identity(step.executor),
-                    "prompt": step.prompt,
-                    "input_template": step.input_template,
-                    "output_key": step.output_key,
-                    "metadata_key": step.metadata_key,
-                    "error_policy": step.error_policy,
-                    "timeout_ms": step.timeout_ms,
-                    "max_retries": step.max_retries,
-                    "executor_ref": step.executor_ref,
-                    "idempotency_key": step.idempotency_key,
-                    "metadata": step.metadata,
-                    "retry": {
-                        "max_attempts": step.retry_policy.max_attempts,
-                        "backoff_ms": step.retry_policy.backoff_ms,
-                        "max_backoff_ms": step.retry_policy.max_backoff_ms,
-                        "retry_if": _callable_identity(step.retry_policy.retry_if),
-                    }
-                    if step.retry_policy is not None
-                    else None,
-                }
-                for step in self.steps
-            ],
-            "edges": [
-                {
-                    "id": edge.id,
-                    "source": edge.source,
-                    "target": edge.target,
-                    "condition": _callable_identity(edge.condition),
-                }
-                for edge in self.edges
-            ],
+            "steps": steps,
+            "edges": edges,
             "entrypoints": self.entrypoints,
             "interrupt_before": self._interrupt_before,
             "interrupt_after": self._interrupt_after,
@@ -420,18 +465,27 @@ class WorkflowGraph:
         if guard is None or guard.graph_identity != id(self):
             return
         if guard.lost.is_set() or self.lease_manager is None:
-            raise ValidationError(
+            raise WorkflowLeaseLostError(
                 f'Workflow execution lease for run "{guard.lease.run_id}" was lost; refusing stale worker progress.'
             )
-        current = await self.lease_manager.get(guard.lease.run_id)
-        if (
-            current is None
-            or current.token != guard.lease.token
-            or current.fencing_token != guard.lease.fencing_token
-            or current.is_expired()
-        ):
+        validate = getattr(self.lease_manager, "validate", None)
+        if callable(validate):
+            valid = await validate(
+                guard.lease.run_id,
+                token=guard.lease.token,
+                fencing_token=guard.lease.fencing_token,
+            )
+        else:
+            current = await self.lease_manager.get(guard.lease.run_id)
+            valid = (
+                current is not None
+                and current.token == guard.lease.token
+                and current.fencing_token == guard.lease.fencing_token
+                and not current.is_expired()
+            )
+        if not valid:
             guard.lost.set()
-            raise ValidationError(
+            raise WorkflowLeaseLostError(
                 f'Workflow execution lease for run "{guard.lease.run_id}" was lost; refusing stale worker progress.'
             )
 
@@ -494,7 +548,7 @@ class WorkflowGraph:
         if lease is None:
             current = await lease_manager.get(run_id)
             owner = current.owner_id if current is not None and not current.is_expired() else "another worker"
-            raise ValidationError(
+            raise WorkflowConflictError(
                 f'Workflow run "{run_id}" has an active execution lease owned by "{owner}".'
             )
 
@@ -562,14 +616,16 @@ class WorkflowGraph:
                 if existing.status in {"completed", "failed", "suspended", "cancelled"}:
                     return await self._result(existing, session=session)
                 if not recover_running:
-                    raise ValidationError(
+                    raise WorkflowConflictError(
                         f'Workflow run "{existing.run_id}" is still running. Pass recover_running=True only '
                         "after reconciling that the prior worker is no longer active."
                     )
                 async def recover_and_execute() -> WorkflowRunResult:
                     current = await self.checkpoint_store.load_latest(existing.run_id)
                     if current is None:
-                        raise ValidationError(f'Workflow run "{existing.run_id}" was not found during recovery.')
+                        raise WorkflowRunNotFoundError(
+                            f'Workflow run "{existing.run_id}" was not found during recovery.'
+                        )
                     self._validate_checkpoint(current)
                     recovered = self._recover_running_nodes(current)
                     if recovered is not current:
@@ -626,15 +682,15 @@ class WorkflowGraph:
 
     def _validate_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         if checkpoint.workflow_name != self.name:
-            raise ValidationError(
+            raise WorkflowDefinitionMismatchError(
                 f'Workflow checkpoint belongs to "{checkpoint.workflow_name}", not "{self.name}".'
             )
         if checkpoint.definition_version != self.definition_version:
-            raise ValidationError(
+            raise WorkflowDefinitionMismatchError(
                 "Workflow definition version changed; migrate the checkpoint explicitly before resume."
             )
         if checkpoint.definition_digest != self.definition_digest:
-            raise ValidationError(
+            raise WorkflowDefinitionMismatchError(
                 "Workflow definition digest changed; resume and fork fail closed to avoid choosing a different path."
             )
 
@@ -655,7 +711,6 @@ class WorkflowGraph:
         candidate: WorkflowCheckpoint,
         transition: WorkflowTransition,
     ) -> WorkflowCheckpoint:
-        await self._assert_execution_lease()
         candidate = copy.deepcopy(candidate)
         guard = _ACTIVE_WORKFLOW_LEASE.get()
         if guard is not None and guard.graph_identity == id(self):
@@ -668,10 +723,26 @@ class WorkflowGraph:
         candidate.updated_at_ms = transition.at_ms
         candidate.transition = transition
         try:
+            append_fenced = getattr(self.checkpoint_store, "append_fenced", None)
+            if (
+                guard is not None
+                and guard.graph_identity == id(self)
+                and self.lease_manager is not None
+                and callable(append_fenced)
+            ):
+                return await append_fenced(
+                    candidate,
+                    expected_sequence=current.sequence,
+                    lease_manager=self.lease_manager,
+                    lease=guard.lease,
+                )
+            await self._assert_execution_lease()
             return await self.checkpoint_store.append(candidate, expected_sequence=current.sequence)
-        except ValidationError:
+        except ValidationError as error:
             guard = _ACTIVE_WORKFLOW_LEASE.get()
             if guard is not None and guard.graph_identity == id(self):
+                if isinstance(error, WorkflowLeaseLostError):
+                    guard.lost.set()
                 latest = await self.checkpoint_store.load_latest(current.run_id)
                 if latest is not None and latest.status == "cancelled":
                     raise _WorkflowCancellationObserved(latest) from None
@@ -1512,17 +1583,17 @@ async def _resume_workflow_claimed(
 ) -> WorkflowRunResult:
     checkpoint = await workflow.checkpoint_store.load_latest(run_id)
     if checkpoint is None:
-        raise ValidationError(f'Workflow run "{run_id}" was not found.')
+        raise WorkflowRunNotFoundError(f'Workflow run "{run_id}" was not found.')
     workflow._validate_checkpoint(checkpoint)
     if checkpoint.status != "suspended":
-        raise ValidationError(f'Workflow run "{run_id}" is not suspended.')
+        raise WorkflowInterruptError(f'Workflow run "{run_id}" is not suspended.')
 
     candidate = copy.deepcopy(checkpoint)
     transition_detail: dict[str, JsonValue] = {}
     if candidate.pending_interrupt is not None:
         pending = candidate.pending_interrupt
         if interrupt_id != pending.interrupt_id:
-            raise ValidationError(
+            raise WorkflowInterruptError(
                 f'Workflow interrupt "{pending.interrupt_id}" must be acknowledged explicitly before resume.'
             )
         candidate.resume_values[pending.interrupt_id] = resume_value
@@ -1542,7 +1613,7 @@ async def _resume_workflow_claimed(
         if node_name is not None:
             suspended_nodes = [node for node in suspended_nodes if node.node_name == node_name]
         if len(suspended_nodes) != 1:
-            raise ValidationError(
+            raise WorkflowInterruptError(
                 "Suspended workflow must identify exactly one suspended step; pass node_name when needed."
             )
         node = suspended_nodes[0]
@@ -1572,10 +1643,14 @@ async def _resume_workflow_claimed(
             )
             return await workflow._execute(checkpoint, session=session, deps=deps)
         if not node.child_run_id:
-            raise ValidationError(f'Suspended workflow step "{node.node_name}" has no child run id.')
+            raise WorkflowInterruptError(
+                f'Suspended workflow step "{node.node_name}" has no child run id.'
+            )
         step = workflow._steps[node.node_name]
         if step.agent is None:
-            raise ValidationError(f'Suspended workflow step "{node.node_name}" has no Agent to resume.')
+            raise WorkflowInterruptError(
+                f'Suspended workflow step "{node.node_name}" has no Agent to resume.'
+            )
         step_key = node.idempotency_key or workflow._step_idempotency_key(candidate, step)
         step_agent = replace(
             step.agent,
@@ -1655,7 +1730,7 @@ async def cancel_workflow(
 ) -> WorkflowRunResult:
     checkpoint = await workflow.checkpoint_store.load_latest(run_id)
     if checkpoint is None:
-        raise ValidationError(f'Workflow run "{run_id}" was not found.')
+        raise WorkflowRunNotFoundError(f'Workflow run "{run_id}" was not found.')
     workflow._validate_checkpoint(checkpoint)
     if checkpoint.status in {"completed", "failed", "cancelled"}:
         return await workflow._result(checkpoint, session=session)
@@ -1709,14 +1784,14 @@ async def fork_workflow(
         else await workflow.checkpoint_store.load_latest(run_id)
     )
     if source is None or source.run_id != run_id:
-        raise ValidationError("Workflow fork checkpoint was not found on the requested run.")
+        raise WorkflowRunNotFoundError("Workflow fork checkpoint was not found on the requested run.")
     workflow._validate_checkpoint(source)
     if idempotency_key:
         existing = await workflow.checkpoint_store.find_by_idempotency_key(idempotency_key)
         if existing is not None:
             workflow._validate_checkpoint(existing)
             if existing.status == "running":
-                raise ValidationError(
+                raise WorkflowConflictError(
                     f'Workflow fork run "{existing.run_id}" is still active for this idempotency key.'
                 )
             return await workflow._result(existing, session=session)
@@ -1757,5 +1832,14 @@ async def fork_workflow(
             "forked_from_checkpoint_id": source.checkpoint_id,
         },
     )
-    candidate = await workflow.checkpoint_store.append(candidate)
+    try:
+        candidate = await workflow.checkpoint_store.append(candidate)
+    except WorkflowConflictError:
+        if idempotency_key is None:
+            raise
+        winner = await workflow.checkpoint_store.find_by_idempotency_key(idempotency_key)
+        if winner is None or winner.run_id == candidate.run_id:
+            raise
+        workflow._validate_checkpoint(winner)
+        return await workflow._result(winner, session=session)
     return await workflow._execute_with_optional_lease(candidate, session=session, deps=deps)

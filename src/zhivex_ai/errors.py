@@ -35,6 +35,26 @@ class ValidationError(ZhivexAIError):
     pass
 
 
+class WorkflowConflictError(ValidationError):
+    """Raised when concurrent workflow state cannot be committed safely."""
+
+
+class WorkflowLeaseLostError(WorkflowConflictError):
+    """Raised when a workflow worker no longer owns its execution lease."""
+
+
+class WorkflowDefinitionMismatchError(ValidationError):
+    """Raised when persisted state belongs to a different workflow definition."""
+
+
+class WorkflowRunNotFoundError(ValidationError):
+    """Raised when a requested workflow run or checkpoint cannot be found."""
+
+
+class WorkflowInterruptError(ValidationError):
+    """Raised when a workflow interrupt cannot be resumed safely."""
+
+
 class UnsupportedFeatureError(ZhivexAIError):
     pass
 

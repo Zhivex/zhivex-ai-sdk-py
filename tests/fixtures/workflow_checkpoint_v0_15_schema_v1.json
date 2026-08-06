@@ -1,0 +1,125 @@
+{
+  "checkpoint_schema_version": 1,
+  "checkpoints": [
+    {
+      "checkpoint_id": "wfc_cebdb4324eff461a991e7479d55fb7f8",
+      "created_at_ms": 1786022391281,
+      "definition_digest": "90974584f4e6b21883eb94d9fad8c0c9d8c697a0af85bc7c212e07188f5d0587",
+      "definition_version": "2026-07-31",
+      "edge_decisions": {},
+      "forked_from_checkpoint_id": null,
+      "forked_from_run_id": null,
+      "idempotency_key": null,
+      "metadata": {
+        "completed_order": [],
+        "fixture_producer": "zhivex-ai-sdk==0.15.0",
+        "prompt": "compatibility fixture",
+        "resolved_interrupts": []
+      },
+      "nodes": {
+        "publish": {
+          "attempt": 0,
+          "child_run_id": null,
+          "error": null,
+          "finished_at_ms": null,
+          "idempotency_key": null,
+          "metadata": {},
+          "node_name": "publish",
+          "output": null,
+          "started_at_ms": null,
+          "status": "pending"
+        }
+      },
+      "parent_run_id": null,
+      "pending_interrupt": null,
+      "ready_nodes": [
+        "publish"
+      ],
+      "resume_values": {},
+      "run_id": "wf_f153d79afb664db198e586fca77804d0",
+      "schema_version": 1,
+      "sequence": 0,
+      "session_id": "session_v015_fixture",
+      "state": {
+        "prepared": "prepared-by-v015"
+      },
+      "status": "running",
+      "transition": {
+        "at_ms": 1786022391281,
+        "detail": {},
+        "from_status": null,
+        "node_name": null,
+        "to_status": null,
+        "type": "workflow-start"
+      },
+      "updated_at_ms": 1786022391281,
+      "workflow_name": "compatibility-workflow"
+    },
+    {
+      "checkpoint_id": "wfc_c2c48a0e20b545dbba4b85aba1753a2b",
+      "created_at_ms": 1786022391281,
+      "definition_digest": "90974584f4e6b21883eb94d9fad8c0c9d8c697a0af85bc7c212e07188f5d0587",
+      "definition_version": "2026-07-31",
+      "edge_decisions": {},
+      "forked_from_checkpoint_id": null,
+      "forked_from_run_id": null,
+      "idempotency_key": null,
+      "metadata": {
+        "completed_order": [],
+        "fixture_producer": "zhivex-ai-sdk==0.15.0",
+        "prompt": "compatibility fixture",
+        "resolved_interrupts": []
+      },
+      "nodes": {
+        "publish": {
+          "attempt": 0,
+          "child_run_id": null,
+          "error": null,
+          "finished_at_ms": null,
+          "idempotency_key": null,
+          "metadata": {},
+          "node_name": "publish",
+          "output": null,
+          "started_at_ms": null,
+          "status": "pending"
+        }
+      },
+      "parent_run_id": null,
+      "pending_interrupt": {
+        "created_at_ms": 1786022391281,
+        "interrupt_id": "wfi_e6df90e921c34e5e95c94dfeccdc6a20",
+        "metadata": {},
+        "node_name": "publish",
+        "payload": null,
+        "phase": "before",
+        "reason": "Published v0.15 review"
+      },
+      "ready_nodes": [
+        "publish"
+      ],
+      "resume_values": {},
+      "run_id": "wf_f153d79afb664db198e586fca77804d0",
+      "schema_version": 1,
+      "sequence": 1,
+      "session_id": "session_v015_fixture",
+      "state": {
+        "prepared": "prepared-by-v015"
+      },
+      "status": "suspended",
+      "transition": {
+        "at_ms": 1786022391281,
+        "detail": {
+          "interrupt_id": "wfi_e6df90e921c34e5e95c94dfeccdc6a20",
+          "phase": "before"
+        },
+        "from_status": "pending",
+        "node_name": "publish",
+        "to_status": "suspended",
+        "type": "workflow-interrupt"
+      },
+      "updated_at_ms": 1786022391281,
+      "workflow_name": "compatibility-workflow"
+    }
+  ],
+  "producer": "zhivex-ai-sdk==0.15.0"
+}

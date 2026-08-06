@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import uuid
+from dataclasses import replace
 from unittest import IsolatedAsyncioTestCase, skipUnless
 
 from zhivex_ai import (
@@ -13,9 +14,14 @@ from zhivex_ai import (
     ApprovalDecision,
     PendingApproval,
     ToolApprovalRequest,
+    WorkflowCheckpoint,
     WorkflowBuilder,
+    WorkflowConflictError,
+    WorkflowLeaseLostError,
     WorkflowStep,
+    WorkflowTransition,
     cancel_agent_run,
+    cancel_workflow,
     create_agent_session,
     create_mock_language_model,
     create_postgres_agent_memory_store,
@@ -25,6 +31,7 @@ from zhivex_ai import (
     create_postgres_workflow_lease_manager,
     create_text_message,
     fail_agent_run_resume_claim,
+    fork_workflow,
     resume_agent_run,
     resume_workflow,
     run_agent,
@@ -32,6 +39,7 @@ from zhivex_ai import (
 )
 from zhivex_ai.errors import ValidationError
 from zhivex_ai.types import GenerateResult, ModelGenerateInput, ModelMessage, ToolCall, ToolCallPart
+from zhivex_ai.workflow_state import WORKFLOW_POSTGRES_SCHEMA_VERSION
 
 
 _POSTGRES_DSN = os.getenv("ZHIVEX_TEST_POSTGRES_DSN")
@@ -48,13 +56,20 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
         self.memory = create_postgres_agent_memory_store(self.dsn, table_prefix=self.prefix)
         self.checkpoints = create_postgres_checkpoint_store(self.dsn, table_prefix=self.prefix)
         self.runs = create_postgres_agent_run_store(self.dsn, table_prefix=self.prefix)
+        import asyncpg
+
+        self.workflow_pool = await asyncpg.create_pool(
+            dsn=self.dsn,
+            min_size=1,
+            max_size=8,
+        )
         self.workflow_checkpoints = create_postgres_workflow_checkpoint_store(
-            self.dsn,
             table_prefix=self.prefix,
+            pool=self.workflow_pool,
         )
         self.workflow_leases = create_postgres_workflow_lease_manager(
-            self.dsn,
             table_prefix=self.prefix,
+            pool=self.workflow_pool,
         )
 
     async def asyncTearDown(self) -> None:
@@ -62,6 +77,9 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
             raise AssertionError("refusing to clean Postgres tables for an unsafe integration-test prefix")
         import asyncpg
 
+        await self.workflow_checkpoints.close()
+        await self.workflow_leases.close()
+        await self.workflow_pool.close()
         connection = await asyncpg.connect(self.dsn)
         try:
             for suffix in (
@@ -71,6 +89,7 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
                 "workflow_runs",
                 "workflow_checkpoints",
                 "workflow_leases",
+                "workflow_schema",
             ):
                 table = f'{self.prefix}_{suffix}'
                 await connection.execute(f'DROP TABLE IF EXISTS "{table}"')
@@ -145,7 +164,10 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
                 )
                 .add_edge("draft", "publish")
                 .interrupt_after("draft", reason="integration review")
-                .build(checkpoint_store=self.workflow_checkpoints)
+                .build(
+                    checkpoint_store=self.workflow_checkpoints,
+                    lease_manager=self.workflow_leases,
+                )
             )
 
         suspended = await graph(publish_text="unused").run(
@@ -174,58 +196,356 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
             for _ in range(12)
         ]
 
-        claims = await asyncio.gather(
-            *(
-                manager.acquire(
-                    run_id,
-                    owner_id=f"worker-{index}",
-                    ttl_ms=100,
-                    now_ms=1_000,
+        try:
+            claims = await asyncio.gather(
+                *(
+                    manager.acquire(
+                        run_id,
+                        owner_id=f"worker-{index}",
+                        ttl_ms=100,
+                        now_ms=1_000,
+                    )
+                    for index, manager in enumerate(managers)
                 )
-                for index, manager in enumerate(managers)
             )
-        )
 
-        winners = [lease for lease in claims if lease is not None]
-        self.assertEqual(len(winners), 1)
-        first = winners[0]
-        self.assertEqual(first.fencing_token, 1)
+            winners = [lease for lease in claims if lease is not None]
+            self.assertEqual(len(winners), 1)
+            first = winners[0]
+            self.assertEqual(first.fencing_token, 1)
 
-        renewed = await self.workflow_leases.renew(
-            run_id,
-            token=first.token,
-            ttl_ms=100,
-            now_ms=1_050,
-        )
-        assert renewed is not None
-        self.assertEqual(renewed.expires_at_ms, 1_150)
-        self.assertIsNone(
-            await self.workflow_leases.renew(
+            renewed = await self.workflow_leases.renew(
                 run_id,
-                token="stale-token",
+                token=first.token,
                 ttl_ms=100,
-                now_ms=1_060,
+                now_ms=1_050,
             )
-        )
-        self.assertIsNone(
-            await self.workflow_leases.acquire(
+            assert renewed is not None
+            self.assertEqual(renewed.expires_at_ms, 1_150)
+            self.assertIsNone(
+                await self.workflow_leases.renew(
+                    run_id,
+                    token="stale-token",
+                    ttl_ms=100,
+                    now_ms=1_060,
+                )
+            )
+            self.assertIsNone(
+                await self.workflow_leases.acquire(
+                    run_id,
+                    owner_id="early-worker",
+                    ttl_ms=100,
+                    now_ms=1_149,
+                )
+            )
+
+            replacement = await self.workflow_leases.acquire(
                 run_id,
-                owner_id="early-worker",
+                owner_id="replacement-worker",
                 ttl_ms=100,
-                now_ms=1_149,
+                now_ms=1_150,
             )
+            assert replacement is not None
+            self.assertEqual(replacement.fencing_token, 2)
+            self.assertFalse(await self.workflow_leases.release(run_id, token=first.token))
+            self.assertTrue(await self.workflow_leases.release(run_id, token=replacement.token))
+        finally:
+            await asyncio.gather(*(manager.close() for manager in managers))
+
+    async def test_workflow_fenced_append_rejects_stale_postgres_owner(self) -> None:
+        run_id = f"{self.prefix}-fenced-append"
+        initial = WorkflowCheckpoint(
+            checkpoint_id=f"{run_id}-cp-0",
+            run_id=run_id,
+            workflow_name="postgres-fencing",
+            definition_version="1",
+            definition_digest="digest-1",
+            idempotency_key=f"{run_id}-key",
+            transition=WorkflowTransition(type="workflow-start", at_ms=1),
+        )
+        await self.workflow_checkpoints.append(initial)
+        first = await self.workflow_leases.acquire(run_id, owner_id="worker-a", ttl_ms=10_000)
+        assert first is not None
+        self.assertTrue(await self.workflow_leases.release(run_id, token=first.token))
+        replacement_lease = await self.workflow_leases.acquire(
+            run_id,
+            owner_id="worker-b",
+            ttl_ms=10_000,
+        )
+        assert replacement_lease is not None
+        candidate = replace(
+            initial,
+            checkpoint_id=f"{run_id}-cp-1",
+            sequence=1,
+            transition=WorkflowTransition(type="workflow-progress", at_ms=2),
         )
 
-        replacement = await self.workflow_leases.acquire(
-            run_id,
-            owner_id="replacement-worker",
-            ttl_ms=100,
-            now_ms=1_150,
+        with self.assertRaises(WorkflowLeaseLostError):
+            await self.workflow_checkpoints.append_fenced(
+                candidate,
+                expected_sequence=0,
+                lease_manager=self.workflow_leases,
+                lease=first,
+            )
+        latest = await self.workflow_checkpoints.load_latest(run_id)
+        assert latest is not None
+        self.assertEqual(latest.sequence, 0)
+
+        committed = await self.workflow_checkpoints.append_fenced(
+            candidate,
+            expected_sequence=0,
+            lease_manager=self.workflow_leases,
+            lease=replacement_lease,
         )
-        assert replacement is not None
-        self.assertEqual(replacement.fencing_token, 2)
-        self.assertFalse(await self.workflow_leases.release(run_id, token=first.token))
-        self.assertTrue(await self.workflow_leases.release(run_id, token=replacement.token))
+        self.assertEqual(committed.sequence, 1)
+
+    async def test_workflow_postgres_uses_server_clock_schema_version_and_namespaces(self) -> None:
+        run_id = f"{self.prefix}-namespace-run"
+        async with self.workflow_pool.acquire() as connection:
+            before_ms = int(
+                await connection.fetchval(
+                    "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT"
+                )
+            )
+        lease = await self.workflow_leases.acquire(run_id, owner_id="clock-worker", ttl_ms=10_000)
+        assert lease is not None
+        async with self.workflow_pool.acquire() as connection:
+            after_ms = int(
+                await connection.fetchval(
+                    "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT"
+                )
+            )
+        self.assertLessEqual(before_ms, lease.acquired_at_ms)
+        self.assertLessEqual(lease.acquired_at_ms, after_ms)
+
+        tenant_a_store = create_postgres_workflow_checkpoint_store(
+            table_prefix=self.prefix,
+            namespace="tenant-a",
+            pool=self.workflow_pool,
+        )
+        tenant_b_store = create_postgres_workflow_checkpoint_store(
+            table_prefix=self.prefix,
+            namespace="tenant-b",
+            pool=self.workflow_pool,
+        )
+        tenant_a_leases = create_postgres_workflow_lease_manager(
+            table_prefix=self.prefix,
+            namespace="tenant-a",
+            pool=self.workflow_pool,
+        )
+        tenant_b_leases = create_postgres_workflow_lease_manager(
+            table_prefix=self.prefix,
+            namespace="tenant-b",
+            pool=self.workflow_pool,
+        )
+        shared = WorkflowCheckpoint(
+            checkpoint_id="shared-cp",
+            run_id="shared-run",
+            workflow_name="namespaced",
+            definition_version="1",
+            definition_digest="digest-1",
+            idempotency_key="shared-key",
+        )
+        await tenant_a_store.append(shared)
+        await tenant_b_store.append(shared)
+        tenant_a_lease = await tenant_a_leases.acquire(
+            "shared-run",
+            owner_id="tenant-a-worker",
+            ttl_ms=10_000,
+        )
+        tenant_b_lease = await tenant_b_leases.acquire(
+            "shared-run",
+            owner_id="tenant-b-worker",
+            ttl_ms=10_000,
+        )
+        assert tenant_a_lease is not None and tenant_b_lease is not None
+        self.assertEqual(tenant_a_lease.fencing_token, 1)
+        self.assertEqual(tenant_b_lease.fencing_token, 1)
+        self.assertEqual((await tenant_a_store.load_latest("shared-run")).checkpoint_id, "shared-cp")
+        self.assertEqual((await tenant_b_store.load_latest("shared-run")).checkpoint_id, "shared-cp")
+
+        await tenant_a_store.close()
+        await tenant_b_store.close()
+        await tenant_a_leases.close()
+        await tenant_b_leases.close()
+        async with self.workflow_pool.acquire() as connection:
+            versions = await connection.fetch(
+                f'SELECT component, version FROM "{self.prefix}_workflow_schema" ORDER BY component'
+            )
+            still_open = await connection.fetchval("SELECT 1")
+        self.assertEqual(
+            [(row["component"], row["version"]) for row in versions],
+            [("checkpoint", WORKFLOW_POSTGRES_SCHEMA_VERSION), ("lease", WORKFLOW_POSTGRES_SCHEMA_VERSION)],
+        )
+        self.assertEqual(still_open, 1)
+
+    async def test_active_workflow_worker_observes_postgres_cancellation(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_step(_context):
+            started.set()
+            await release.wait()
+            return "late-result"
+
+        graph = (
+            WorkflowBuilder("postgres-workflow-cancel")
+            .add_step(WorkflowStep("work", executor=slow_step, output_key="result"), entrypoint=True)
+            .build(
+                checkpoint_store=self.workflow_checkpoints,
+                lease_manager=self.workflow_leases,
+            )
+        )
+        key = f"{self.prefix}-workflow-cancel"
+        worker = asyncio.create_task(graph.run(idempotency_key=key))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        running = await self.workflow_checkpoints.find_by_idempotency_key(key)
+        assert running is not None
+
+        try:
+            cancelled = await cancel_workflow(graph, running.run_id, reason="operator-stop")
+        finally:
+            release.set()
+        worker_result = await worker
+
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(worker_result.status, "cancelled")
+        self.assertNotIn("result", worker_result.state)
+
+    async def test_concurrent_postgres_resume_is_lease_serialized(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def reviewed_step(_context):
+            started.set()
+            await release.wait()
+            return "approved"
+
+        graph = (
+            WorkflowBuilder("postgres-concurrent-resume")
+            .add_step(
+                WorkflowStep("review", executor=reviewed_step, output_key="decision"),
+                entrypoint=True,
+            )
+            .interrupt_before("review")
+            .build(
+                checkpoint_store=self.workflow_checkpoints,
+                lease_manager=self.workflow_leases,
+            )
+        )
+        suspended = await graph.run(idempotency_key=f"{self.prefix}-resume-source")
+        pending = suspended.checkpoint.pending_interrupt
+        assert pending is not None
+        winner = asyncio.create_task(
+            resume_workflow(
+                graph,
+                suspended.run_id,
+                interrupt_id=pending.interrupt_id,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        try:
+            with self.assertRaises(WorkflowConflictError):
+                await resume_workflow(
+                    graph,
+                    suspended.run_id,
+                    interrupt_id=pending.interrupt_id,
+                )
+        finally:
+            release.set()
+        completed = await winner
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.state["decision"], "approved")
+
+    async def test_concurrent_postgres_forks_claim_one_idempotent_run(self) -> None:
+        async def complete(_context):
+            return "done"
+
+        graph = (
+            WorkflowBuilder("postgres-concurrent-fork")
+            .add_step(WorkflowStep("work", executor=complete, output_key="result"), entrypoint=True)
+            .build(
+                checkpoint_store=self.workflow_checkpoints,
+                lease_manager=self.workflow_leases,
+            )
+        )
+        source = await graph.run()
+        key = f"{self.prefix}-same-fork"
+        outcomes = await asyncio.gather(
+            *(fork_workflow(graph, source.run_id, idempotency_key=key) for _ in range(8)),
+            return_exceptions=True,
+        )
+        unexpected = [
+            outcome
+            for outcome in outcomes
+            if isinstance(outcome, BaseException) and not isinstance(outcome, WorkflowConflictError)
+        ]
+        successes = [outcome for outcome in outcomes if not isinstance(outcome, BaseException)]
+        self.assertFalse(unexpected)
+        self.assertTrue(successes)
+        winner = await self.workflow_checkpoints.find_by_idempotency_key(key)
+        assert winner is not None
+        self.assertEqual({result.run_id for result in successes}, {winner.run_id})
+
+    async def test_dsn_owned_workflow_pools_restart_cleanly(self) -> None:
+        namespace = f"restart-{self.prefix}"
+        store = create_postgres_workflow_checkpoint_store(
+            self.dsn,
+            table_prefix=self.prefix,
+            namespace=namespace,
+            pool_min_size=0,
+            pool_max_size=2,
+        )
+        leases = create_postgres_workflow_lease_manager(
+            self.dsn,
+            table_prefix=self.prefix,
+            namespace=namespace,
+            pool_min_size=0,
+            pool_max_size=2,
+        )
+        checkpoint = WorkflowCheckpoint(
+            checkpoint_id="restart-cp",
+            run_id="restart-run",
+            workflow_name="restart",
+            definition_version="1",
+            definition_digest="restart-digest",
+        )
+        await store.append(checkpoint)
+        lease = await leases.acquire("restart-run", owner_id="restart-worker", ttl_ms=10_000)
+        assert lease is not None
+        await store.close()
+        await leases.close()
+
+        reopened_store = create_postgres_workflow_checkpoint_store(
+            self.dsn,
+            table_prefix=self.prefix,
+            namespace=namespace,
+            pool_min_size=0,
+            pool_max_size=2,
+        )
+        reopened_leases = create_postgres_workflow_lease_manager(
+            self.dsn,
+            table_prefix=self.prefix,
+            namespace=namespace,
+            pool_min_size=0,
+            pool_max_size=2,
+        )
+        try:
+            restored = await reopened_store.load_latest("restart-run")
+            assert restored is not None
+            self.assertEqual(restored.checkpoint_id, checkpoint.checkpoint_id)
+            self.assertEqual(restored.run_id, checkpoint.run_id)
+            self.assertTrue(
+                await reopened_leases.validate(
+                    "restart-run",
+                    token=lease.token,
+                    fencing_token=lease.fencing_token,
+                )
+            )
+        finally:
+            await reopened_store.close()
+            await reopened_leases.close()
 
     async def test_idempotency_claim_has_one_winner_across_concurrent_connections(self) -> None:
         key = f"{self.prefix}-idempotency"

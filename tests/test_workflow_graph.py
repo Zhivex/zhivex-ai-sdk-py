@@ -15,7 +15,15 @@ from zhivex_ai import (
     create_mock_language_model,
     tool,
 )
-from zhivex_ai.errors import ProviderHTTPError, ValidationError
+from zhivex_ai.errors import (
+    ProviderHTTPError,
+    ValidationError,
+    WorkflowConflictError,
+    WorkflowDefinitionMismatchError,
+    WorkflowInterruptError,
+    WorkflowLeaseLostError,
+    WorkflowRunNotFoundError,
+)
 from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
 from zhivex_ai.workflow import WorkflowFunctionResult, WorkflowRetryPolicy
 from zhivex_ai.workflow_adapters import CallbackWorkflowAdapter, WorkflowStepOutcome
@@ -373,6 +381,162 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
                 interrupt_id=suspended.checkpoint.pending_interrupt.interrupt_id,
             )
 
+    def test_default_definition_revision_preserves_legacy_digest(self) -> None:
+        graph = (
+            WorkflowBuilder("identity-fixture", definition_version="1")
+            .add_step(
+                WorkflowStep(
+                    "one",
+                    agent_with_text("worker", "one"),
+                    output_key="out",
+                ),
+                entrypoint=True,
+            )
+            .build()
+        )
+
+        self.assertEqual(
+            graph.definition_digest,
+            "68c0597f2c80311bbe51dc08bf2270c419634582261d89718c9bd2cd3b223e30",
+        )
+
+    def test_step_definition_revision_captures_agent_configuration(self) -> None:
+        def graph_for(instructions: str, revision: str | None = None) -> WorkflowGraph:
+            agent = agent_with_text("worker", "done")
+            agent.instructions = instructions
+            return (
+                WorkflowBuilder("agent-identity")
+                .add_step(
+                    WorkflowStep(
+                        "work",
+                        agent,
+                        definition_revision=revision,
+                    ),
+                    entrypoint=True,
+                )
+                .build()
+            )
+
+        self.assertEqual(
+            graph_for("Use policy A.").definition_digest,
+            graph_for("Use policy B.").definition_digest,
+        )
+        self.assertNotEqual(
+            graph_for("Use policy A.", "instructions:v1").definition_digest,
+            graph_for("Use policy B.", "instructions:v2").definition_digest,
+        )
+
+    def test_step_definition_revision_captures_closure_configuration(self) -> None:
+        def configured_executor(multiplier: int):
+            async def calculate(context):
+                return int(context.input or 0) * multiplier
+
+            return calculate
+
+        unversioned_two = (
+            WorkflowBuilder("closure-identity")
+            .add_step(
+                WorkflowStep("calculate", executor=configured_executor(2)),
+                entrypoint=True,
+            )
+            .build()
+        )
+        unversioned_three = (
+            WorkflowBuilder("closure-identity")
+            .add_step(
+                WorkflowStep("calculate", executor=configured_executor(3)),
+                entrypoint=True,
+            )
+            .build()
+        )
+        versioned_two = (
+            WorkflowBuilder("closure-identity")
+            .add_step(
+                WorkflowStep(
+                    "calculate",
+                    executor=configured_executor(2),
+                    definition_revision="multiplier:2",
+                ),
+                entrypoint=True,
+            )
+            .build()
+        )
+        versioned_three = (
+            WorkflowBuilder("closure-identity")
+            .add_step(
+                WorkflowStep(
+                    "calculate",
+                    executor=configured_executor(3),
+                    definition_revision="multiplier:3",
+                ),
+                entrypoint=True,
+            )
+            .build()
+        )
+
+        self.assertEqual(unversioned_two.definition_digest, unversioned_three.definition_digest)
+        self.assertNotEqual(versioned_two.definition_digest, versioned_three.definition_digest)
+
+    def test_edge_definition_revision_captures_condition_configuration(self) -> None:
+        def configured_condition(threshold: int):
+            return lambda context: int(context.source_output or 0) >= threshold
+
+        def graph_for(threshold: int) -> WorkflowGraph:
+            return (
+                WorkflowBuilder("edge-identity")
+                .add_step(
+                    WorkflowStep("source", agent_with_text("source", "10")),
+                    entrypoint=True,
+                )
+                .add_step(WorkflowStep("target", agent_with_text("target", "done")))
+                .add_edge(
+                    "source",
+                    "target",
+                    condition=configured_condition(threshold),
+                    definition_revision=f"threshold:{threshold}",
+                )
+                .build()
+            )
+
+        self.assertNotEqual(graph_for(5).definition_digest, graph_for(20).definition_digest)
+
+    async def test_step_definition_revision_change_fails_closed_on_resume(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        original = (
+            WorkflowBuilder("revision-resume", definition_version="1")
+            .add_step(
+                WorkflowStep(
+                    "one",
+                    agent_with_text("one", "one"),
+                    definition_revision="agent-config:v1",
+                ),
+                entrypoint=True,
+            )
+            .interrupt_before("one")
+            .build(checkpoint_store=store)
+        )
+        suspended = await original.run()
+        changed = (
+            WorkflowBuilder("revision-resume", definition_version="1")
+            .add_step(
+                WorkflowStep(
+                    "one",
+                    agent_with_text("one", "one"),
+                    definition_revision="agent-config:v2",
+                ),
+                entrypoint=True,
+            )
+            .interrupt_before("one")
+            .build(checkpoint_store=store)
+        )
+
+        with self.assertRaisesRegex(WorkflowDefinitionMismatchError, "definition digest changed"):
+            await resume_workflow(
+                changed,
+                suspended.run_id,
+                interrupt_id=suspended.checkpoint.pending_interrupt.interrupt_id,
+            )
+
     async def test_fork_replays_from_selected_checkpoint_with_lineage(self) -> None:
         store = create_in_memory_workflow_checkpoint_store()
         graph = (
@@ -561,6 +725,59 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reused.run_id, winner.run_id)
         self.assertEqual(winner.state["result"], "done")
 
+    async def test_concurrent_idempotent_fork_reuses_the_winning_run(self) -> None:
+        inner_store = create_in_memory_workflow_checkpoint_store()
+
+        async def complete(_context):
+            return "done"
+
+        step = WorkflowStep("work", executor=complete, output_key="result")
+        source_graph = WorkflowBuilder("concurrent-fork").add_step(step, entrypoint=True).build(
+            checkpoint_store=inner_store
+        )
+        source = await source_graph.run()
+
+        class RacingStore:
+            def __init__(self) -> None:
+                self.find_calls = 0
+                self.initial_finds_ready = asyncio.Event()
+
+            async def append(self, checkpoint, *, expected_sequence=None):
+                return await inner_store.append(checkpoint, expected_sequence=expected_sequence)
+
+            async def load_latest(self, run_id):
+                return await inner_store.load_latest(run_id)
+
+            async def load_checkpoint(self, checkpoint_id):
+                return await inner_store.load_checkpoint(checkpoint_id)
+
+            async def find_by_idempotency_key(self, idempotency_key):
+                self.find_calls += 1
+                if self.find_calls <= 2:
+                    result = await inner_store.find_by_idempotency_key(idempotency_key)
+                    if self.find_calls == 2:
+                        self.initial_finds_ready.set()
+                    await self.initial_finds_ready.wait()
+                    return result
+                return await inner_store.find_by_idempotency_key(idempotency_key)
+
+            async def list_checkpoints(self, run_id):
+                return await inner_store.list_checkpoints(run_id)
+
+        graph = WorkflowBuilder("concurrent-fork").add_step(step, entrypoint=True).build(
+            checkpoint_store=RacingStore()
+        )
+        forks = await asyncio.gather(
+            fork_workflow(graph, source.run_id, idempotency_key="same-fork"),
+            fork_workflow(graph, source.run_id, idempotency_key="same-fork"),
+        )
+
+        self.assertEqual(forks[0].run_id, forks[1].run_id)
+        self.assertEqual(
+            (await inner_store.find_by_idempotency_key("same-fork")).run_id,
+            forks[0].run_id,
+        )
+
     async def test_active_lease_blocks_recovery_and_heartbeat_keeps_it_alive(self) -> None:
         lease_manager = create_in_memory_workflow_lease_manager()
         started = asyncio.Event()
@@ -584,7 +801,7 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(started.wait(), timeout=1)
         await asyncio.sleep(0.08)
 
-        with self.assertRaisesRegex(ValidationError, "active execution lease"):
+        with self.assertRaisesRegex(WorkflowConflictError, "active execution lease"):
             await graph.run(idempotency_key="leased-heartbeat", recover_running=True)
 
         release.set()
@@ -664,7 +881,7 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         assert other is not None
 
-        with self.assertRaisesRegex(ValidationError, "active execution lease"):
+        with self.assertRaisesRegex(WorkflowConflictError, "active execution lease"):
             await resume_workflow(
                 graph,
                 suspended.run_id,
@@ -702,7 +919,7 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
             .build(lease_manager=lease_manager)
         )
 
-        with self.assertRaisesRegex(ValidationError, "lost"):
+        with self.assertRaisesRegex(WorkflowLeaseLostError, "lost"):
             await graph.run(idempotency_key="lease-fencing")
 
         running = await graph.checkpoint_store.find_by_idempotency_key("lease-fencing")
@@ -710,6 +927,20 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(running.nodes["work"].status, "running")
         self.assertNotIn("result", running.state)
         self.assertTrue(await lease_manager.release(running.run_id, token=replacement_tokens[0]))
+
+    async def test_resume_surfaces_typed_not_found_and_interrupt_errors(self) -> None:
+        graph = (
+            WorkflowBuilder("typed-resume-errors")
+            .add_step(WorkflowStep("review", agent_with_text("reviewer", "done")), entrypoint=True)
+            .interrupt_before("review")
+            .build()
+        )
+        with self.assertRaises(WorkflowRunNotFoundError):
+            await resume_workflow(graph, "missing-run")
+
+        suspended = await graph.run()
+        with self.assertRaises(WorkflowInterruptError):
+            await resume_workflow(graph, suspended.run_id, interrupt_id="wrong-interrupt")
 
     async def test_cancel_workflow_stops_running_graph_cooperatively(self) -> None:
         lease_manager = create_in_memory_workflow_lease_manager()
@@ -804,3 +1035,26 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
             WorkflowRetryPolicy(backoff_ms=1.5)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValidationError, "positive integer"):
             WorkflowGraph(name="invalid", steps=[WorkflowStep("one", agent_with_text("one", "one"))], edges=[], max_concurrency=True)
+
+    def test_definition_revisions_must_be_non_empty_strings(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "definition_revision"):
+            WorkflowGraph(
+                name="invalid-step-revision",
+                steps=[
+                    WorkflowStep(
+                        "one",
+                        agent_with_text("one", "one"),
+                        definition_revision=" ",
+                    )
+                ],
+                edges=[],
+            )
+        with self.assertRaisesRegex(ValidationError, "definition_revision"):
+            WorkflowGraph(
+                name="invalid-edge-revision",
+                steps=[
+                    WorkflowStep("one", agent_with_text("one", "one")),
+                    WorkflowStep("two", agent_with_text("two", "two")),
+                ],
+                edges=[WorkflowEdge("one", "two", definition_revision="")],
+            )

@@ -39,6 +39,38 @@ Related documents:
 
 - None.
 
+## 0.17.0
+
+### Added
+
+- Added pay-as-you-go GA `qwen3.8-max` catalog, tier-1 contract, documentation, example, and offline provider-test coverage for text, streaming, reasoning, image/video understanding, callable tools, and the announced hosted web/code/image-search tools.
+- Added explicit `definition_revision` identities for workflow steps and edges so application-owned configuration and closure changes can invalidate durable resumes without relying on Python source inspection.
+- Added typed beta workflow failures: `WorkflowConflictError`, `WorkflowLeaseLostError`, `WorkflowDefinitionMismatchError`, `WorkflowRunNotFoundError`, and `WorkflowInterruptError`.
+
+### Changed
+
+- Bumped the package version to `0.17.0`; workflow graphs and external runtime adapters remain Beta while the unavoidable portable foundation/result DTOs listed in `STABILITY.md` move to Stable.
+- Qwen3.8 Max now selects the official Responses transport for text, images, reasoning efforts, functions, and hosted tools, and selects Chat Completions only for native JSON Schema output, image/video `FilePart` input, or reasoning token budgets. Structured output disables thinking, and Chat `reasoning_content` is preserved across model turns.
+- Qwen live smoke now disables thinking for the deterministic short marker and agent-tool checks so the GA model's default `xhigh` reasoning does not consume the output budget.
+- Postgres workflow stores now use bounded lazy `asyncpg` pools, accept an application-owned pool, support explicit namespaces, expose `close()` and async context-manager lifecycle, and record a checked backend schema version.
+- Promoted the portable model/result DTOs that are unavoidable through stable foundation and agent return types from Beta to Stable, without expanding provider-native guarantees.
+
+### Fixed
+
+- Updated Qwen mixed text/image Responses payloads to the current `text` / nested `image_url` wire format and preserved streamed Qwen reasoning-summary deltas as provider data.
+- Disabled Qwen3.8 Max's implicit thinking when required or named tool choice is routed through Chat Completions, while still rejecting forced tools when reasoning is explicitly enabled.
+- Made lease validation and checkpoint append one atomic fenced operation for built-in in-memory, SQLite, and Postgres workflow backends, preventing a stale worker from committing after ownership changes.
+- Postgres workflow leases now use the database server clock by default for acquire, renew, validation, and fenced writes, avoiding application-host clock skew.
+- Added a checked v0.15 checkpoint fixture covering deserialize, canonical reserialize, resume, fork, and the legacy definition digest.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.16.0
 
 ### Added
