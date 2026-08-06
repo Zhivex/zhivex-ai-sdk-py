@@ -813,6 +813,121 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
         self.assertTrue(requests[0]["url"].endswith("/responses"))
         self.assertEqual(requests[0]["json"]["reasoning"], {"effort": "none"})
 
+    async def test_qwen38_chat_disables_default_thinking_for_forced_tool_choices(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        model = provider.native.language_model("qwen3.8-max")
+        weather = tool(
+            name="weather",
+            schema=WeatherToolInput,
+            execute=lambda input: {"ok": True},
+        )
+        for tool_choice in (ToolChoiceName(tool_name="weather"), "required"):
+            with self.subTest(tool_choice=tool_choice):
+                await generate_text(
+                    model=model,
+                    messages=[
+                        ModelMessage(
+                            role="user",
+                            parts=[
+                                TextPart(text="Describe the weather in this video."),
+                                FilePart(url="https://example.com/weather.mp4", media_type="video/mp4"),
+                            ],
+                        )
+                    ],
+                    tools={"weather": weather},
+                    tool_choice=tool_choice,  # type: ignore[arg-type]
+                )
+
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request["url"].endswith("/chat/completions") for request in requests))
+        self.assertTrue(all(request["json"]["enable_thinking"] is False for request in requests))
+
+    async def test_qwen38_chat_rejects_explicit_thinking_for_forced_tool_choices(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        model = provider.native.language_model("qwen3.8-max")
+        weather = tool(
+            name="weather",
+            schema=WeatherToolInput,
+            execute=lambda input: {"ok": True},
+        )
+        thinking_configs: tuple[tuple[str, dict[str, Any]], ...] = (
+            ("reasoning", {"reasoning": ReasoningConfig(effort="high")}),
+            ("enable_thinking", {"provider_options": {"enable_thinking": True}}),
+            ("reasoning_effort", {"provider_options": {"reasoning_effort": "high"}}),
+            ("thinking_budget", {"provider_options": {"thinking_budget": 1024}}),
+        )
+        for tool_choice in (ToolChoiceName(tool_name="weather"), "required"):
+            for config_name, thinking_options in thinking_configs:
+                with self.subTest(tool_choice=tool_choice, thinking_config=config_name):
+                    with self.assertRaisesRegex(UnsupportedFeatureError, "while thinking is enabled"):
+                        await generate_text(
+                            model=model,
+                            messages=[
+                                ModelMessage(
+                                    role="user",
+                                    parts=[
+                                        TextPart(text="Describe the weather in this video."),
+                                        FilePart(url="https://example.com/weather.mp4", media_type="video/mp4"),
+                                    ],
+                                )
+                            ],
+                            tools={"weather": weather},
+                            tool_choice=tool_choice,  # type: ignore[arg-type]
+                            **thinking_options,
+                        )
+
+        self.assertEqual(requests, [])
+
     async def test_qwen_generates_speech(self) -> None:
         requests: list[dict[str, Any]] = []
 

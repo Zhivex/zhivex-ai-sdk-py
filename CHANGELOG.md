@@ -58,6 +58,7 @@ Related documents:
 ### Fixed
 
 - Updated Qwen mixed text/image Responses payloads to the current `text` / nested `image_url` wire format and preserved streamed Qwen reasoning-summary deltas as provider data.
+- Disabled Qwen3.8 Max's implicit thinking when required or named tool choice is routed through Chat Completions, while still rejecting forced tools when reasoning is explicitly enabled.
 - Made lease validation and checkpoint append one atomic fenced operation for built-in in-memory, SQLite, and Postgres workflow backends, preventing a stale worker from committing after ownership changes.
 - Postgres workflow leases now use the database server clock by default for acquire, renew, validation, and fenced writes, avoiding application-host clock skew.
 - Added a checked v0.15 checkpoint fixture covering deserialize, canonical reserialize, resume, fork, and the legacy definition digest.

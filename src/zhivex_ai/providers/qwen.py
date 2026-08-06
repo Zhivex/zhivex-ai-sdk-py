@@ -365,21 +365,23 @@ def _qwen_38_reasoning_options(
     return {"enable_thinking": True, "reasoning_effort": mapped_effort} if mapped_effort else {}
 
 
-def _qwen_38_thinking_enabled(
-    input: ModelGenerateInput,
+def _qwen_38_explicit_thinking_enabled(
     provider_options: dict[str, Any],
+    reasoning_options: dict[str, Any],
     *,
     structured_output: bool,
 ) -> bool:
     if structured_output:
         return False
-    if input.reasoning is not None:
-        return input.reasoning.effort != "none"
-    if provider_options.get("enable_thinking") is False:
-        return False
-    if provider_options.get("reasoning_effort") == "none":
-        return False
-    return True
+    if reasoning_options.get("enable_thinking") is True:
+        return True
+    enable_thinking = provider_options.get("enable_thinking")
+    if enable_thinking is not None and enable_thinking is not False:
+        return True
+    reasoning_effort = provider_options.get("reasoning_effort")
+    if reasoning_effort is not None and reasoning_effort != "none":
+        return True
+    return provider_options.get("thinking_budget") is not None
 
 
 def _qwen_chat_response_format(input: ModelGenerateInput) -> dict[str, Any] | None:
@@ -421,15 +423,18 @@ def _qwen_chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -
         provider_options,
         structured_output=structured_output,
     )
-    if isinstance(input.tool_choice, ToolChoiceName) and _qwen_38_thinking_enabled(
-        input,
-        provider_options,
-        structured_output=structured_output,
-    ):
-        raise UnsupportedFeatureError(
-            "Qwen3.8-Max cannot force a named tool while thinking is enabled. "
-            'Use reasoning=ReasoningConfig(effort="none") or tool_choice="auto".'
-        )
+    forced_tool_choice = input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
+    if forced_tool_choice:
+        if _qwen_38_explicit_thinking_enabled(
+            provider_options,
+            reasoning_options,
+            structured_output=structured_output,
+        ):
+            raise UnsupportedFeatureError(
+                "Qwen3.8-Max cannot force a required or named tool while thinking is enabled. "
+                'Use reasoning=ReasoningConfig(effort="none") or tool_choice="auto".'
+            )
+        reasoning_options.setdefault("enable_thinking", False)
     stream_options = deepcopy(provider_options.pop("stream_options", None))
     if stream:
         if stream_options is None:
