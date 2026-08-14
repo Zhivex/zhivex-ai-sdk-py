@@ -1,6 +1,6 @@
 # Meta Model API
 
-`create_meta()` is a Beta portable provider for Meta Model API. It is not part of the Tier-1 stable provider set. A local-source authenticated smoke passed on 2026-08-14, but the dirty working tree was not a built wheel or immutable release SHA, so release certification remains pending.
+`create_meta()` is a Beta portable provider for Meta Model API. It is not part of the Tier-1 stable provider set. Authenticated local-source and locally built `0.18.0` wheel smokes passed on 2026-08-14, but the release changes were still uncommitted and therefore did not identify an immutable release SHA. Exact-SHA release certification remains pending.
 
 ## Setup
 
@@ -53,7 +53,7 @@ Check current Meta account, region, retention, zero-data-retention, model availa
 
 Provider tests exercise requests, responses, SSE streaming, tools, structured output, continuation, hosted tools, validation, errors, retries, and URL safety with fake transports. They do not prove authenticated service behavior.
 
-The 2026-08-14 authenticated local-source smoke passed deterministic generation and a complete `run_agent(...)` → local tool → tool result → final answer loop with Standard `muse-spark-1.2`. The same strict run also passed OpenAI `gpt-5.6-luna`, Gemini `gemini-3.6-flash`, and Qwen `qwen3.8-max`. Because the checkout had uncommitted changes and the smoke did not install a built artifact, treat this as integration evidence rather than release certification.
+The 2026-08-14 authenticated local-source smoke passed deterministic generation and a complete `run_agent(...)` → local tool → tool result → final answer loop with Standard `muse-spark-1.2`. A second strict run installed the locally built `zhivex-ai-sdk==0.18.0` wheel into an isolated environment and passed the same generation and agent-tool checks for Meta plus OpenAI `gpt-5.6-luna`, Gemini `gemini-3.6-flash`, and Qwen `qwen3.8-max`. Because the release changes were still uncommitted, treat these runs as source and artifact integration evidence rather than exact-SHA release certification.
 
 To run an opt-in live generation and agent-tool smoke with the Standard model:
 
