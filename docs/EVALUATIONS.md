@@ -33,9 +33,18 @@ result = await run_agent_evaluation(
 Each case produces ordered `AgentEvaluationTrialResult` records. Trials capture
 monotonic latency, normalized token usage, optional application-calculated cost,
 expectation failures, and a redacted trajectory containing orchestration and
-event names only. `trial_pass_rate`, mean and p95 latency, total/mean cost, and
-mean total tokens are included when their inputs are available. Dataset names
-must be non-empty and unique, and execution limits must be positive integers.
+event names only. `trial_pass_rate` includes a two-sided Wilson 95% confidence
+interval (`trial_pass_rate_ci95_lower` and
+`trial_pass_rate_ci95_upper`). Mean and p95 latency, sample latency standard
+deviation (`latency_stddev_ms`), total/mean cost, and mean total tokens are
+included when their inputs are available. Dataset names must be non-empty and
+unique, and execution limits must be positive integers.
+
+The Wilson interval remains finite for all-pass and all-fail samples and reports
+`[0, 1]` when there are no trials. It quantifies sampling uncertainty in the
+aggregate observed pass rate; it does not make trials independent or correct
+for a dataset that mixes materially different tasks. Keep per-case failures and
+sample size visible when interpreting it.
 
 Concurrency is bounded by a real semaphore while output remains ordered by
 dataset and repetition. Prefer an `AgentEvaluationAgentFactory` when
@@ -82,6 +91,20 @@ artifact, and reject `NaN`, infinity, non-string mapping keys, and non-JSON
 metadata. `to_junit_xml()` emits trial-level test cases suitable for common CI
 test-report collectors. This prevents a CI job from publishing a partially
 valid result.
+
+## Deterministic scoring and custom judges
+
+`judge_agent_evaluation(result)` is a compatibility name for the built-in
+deterministic expectation scorer. It does not call an LLM: its score is the case
+pass rate produced from `AgentEvaluationExpectations`, and its metadata reports
+`judge_type: "deterministic_expectations"`.
+
+Pass an application-owned synchronous or asynchronous `judge` callable when a
+structured rubric or model judge is needed. The SDK stays provider-agnostic and
+returns that callable's `AgentEvaluationJudgeResult` unchanged. Record rubric,
+provider, model, and version information in its metadata, validate structured
+model output in application code, and do not treat one model score as the only
+approval for high-impact behavior.
 
 ## Curating datasets from traces
 

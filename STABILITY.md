@@ -48,6 +48,7 @@ The stable surface is intentionally narrow. It reflects the most defendable cros
 
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
+- Meta Model API: `create_meta`, `meta_hosted_tool`, `meta_web_search_tool`, and `meta_tool_search_tool`. The factory exposes a portable namespace for the capabilities in the generated matrix, but remains Beta, non-Tier-1, preview-upstream, and not live-certified by offline tests alone.
 - Middleware helpers
 - Model catalog helpers
 - Provider agent capability metadata: `AgentCapabilities`, `AgentSupportTier`, `get_agent_capabilities`, `get_agent_support_tier`
@@ -63,7 +64,9 @@ These APIs are supported and documented, but they may still change between minor
 - Qwen native hosted-tool, Files, Batch, ASR, and TTS helpers exposed through `provider.native`, `provider.responses()`, `provider.files()`, and `provider.batches()`
 - Kimi/Moonshot native helpers: `KimiFormulaClient`, `kimi_formula_toolset`, `KIMI_OFFICIAL_TOOL_URIS`, and `provider.formulas()`
 - Multimodal embedding part alias: `EmbeddingPart`
+- Example and deterministic-test fixture contracts: `GenerateResult`, `ModelGenerateInput`, `JsonValue`
 - Agent platform helpers beyond the stable runtime/run-state/replay/approval surface: in-memory and SQLite run stores, native subagent tools such as `create_subagent_tool`, evaluation fixtures/reports, trace artifacts, run-tree snapshots, safety policies, redaction policies, and budget guards
+- Cooperative agent cancellation and tool policy extensions: `AgentCancellationToken`, `ToolGuardrailResult`, `ToolGuardrailStage`, `ToolGuardrailTripwireTriggered`, `ToolInputGuardrail`, `ToolInputGuardrailRequest`, `ToolOutputGuardrail`, and `ToolOutputGuardrailRequest`
 - Evaluation trials, experiments, and gates: `AGENT_EVALUATION_ARTIFACT_SCHEMA_VERSION`, `AgentEvaluationTrialResult`, `AgentEvaluationTrajectory`, `AgentEvaluationTrajectoryEvent`, `AgentEvaluationCostEstimator`, trace extractor aliases, `create_agent_evaluation_trajectory`, `create_agent_evaluation_dataset_from_traces`, `AgentEvaluationMetric`, `AgentEvaluationGate`, `AgentEvaluationVariant`, `AgentEvaluationVariantResult`, `AgentEvaluationGateResult`, `AgentEvaluationExperimentResult`, `AgentEvaluationScorer`, `AgentEvaluationAgentFactory`, and `run_agent_evaluation_experiment`
 - Agent protocols and hosting: `A2A_PROTOCOL_VERSION`, `A2AAgentSkill`, `A2AAgentCard`, `A2AAgentExecutor`, `AGUIEvent`, `HostedAgentRunOptions`, `ProtocolInvocation`, `ProtocolLimits`, `ProtocolRunOptionsResolver`, `ProtocolErrorMapper`, `ProtocolEventCallback`, `AgentResolver`, `ResponsesAgentHost`, `StoredResponsesRun`, `ResponsesEventStore`, `InMemoryResponsesEventStore`, `create_a2a_agent_card`, `create_a2a_app`, `stream_agent_ag_ui`, `to_ag_ui_sse_response`, `create_responses_app`, and `create_agent_playground_app`
 - General `zhivex` CLI commands for inspect, run, eval, protocol serve, and the local playground
@@ -87,7 +90,7 @@ These areas are available for evaluation, but they should not be treated as a lo
 
 - Realtime and live voice flows, including `stream_live_agent()`
 - Raw provider payload escape hatches that do not map cleanly to the hosted-tool beta surface
-- Provider areas currently marked as `native-only` or `compatibility` in the support matrix
+- Non-portable provider factories currently marked as `native-only` or `compatibility` in the support matrix: `create_bedrock`, `create_openrouter`, and `create_ollama`
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate usage behind their own service layer before depending on them.
 
@@ -109,7 +112,7 @@ The current tier-1 provider story for the stable surface is:
 - DeepSeek
 - vLLM
 
-In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup.
+In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup. It is a contract-level support classification, not evidence that every tier-1 provider was live-smoked for the current release SHA. Live certification is provider-, model-, operation-, and SHA-specific and should be claimed only when matching smoke evidence was recorded.
 
 Anthropic is included in the tier-1 set for text-generation API paths. The stable factory supports direct `claude-opus-5` Messages calls with model-specific adaptive-thinking, effort, tool-loop replay, refusal, and mid-conversation system-section validation. Hosted web search/code execution and raw server-side fallback remain provider-native beta behavior; Opus 5 Web Fetch, Priority Tier, assistant prefill, and Opus 5 through the current Bedrock Converse adapter are not claimed. Embeddings, transcription, and speech remain outside the current Anthropic provider surface.
 

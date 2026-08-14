@@ -11,9 +11,11 @@ from zhivex_ai import (
     AgentRunResult,
     AgentStreamResult,
     LanguageModel,
+    ToolDefinition,
     ToolExecutionContext,
     run_agent,
     stream_agent,
+    tool,
 )
 
 
@@ -24,6 +26,28 @@ class Dependencies:
 
 class Decision(BaseModel):
     approved: bool
+
+
+@tool
+def decorated_lookup(query: str, limit: int = 5) -> list[str]:
+    return [query] * limit
+
+
+assert_type(decorated_lookup, ToolDefinition)
+
+
+async def configured_lookup(query: str, context: ToolExecutionContext[Dependencies]) -> str:
+    return f"{context.tool_name}:{query}"
+
+
+configured_tool = tool(name="configured_lookup")(configured_lookup)
+assert_type(configured_tool, ToolDefinition)
+explicit_tool = tool(
+    name="explicit_lookup",
+    schema={"type": "object"},
+    execute=lambda input: input,
+)
+assert_type(explicit_tool, ToolDefinition)
 
 
 def dynamic_instructions(context: AgentContext[Dependencies]) -> str:

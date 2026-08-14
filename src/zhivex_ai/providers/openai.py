@@ -29,7 +29,7 @@ from ..types import (
     ProviderDataPart,
     ToolCall,
 )
-from .base import create_provider_bundle
+from .base import ProviderBundle, create_provider_bundle
 from .openai_compat import (
     OpenAICompatibleBatchesClient,
     OpenAICompatibleContainersClient,
@@ -614,7 +614,7 @@ def create_openai(
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("OPENAI_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing openai API key.")

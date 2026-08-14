@@ -1,6 +1,6 @@
 # Tier-1 Provider Contract
 
-Tier-1 providers are the production provider set for the portable SDK surface:
+Tier-1 providers are the supported provider set for the portable SDK contract:
 
 - OpenAI
 - Anthropic
@@ -12,7 +12,9 @@ Tier-1 providers are the production provider set for the portable SDK surface:
 - DeepSeek
 - vLLM
 
-Tier-1 means the provider has runtime support metadata, generated README support-matrix coverage, shared offline contract tests, provider-specific tests, and documented live smoke configuration. Live smoke is optional and credentials-driven; it must not block local offline development.
+Tier-1 means the provider has runtime support metadata, generated README support-matrix coverage, shared offline contract tests, provider-specific tests, and documented live smoke configuration. It does not mean every provider has been live-smoked for every release. Live smoke is optional and credentials-driven for local development; any live-certification claim must identify the exact provider, model, operation, artifact, and release SHA that produced the evidence.
+
+Meta Model API has a separate [Beta portable provider guide](./meta.md). It is deliberately not part of this Tier-1 roster or shared contract.
 
 ## Offline Contract
 
@@ -47,7 +49,7 @@ For an agent release candidate, use the strict agent-first variant:
 ZHIVEX_SMOKE_PROVIDERS=openai,anthropic make smoke-agents
 ```
 
-For every configured provider selected, this runs `run_agent(...)`, requires one local nonce-validation tool call, validates the tool result, and verifies the model continued to a final answer. `make smoke-agents` sets `ZHIVEX_SMOKE_AGENTS=1` and `ZHIVEX_SMOKE_STRICT=1`, so a run with no configured provider fails instead of silently recording only skips. Failure output redacts configured API-key, access-token, password, and secret values.
+For every provider explicitly selected, this runs `run_agent(...)`, requires one local nonce-validation tool call, validates the tool result, and verifies the model continued to a final answer. `make smoke-agents` sets `ZHIVEX_SMOKE_AGENTS=1` and `ZHIVEX_SMOKE_STRICT=1`; with `ZHIVEX_SMOKE_PROVIDERS`, strict mode fails if any selected provider or its agent loop is skipped. Without an explicit selector, strict mode keeps the local-development rule that at least one configured provider and agent loop must execute. Failure output redacts configured API-key, access-token, password, and secret values.
 
 | Provider | Required environment |
 | --- | --- |
@@ -69,12 +71,12 @@ Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1
 
 ## Capability Notes
 
-- OpenAI, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, and vLLM expose portable text, streaming, structured output, and tool paths.
+- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, and vLLM expose portable text, streaming, structured output, and tool paths.
 - OpenAI catalog guidance tracks GA GPT-5.6 Sol/Terra/Luna and GPT Realtime 2.1. Responses is the recommended reasoning/tool route; the beta native path preserves Programmatic Tool Calling `program`, `caller`, and `program_output` items.
 - Azure OpenAI additionally exposes beta native lifecycle clients for Responses, Conversations, Realtime, and Vector Store / File Search management through `provider.native` / bundle helper methods. The catalog tracks GPT-5.6 Sol/Terra/Luna, `gpt-chat-latest`, GPT Image 2, and GPT Realtime 2.1 subject to deployment region/quota.
 - Anthropic is tier-1 for portable text-generation paths. Direct `claude-opus-5` uses adaptive thinking by default, supports effort through `max`, and can disable thinking only through `high`; manual budgets and non-default sampling are rejected. Opus 5, Fable 5, restricted-access Mythos 5, and Opus 4.8 accept valid mid-conversation system sections. Opus 5 does not support assistant prefill, server-side Web Fetch, or Priority Tier here, and the current Bedrock Converse adapter does not claim Opus 5. Other hosted helpers default to the 2026 web search, web fetch, and code execution types.
-- Gemini and Vertex expose Google media, Batch, Interactions, Deep Research, Live Translate, and Veo-style workflows through native clients rather than the stable portable contract. Gemini Developer API additionally tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Imagen 4 is no longer catalog guidance.
-- Qwen catalog guidance starts with pay-as-you-go GA `qwen3.8-max`; the Token Plan's exact `qwen3.8-max-preview` ID remains separate. Responses uses the current `/compatible-mode/v1/responses` route for text, streaming, `text` / `image_url` vision input, all seven reasoning efforts, function tools, and hosted `web_search`, `web_extractor`, `code_interpreter`, `web_search_image`, and `image_search`. The adapter selects Chat Completions for native JSON Schema output, image/video `FilePart` input, or `ReasoningConfig.budget_tokens`; structured output disables thinking and Qwen reasoning state is preserved for multi-turn replay. Web Extractor requires Web Search, and explicit thinking cannot force required/named tool choice. Raw Responses, Files, Batch, ASR, and TTS remain native/provider-specific beta surfaces. Batch support varies by region; Singapore currently documents only the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
+- Gemini and Vertex use `gemini-3.6-flash` and `gemini-3.5-flash-lite` as the current stable regular-generation catalog references. Both reject custom sampling and assistant prefill before dispatch. Google media, Batch, Interactions, Deep Research, Live Translate, and Veo-style workflows remain native clients rather than the stable portable contract. Gemini Developer API additionally tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Imagen 4 is no longer catalog guidance.
+- Qwen catalog guidance starts with pay-as-you-go GA `qwen3.8-max`; the Token Plan's exact `qwen3.8-max-preview` ID remains separate. Responses uses the current `/compatible-mode/v1/responses` route for text, streaming, `input_text` / `input_image` vision input, all seven reasoning efforts, function tools, and hosted `web_search`, `web_extractor`, `code_interpreter`, `web_search_image`, and `image_search`. The adapter selects Chat Completions for native JSON Schema output, image/video `FilePart` input, or `ReasoningConfig.budget_tokens`; structured output disables thinking and Qwen reasoning state is preserved for multi-turn replay. Web Extractor requires Web Search, and explicit thinking cannot force required/named tool choice. Raw Responses, Files, Batch, ASR, and TTS remain native/provider-specific beta surfaces. Batch support varies by region; Singapore currently documents only the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
 - Kimi K3 is the current catalog reference with always-on reasoning, `reasoning_effort=low|high|max`, vision, tools, and strict structured output. K2.6/K2.5 retain their separate `thinking` contract. Portable Kimi does not claim embeddings, speech, or transcription.
 - DeepSeek uses the official Chat Completions API with current `deepseek-v4-flash` and `deepseek-v4-pro` models. It supports text, streaming, JSON structured output, callable tools, and thinking; the adapter preserves `reasoning_content` during tool replay and automatically selects `/beta` for strict tools or prefix completion. Retired `deepseek-chat` / `deepseek-reasoner` IDs are rejected. Vision, files, embeddings, audio, moderation, and hosted tools are not claimed.
 - vLLM support depends on the tasks served by the local OpenAI-compatible server. Custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK contract.

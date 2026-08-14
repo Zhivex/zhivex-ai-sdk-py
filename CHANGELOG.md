@@ -21,15 +21,29 @@ Related documents:
 
 ### Added
 
-- None.
+- Added Beta portable `create_meta()` support for Meta Model API Muse Spark through Chat Completions and Responses, including text/streaming, JSON Schema output, callable and hosted tools, files, continuation, catalog metadata, gateway typing, optional live smoke, and offline contracts. Meta remains non-Tier-1 and no live certification is implied.
+- Added Muse Spark direct catalog entries, conservative Muse Glimmer routes for vLLM/Ollama/OpenRouter, and official Llama 4 Scout/Maverick vLLM references. Glimmer is modeled as one tool call per turn without parallel tools or a guaranteed structured-output contract; Llama 4 remains host/open-weight rather than a direct Meta Model API claim.
+- Added beta top-level exports for `GenerateResult`, `ModelGenerateInput`, and `JsonValue` so runnable examples can use the documented `zhivex_ai` entrypoint without deep imports.
+- Added typed `@tool` decorator forms with annotation-derived input/output schemas, per-tool input/output guardrails, and cooperative cancellation through `ToolExecutionContext`.
+- Added beta `AgentCancellationToken` propagation across run, stream, resume, subagent, group, and realtime paths, plus bounded concurrency, per-member timeouts, fail-fast cancellation, shared dependencies, and deterministic idempotency keys for `run_agent_group(...)`.
+- Added finite Wilson 95% confidence bounds for evaluation pass rate and sample latency standard deviation as built-in report and gate metrics.
 
 ### Changed
 
-- None.
+- Reclassified the non-portable `create_bedrock()`, `create_openrouter()`, and `create_ollama()` factories as Experimental, matching the stability policy for native-only and compatibility providers.
+- Clarified that tier-1 is an offline contract/support classification and that live certification must be attributed to the exact provider, model, operation, and release SHA that was smoked.
+- Extended model-catalog entries with API surface, availability, region, evidence level, and source metadata; added the current stable Gemini/Vertex `gemini-3.6-flash` and `gemini-3.5-flash-lite` references.
+- Clarified that `judge_agent_evaluation(...)` is the deterministic expectation-based case pass rate; application-supplied synchronous or asynchronous judges remain the provider-agnostic extension point.
+- Hardened experimental `stream_live_agent(...)` with run-store state, atomic idempotency reuse, durable human-approval suspension/resume, middleware, tool timeout semantics, run limits, and cooperative or durable cancellation boundaries.
 
 ### Fixed
 
-- None.
+- Updated the strict live agent smoke budgets for OpenAI GPT-5.6 Luna and Meta Muse Spark: Luna no longer receives unsupported `temperature`, while Muse uses low reasoning effort with enough output budget to reach deterministic text and tool results.
+- Removed internal `zhivex_ai.*` deep imports from runnable examples and added a documentation regression test that keeps examples on the top-level package.
+- Corrected Qwen Responses documentation to describe `input_text` / `input_image` request content, aligned the tier-1 Gemini example with every supported API-key alias, and refreshed current-version wording in production guidance.
+- Added fail-fast validation for unsupported custom sampling and assistant-prefill requests on Gemini/Vertex `gemini-3.6-flash` and `gemini-3.5-flash-lite`, plus current Gemini Interactions request/response contracts.
+- Tool guardrails now run before approval and execution, transformed input is revalidated, approval fingerprints include guardrail callables, resumed tools enforce output guardrails/timeouts, and policy failures fail closed without exposing internal exception details.
+- Realtime agent tools now preserve unknown-outcome timeout errors, persist terminal state with optimistic concurrency, and merge agent tools into an explicit realtime session config when it does not provide its own tool set.
 
 ### Deprecated
 
@@ -57,7 +71,7 @@ Related documents:
 
 ### Fixed
 
-- Updated Qwen mixed text/image Responses payloads to the current `text` / nested `image_url` wire format and preserved streamed Qwen reasoning-summary deltas as provider data.
+- Updated Qwen mixed text/image Responses payloads to the current `input_text` / `input_image` wire format and preserved streamed Qwen reasoning-summary deltas as provider data.
 - Disabled Qwen3.8 Max's implicit thinking when required or named tool choice is routed through Chat Completions, while still rejecting forced tools when reasoning is explicitly enabled.
 - Made lease validation and checkpoint append one atomic fenced operation for built-in in-memory, SQLite, and Postgres workflow backends, preventing a stale worker from committing after ownership changes.
 - Postgres workflow leases now use the database server clock by default for acquire, renew, validation, and fenced writes, avoiding application-host clock skew.

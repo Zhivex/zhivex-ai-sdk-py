@@ -182,13 +182,29 @@ The app owns request identity, user identity, long-term storage policy, approval
 
 ## Tools And Handoffs
 
-Use `tool(...)` for local tools and `ToolRegistry` for local, remote, or MCP-backed tool execution. Tools receive `ToolExecutionContext`, including `run_id` and `tool_call_id`, when their callable accepts a `context` parameter. The context also carries an operation `idempotency_key` and optional `deadline_ms`. Use the idempotency key for every downstream write. If a tool exceeds its configured timeout, the runtime raises `ToolExecutionOutcomeUnknown` and stops instead of letting the model treat an uncertain external action as a normal tool failure.
+Use `tool(...)` for local tools and `ToolRegistry` for local, remote, or MCP-backed tool execution. The decorator forms derive a strict Pydantic input schema from annotations, use the docstring as the default description, and infer an output schema from the return annotation:
+
+```python
+from zhivex_ai import ToolExecutionContext, tool
+
+@tool
+async def lookup_project(project_id: str, context: ToolExecutionContext) -> dict[str, str]:
+    """Load one project visible to the current tenant."""
+    context.raise_if_cancelled()
+    return {"project_id": project_id, "run_id": context.run_id or ""}
+```
+
+The existing factory form, such as `tool(name="lookup", schema=LookupInput, execute=lookup)`, remains supported. A parameter named or annotated as `ToolExecutionContext` is excluded from the model-visible schema. Tools receive that context with `run_id`, `tool_call_id`, an operation `idempotency_key`, optional `deadline_ms`, application dependencies, and the cooperative cancellation token. Use the idempotency key for every downstream write. If a tool exceeds its configured timeout, the runtime raises `ToolExecutionOutcomeUnknown` and stops instead of letting the model treat an uncertain external action as a normal tool failure.
+
+Attach `input_guardrails=[...]` or `output_guardrails=[...]` to one tool when policy belongs at the operation boundary. Input guardrails run for local, remote, and MCP tools before approval or execution; an explicit replacement is schema-validated again, so the input shown for approval is exactly the input executed. Output guardrails can explicitly replace a value before it reaches the model or transcript. A tripwire or guardrail exception fails closed, emits only policy metadata rather than tool input/output or dependencies, and never exposes the underlying policy exception in the tool error. Guardrail callables are part of the durable approval fingerprint, so changing one invalidates a pending approval rather than resuming under a different policy.
 
 See [Tool Registries And Permissions](./agents/tool-registries.md) before combining local, remote, or MCP tools.
 
 For multi-agent work, use `handoff_to(...)` from a tool result or `create_subagent_tool(...)` for native subagent tools. Handoffs update `AgentTrace.orchestration_path` and emit handoff events.
 
 `handoff_to(...)` is part of the stable direct-handoff contract. `create_subagent_tool(...)` and the higher-level native subagent-tool helpers remain beta.
+
+`run_agent_group(...)` is the beta bounded fan-out helper. `max_concurrency` limits active members, `timeout_ms` applies per member, and `fail_fast=True` cancels siblings after the first reported failure while preserving result order. Shared `deps`, runtime hooks/middleware, sessions, and a group idempotency prefix propagate to member runs; use unique member names or explicit member idempotency keys.
 
 ## Human Approval
 
@@ -222,7 +238,7 @@ For release-candidate verification against a real provider, select configured pr
 
 `run_agent(...)` raises for unrecoverable runtime failures. If `run_store` is configured, failed runs persist `status="failed"` and `error` metadata. Runs that require explicit human approval persist `status="suspended"` and return an `AgentRunResult` whose `state.pending_approvals` can be shown to an approval UI.
 
-Denied local tool approvals are recorded as tool-result errors and the loop can continue. Guardrail tripwires, missing handoff targets, model errors, provider-managed approvals without a policy, tool errors that escape the tool loop, and max-step/max-handoff failures are runtime failures. Cancellation is store-level: `cancel_agent_run_tree(...)` marks persisted states as cancelled but does not interrupt already-running Python tasks unless the app coordinates that.
+Denied local tool approvals are recorded as tool-result errors and the loop can continue. Guardrail tripwires, missing handoff targets, model errors, provider-managed approvals without a policy, tool errors that escape the tool loop, and max-step/max-handoff failures are runtime failures. Durable cancellation remains a run-store record. To stop work promptly in the same process, pass one `AgentCancellationToken` into the run and into `cancel_agent_run(...)` or `cancel_agent_run_tree(...)`; provider waits are cancelled, and tools can observe the token through `ToolExecutionContext`. Synchronous worker threads and external side effects cannot be rolled back, so destination idempotency and reconciliation remain required.
 
 Replay helpers analyze stored `AgentRunState`; they do not re-execute providers.
 
@@ -240,5 +256,7 @@ Replay helpers analyze stored `AgentRunState`; they do not re-execute providers.
 - `finish` or `error`
 
 Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress.
+
+Experimental `stream_live_agent(...)` now uses the same run-store idempotency, middleware, tool timeout, pending-approval suspension/resume, terminal-state, and cancellation boundaries where the realtime transport permits them. Realtime remains Experimental: isolate it behind an application service boundary, use a durable run store for approval/recovery, and validate the exact provider/model session behavior live.
 
 If an application-supplied event callback raises, the runtime raises `AgentEventDeliveryError`. Check `durable_state_committed`: `False` means the run was persisted as failed before model execution continued; `True` means the terminal run state already won and must not be rewritten merely because delivery failed. Reconcile the event sink by `run_id` instead of retrying the agent action blindly.

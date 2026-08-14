@@ -36,7 +36,7 @@ from ..types import (
     ToolChoiceName,
     ToolResultPart,
 )
-from .base import ProviderAdapter, create_provider_bundle
+from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -701,7 +701,7 @@ def create_deepseek(
     api_key: str | None = None,
     base_url: str | None = None,
     fetch: Fetcher | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing deepseek API key. Set DEEPSEEK_API_KEY.")

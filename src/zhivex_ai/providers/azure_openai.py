@@ -31,7 +31,7 @@ from ..types import (
     RealtimeConnectOptions,
     ToolCall,
 )
-from .base import create_provider_bundle
+from .base import ProviderBundle, create_provider_bundle
 from .openai_compat import (
     OpenAICompatibleConversationsClient,
     OpenAICompatibleFileSearchStoresClient,
@@ -384,7 +384,7 @@ def create_azure_openai(
     realtime_url: str | None = None,
     browser_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
     resolved_endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
     has_entra_auth = entra_token is not None or entra_token_provider is not None

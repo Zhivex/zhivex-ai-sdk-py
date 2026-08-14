@@ -62,6 +62,19 @@ TRANSITIVE_STABLE_EXPORTS = {
 
 
 class ApiStabilityTests(TestCase):
+    def test_non_portable_provider_factories_are_experimental(self) -> None:
+        factories = {"create_bedrock", "create_ollama", "create_openrouter"}
+
+        self.assertTrue(factories.issubset(EXPERIMENTAL_EXPORTS))
+        self.assertFalse(factories & BETA_EXPORTS)
+
+    def test_meta_is_beta_portable_but_not_stable_or_experimental(self) -> None:
+        self.assertIn("create_meta", BETA_EXPORTS)
+        self.assertNotIn("create_meta", STABLE_EXPORTS)
+        self.assertNotIn("create_meta", EXPERIMENTAL_EXPORTS)
+        self.assertEqual(API_STABILITY["create_meta"].category, "provider")
+        self.assertIn("not tier-1", API_STABILITY["create_meta"].notes)
+
     def test_inevitable_transitive_contracts_are_stable(self) -> None:
         self.assertTrue(TRANSITIVE_STABLE_EXPORTS.issubset(STABLE_EXPORTS))
         for name in TRANSITIVE_STABLE_EXPORTS:

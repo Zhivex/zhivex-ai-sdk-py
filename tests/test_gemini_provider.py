@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel, ConfigDict
 
@@ -41,10 +41,8 @@ from zhivex_ai import (
     vertex_google_search_tool,
     vertex_vertex_ai_search_tool,
 )
-from zhivex_ai import UnsupportedFeatureError
 from zhivex_ai.types import ModelGenerateInput, ModelMessage, StructuredOutputConfig, TextPart
-from zhivex_ai.errors import ProviderHTTPError
-from zhivex_ai.errors import ValidationError
+from zhivex_ai.errors import ProviderHTTPError, UnsupportedFeatureError, ValidationError
 
 
 class StrictToolInput(BaseModel):
@@ -273,9 +271,26 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
             if "batchEmbedContents" in url:
                 return FakeResponse(status_code=200, payload={"name": "batches/embed-1", "done": False})
             if "/interactions?" in url and method == "POST":
-                return FakeResponse(status_code=200, payload={"id": "int-1", "status": "in_progress"})
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "int-1",
+                        "status": "in_progress",
+                        "steps": [{"type": "model_output", "content": [{"type": "text", "text": "working"}]}],
+                    },
+                )
             if "/interactions/int-1?" in url:
-                return FakeResponse(status_code=200, payload={"id": "int-1", "status": "completed"})
+                return FakeResponse(
+                    status_code=200,
+                    payload={
+                        "id": "int-1",
+                        "status": "completed",
+                        "steps": [
+                            {"type": "user_input", "content": [{"type": "text", "text": "Research TPUs"}]},
+                            {"type": "model_output", "content": [{"type": "text", "text": "done"}]},
+                        ],
+                    },
+                )
             raise AssertionError(f"Unexpected request: {method} {url}")
 
         provider = create_gemini(api_key="test", fetch=fetch)
@@ -294,10 +309,48 @@ class GeminiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(interaction["id"], "int-1")
         self.assertEqual(omni["id"], "int-1")
         self.assertEqual(waited["status"], "completed")
+        self.assertEqual(waited["steps"][-1]["type"], "model_output")
         self.assertTrue(requests[1]["json"]["background"])
         self.assertTrue(requests[1]["json"]["store"])
         self.assertEqual(requests[2]["json"]["model"], "gemini-omni-flash-preview")
         self.assertNotIn("background", requests[2]["json"])
+
+        with self.assertRaisesRegex(ValidationError, "polymorphic response_format"):
+            await provider.interactions().create(
+                {
+                    "model": "gemini-3.6-flash",
+                    "input": "Create an image",
+                    "response_mime_type": "application/json",
+                }
+            )
+
+    async def test_latest_gemini_models_reject_removed_sampling_and_prefill(self) -> None:
+        fetch = AsyncMock()
+        provider = create_gemini(api_key="test", fetch=fetch)
+
+        for model_id in ("gemini-3.6-flash", "gemini-3.5-flash-lite"):
+            with self.subTest(model_id=model_id, case="temperature"):
+                with self.assertRaisesRegex(UnsupportedFeatureError, "custom temperature"):
+                    await generate_text(model=provider(model_id), prompt="Hello", temperature=0)
+            with self.subTest(model_id=model_id, case="provider-options"):
+                with self.assertRaisesRegex(UnsupportedFeatureError, "topP"):
+                    await generate_text(
+                        model=provider.native.language_model(model_id),
+                        prompt="Hello",
+                        provider_options={"generationConfig": {"topP": 0.9}},
+                    )
+            with self.subTest(model_id=model_id, case="prefill"):
+                with self.assertRaisesRegex(UnsupportedFeatureError, "prefilled"):
+                    await generate_text(
+                        model=provider(model_id),
+                        messages=[ModelMessage(role="assistant", parts=[TextPart(text="Prefix")])],
+                    )
+
+        vertex = create_vertex(access_token="test", project_id="project", fetch=fetch)
+        with self.assertRaisesRegex(UnsupportedFeatureError, 'Provider "vertex"'):
+            await generate_text(model=vertex("gemini-3.6-flash"), prompt="Hello", temperature=0)
+
+        fetch.assert_not_awaited()
 
     async def test_gemini_cached_contents_client_crud(self) -> None:
         requests: list[dict[str, Any]] = []

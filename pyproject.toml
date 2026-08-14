@@ -35,6 +35,7 @@ dependencies = [
 dev = [
   "build>=1.2.0",
   "click>=8.3.3",
+  "cryptography>=50.0.0",
   "hatchling>=1.27.0",
   "mypy>=1.10.0",
   "pip-audit>=2.10.1",
@@ -51,8 +52,9 @@ postgres = [
   "asyncpg>=0.29.0"
 ]
 mcp = [
-  "mcp>=1.28.1",
-  "click>=8.3.3"
+  "click>=8.3.3",
+  "cryptography>=50.0.0",
+  "mcp>=1.28.1"
 ]
 docx = [
   "python-docx>=1.1.0"
@@ -64,6 +66,7 @@ api = [
 ]
 a2a = [
   "a2a-sdk[fastapi]>=1.1.2,<2",
+  "cryptography>=50.0.0",
   "uvicorn>=0.31.0"
 ]
 ag-ui = [
@@ -88,6 +91,7 @@ packages = ["src/zhivex_ai"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/zhivex_ai/py.typed" = "zhivex_ai/py.typed"
+"src/zhivex_ai/__init__.pyi" = "zhivex_ai/__init__.pyi"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -160,10 +164,14 @@ files = [
   "src/zhivex_ai/providers/base.py",
   "src/zhivex_ai/providers/deepseek.py",
   "src/zhivex_ai/providers/gemini.py",
+  "src/zhivex_ai/providers/kimi.py",
+  "src/zhivex_ai/providers/meta.py",
   "src/zhivex_ai/providers/openai.py",
+  "src/zhivex_ai/providers/qwen.py",
   "src/zhivex_ai/providers/vertex.py",
   "src/zhivex_ai/providers/vllm.py",
   "tests/typecheck_agent_dx.py",
+  "tests/typecheck_public_api.py",
   "tests/typecheck_workflows.py",
 ]
 check_untyped_defs = true

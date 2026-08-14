@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    AgentCancellationToken,
     AgentEventDeliveryError,
     AgentErrorEvent,
     AgentFinishEvent,
@@ -29,6 +30,10 @@ from zhivex_ai import (  # noqa: E402
     GuardrailResult,
     PendingApproval,
     ToolApprovalRequest,
+    ToolExecutionContext,
+    ToolExecutionOptions,
+    ToolExecutionOutcomeUnknown,
+    ToolGuardrailResult,
     cancel_agent_run,
     cancel_agent_run_tree,
     create_agent_run_snapshot,
@@ -473,6 +478,125 @@ async def test_approval_resume_rejects_changed_closure_state() -> None:
 
     with pytest.raises(ValidationError, match="no longer matches"):
         await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+
+
+@pytest.mark.asyncio
+async def test_approval_resume_rejects_changed_tool_guardrail() -> None:
+    store = create_in_memory_agent_run_store()
+    policy = {"version": "original"}
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    async def input_policy(_request: object) -> ToolGuardrailResult:
+        _ = policy["version"]
+        return ToolGuardrailResult()
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=lambda _input: {"ok": True},
+                requires_approval=True,
+                input_guardrails=[input_policy],
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+    policy["version"] = "changed"
+
+    with pytest.raises(ValidationError, match="no longer matches"):
+        await resume_agent_run(agent=agent, run_id=suspended.run_id, approval_id="approval_lookup")
+
+
+@pytest.mark.asyncio
+async def test_approval_resume_applies_output_guardrail_and_propagates_cancellation_context() -> None:
+    store = create_in_memory_agent_run_store()
+    token = AgentCancellationToken()
+    seen_tokens: list[object] = []
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    def execute(_input: dict[str, str], context: ToolExecutionContext) -> dict[str, str]:
+        seen_tokens.append(context.cancellation_token)
+        return {"secret": "raw"}
+
+    async def redact_output(_request: object) -> ToolGuardrailResult:
+        return ToolGuardrailResult(replacement={"secret": "[REDACTED]"}, replace=True)
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=execute,
+                requires_approval=True,
+                output_guardrails=[redact_output],
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+    await resume_agent_run(
+        agent=agent,
+        run_id=suspended.run_id,
+        approval_id="approval_lookup",
+        cancellation_token=token,
+    )
+
+    stored = await store.load(suspended.run_id)
+    assert stored is not None
+    assert seen_tokens == [token]
+    assert stored.tool_results[0].output == {"secret": "[REDACTED]"}
+
+
+@pytest.mark.asyncio
+async def test_approval_resume_preserves_unknown_outcome_on_tool_timeout() -> None:
+    store = create_in_memory_agent_run_store()
+
+    async def suspend_policy(_request: ToolApprovalRequest) -> ApprovalDecision:
+        return ApprovalDecision.require_human("review", approval_id="approval_lookup")
+
+    async def slow_execute(_input: dict[str, str]) -> dict[str, bool]:
+        await asyncio.sleep(1)
+        return {"ok": True}
+
+    agent = Agent(
+        name="assistant",
+        model=ToolModel(),
+        run_store=store,
+        approval_policy=suspend_policy,
+        tools={
+            "lookup": tool(
+                name="lookup",
+                schema=dict[str, str],
+                execute=slow_execute,
+                requires_approval=True,
+            )
+        },
+    )
+    suspended = await run_agent(agent=agent, prompt="lookup")
+
+    with pytest.raises(ToolExecutionOutcomeUnknown, match="outcome is unknown"):
+        await resume_agent_run(
+            agent=agent,
+            run_id=suspended.run_id,
+            approval_id="approval_lookup",
+            tool_execution=ToolExecutionOptions(timeout_ms=10),
+        )
+
+    stored = await store.load(suspended.run_id)
+    assert stored is not None
+    assert stored.status == "failed"
 
 
 @pytest.mark.asyncio
@@ -1092,6 +1216,52 @@ async def test_stream_agent_reuses_idempotency_key_from_run_store() -> None:
     assert first.run_id == second.run_id
     assert second.state is not None
     assert second.state.idempotency_key == "stream-idem"
+
+
+@pytest.mark.asyncio
+async def test_agent_cancellation_token_interrupts_model_and_persists_cancelled_state() -> None:
+    started = asyncio.Event()
+    provider_cancelled = asyncio.Event()
+
+    class BlockingModel(EchoModel):
+        async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                provider_cancelled.set()
+                raise
+            return await super().generate(input)
+
+    store = create_in_memory_agent_run_store()
+    token = AgentCancellationToken()
+    agent = Agent(name="assistant", model=BlockingModel(), run_store=store)
+    running = asyncio.create_task(
+        run_agent(
+            agent=agent,
+            prompt="wait",
+            idempotency_key="cancel-token",
+            cancellation_token=token,
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    running_state = await store.find_by_idempotency_key("cancel-token")
+    assert running_state is not None
+    await cancel_agent_run_tree(
+        store,
+        running_state.run_id,
+        reason="operator stop",
+        cancellation_token=token,
+    )
+
+    with pytest.raises(AgentRunCancelled, match="operator stop"):
+        await asyncio.wait_for(running, timeout=1)
+    assert provider_cancelled.is_set()
+    state = await store.find_by_idempotency_key("cancel-token")
+    assert state is not None
+    assert state.status == "cancelled"
+    assert state.cancellation_reason == "operator stop"
 
 
 @pytest.mark.asyncio

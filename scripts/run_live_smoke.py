@@ -25,6 +25,7 @@ from zhivex_ai import (  # noqa: E402
     create_deepseek,
     create_gemini,
     create_kimi,
+    create_meta,
     create_ollama,
     create_openai,
     create_qwen,
@@ -50,6 +51,7 @@ _SUPPORTED_PROVIDERS = {
     "qwen",
     "kimi",
     "deepseek",
+    "meta",
     "vllm",
 }
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
@@ -102,8 +104,12 @@ def _matches_smoke_token(text: str, expected: str) -> bool:
 def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
     if provider == "anthropic":
         return {"temperature": None, "max_tokens": 4096}
+    if provider == "meta":
+        return {"temperature": None, "max_tokens": 1024}
+    if provider == "openai":
+        return {"temperature": None, "max_tokens": 512}
     if provider == "gemini":
-        return {"temperature": 0, "max_tokens": 512}
+        return {"temperature": None, "max_tokens": 512}
     return {"temperature": 0, "max_tokens": 80}
 
 
@@ -169,7 +175,13 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
         max_steps=3,
         temperature=generation_options["temperature"],
         max_tokens=generation_options["max_tokens"],
-        reasoning=ReasoningConfig(effort="none") if provider == "qwen" else None,
+        reasoning=(
+            ReasoningConfig(effort="none")
+            if provider == "qwen"
+            else ReasoningConfig(effort="low")
+            if provider == "meta"
+            else None
+        ),
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=30_000,
@@ -542,6 +554,39 @@ async def _run_deepseek() -> tuple[str, bool, str, bool]:
     return ("deepseek", True, f"ok: {model}{suffix}", agent_ran)
 
 
+async def _run_meta() -> tuple[str, bool, str, bool]:
+    model = os.getenv("ZHIVEX_SMOKE_META_MODEL")
+    api_key = os.getenv("MODEL_API_KEY")
+    base_url = os.getenv("ZHIVEX_SMOKE_META_BASE_URL") or os.getenv("META_BASE_URL")
+    if not api_key or not model:
+        return (
+            "meta",
+            False,
+            "skip: set MODEL_API_KEY and ZHIVEX_SMOKE_META_MODEL",
+            False,
+        )
+    if model == "muse-spark-1.2-contributor":
+        raise ValueError("Meta live smoke requires the Standard muse-spark-1.2 model, not the Contributor tier.")
+    provider = create_meta(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+    language_model = provider(model)
+    result = await generate_text(
+        model=language_model,
+        prompt="Reply with exactly META_SMOKE_OK.",
+        reasoning=ReasoningConfig(effort="low"),
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if not _matches_smoke_token(result.text, "META_SMOKE_OK"):
+        raise RuntimeError(f"unexpected response: {result.text!r}")
+    agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
+    if agent_ran:
+        await _run_agent_tool_smoke(provider="meta", model=language_model)
+    suffix = ", agent-tool=ok" if agent_ran else ""
+    return ("meta", True, f"ok: {model}{suffix}", agent_ran)
+
+
 async def _run_vllm() -> tuple[str, bool, str, bool]:
     model = os.getenv("ZHIVEX_SMOKE_VLLM_MODEL")
     base_url = os.getenv("ZHIVEX_SMOKE_VLLM_BASE_URL", "http://localhost:8000/v1")
@@ -595,29 +640,47 @@ async def main() -> int:
         checks.append(_run_kimi)
     if _want("deepseek", selected):
         checks.append(_run_deepseek)
+    if _want("meta", selected):
+        checks.append(_run_meta)
     if _want("vllm", selected):
         checks.append(_run_vllm)
 
     failures = 0
-    executed = 0
-    agent_executed = 0
+    executed_providers: set[str] = set()
+    agent_executed_providers: set[str] = set()
     for check in checks:
         provider_name = check.__name__.replace("_run_", "")
         try:
             provider, ran, message, agent_ran = await check()
             print(f"[{provider}] {message}")
             if ran:
-                executed += 1
+                executed_providers.add(provider)
                 if agent_ran:
-                    agent_executed += 1
+                    agent_executed_providers.add(provider)
                 continue
         except Exception as error:
             failures += 1
             print(f"[{provider_name}] fail: {_safe_error_message(error)}")
-    if strict and executed == 0:
+    if strict and selected is not None:
+        missing_provider_smokes = selected - executed_providers
+        if missing_provider_smokes:
+            failures += 1
+            print(
+                "[smoke] fail: strict mode requires every explicitly selected provider smoke to execute; "
+                f"missing: {', '.join(sorted(missing_provider_smokes))}."
+            )
+        if agent_smoke_enabled:
+            missing_agent_smokes = executed_providers - agent_executed_providers
+            if missing_agent_smokes:
+                failures += 1
+                print(
+                    "[smoke] fail: strict agent mode requires an agent tool smoke for every selected provider "
+                    f"that executed; missing: {', '.join(sorted(missing_agent_smokes))}."
+                )
+    elif strict and not executed_providers:
         failures += 1
         print("[smoke] fail: strict mode requires at least one provider smoke to execute.")
-    elif strict and agent_smoke_enabled and agent_executed == 0:
+    elif strict and agent_smoke_enabled and not agent_executed_providers:
         failures += 1
         print("[smoke] fail: strict agent mode requires at least one agent tool smoke to execute.")
     return 1 if failures else 0

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -13,9 +14,14 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    AgentCancellationToken,
+    AgentRunCancelled,
     AgentTextDeltaEvent,
+    ApprovalDecision,
     AudioFrame,
+    GenerateResult,
     ModelCapabilities,
+    ModelGenerateInput,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
     RealtimeResponseCompletedEvent,
@@ -27,12 +33,20 @@ from zhivex_ai import (  # noqa: E402
     RealtimeTranscriptEvent,
     ToolExecutionResult,
     ToolDefinition,
+    ToolExecutionOptions,
+    ToolExecutionOutcomeUnknown,
+    ToolApprovalRequest,
     ToolCall,
+    TextPart,
     UnsupportedFeatureError,
     ValidationError,
+    cancel_agent_run,
     create_gemini,
     create_openai,
     create_in_memory_agent_memory_store,
+    create_in_memory_agent_run_store,
+    create_text_message,
+    resume_agent_run,
     stream_live_agent,
 )
 
@@ -393,12 +407,13 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
 
 
 class FakeLiveSession:
-    def __init__(self) -> None:
+    def __init__(self, events: list[Any] | None = None) -> None:
         self.sent_audio: list[AudioFrame] = []
         self.sent_text: list[str] = []
         self.sent_tool_results: list[ToolExecutionResult] = []
         self.updated: list[dict[str, Any]] = []
         self.closed = False
+        self.events = events
 
     async def send_audio(self, frame: AudioFrame) -> None:
         self.sent_audio.append(frame)
@@ -414,11 +429,17 @@ class FakeLiveSession:
 
     def event_stream(self):
         async def generator():
-            yield RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True)
-            yield RealtimeToolCallEvent(tool_call=ToolCall(id="call_1", name="weather", input={"city": "BA"}))
-            yield RealtimeTextDeltaEvent(text_delta="Hace sol")
-            yield RealtimeTranscriptEvent(text="Hace sol", role="assistant", is_final=True)
-            yield RealtimeResponseCompletedEvent(reason="done")
+            events = self.events or [
+                RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True),
+                RealtimeToolCallEvent(tool_call=ToolCall(id="call_1", name="weather", input={"city": "BA"})),
+                RealtimeTextDeltaEvent(text_delta="Hace sol"),
+                RealtimeTranscriptEvent(text="Hace sol", role="assistant", is_final=True),
+                RealtimeResponseCompletedEvent(reason="done"),
+            ]
+            for event in events:
+                if isinstance(event, BaseException):
+                    raise event
+                yield event
 
         return generator()
 
@@ -431,10 +452,10 @@ class FakeLiveModel:
     model_id = "gpt-realtime-2.1"
     capabilities = ModelCapabilities(
         streaming=False,
-        tools=False,
+        tools=True,
         structured_output=False,
         json_mode=False,
-        tool_choice=False,
+        tool_choice=True,
         parallel_tool_calls=False,
         vision=False,
         files=False,
@@ -451,9 +472,22 @@ class FakeLiveModel:
 
     def __init__(self, session: FakeLiveSession) -> None:
         self._session = session
+        self.connect_calls = 0
+        self.generate_calls = 0
+        self.last_config: RealtimeSessionConfig | None = None
 
     async def connect(self, config: RealtimeSessionConfig | None = None, options: RealtimeConnectOptions | None = None):
+        self.connect_calls += 1
+        self.last_config = config
         return self._session
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self.generate_calls += 1
+        return GenerateResult(
+            messages=[create_text_message("assistant", "Aprobación resuelta")],
+            text="Aprobación resuelta",
+            finish_reason="stop",
+        )
 
     async def create_browser_token(self, config: RealtimeSessionConfig | None = None, options: RealtimeConnectOptions | None = None):
         raise RuntimeError("not used")
@@ -462,7 +496,7 @@ class FakeLiveModel:
 class LiveAgentTests(IsolatedAsyncioTestCase):
     async def test_stream_live_agent_executes_tools_and_persists_transcript(self) -> None:
         live_session = FakeLiveSession()
-        agent = Agent(
+        agent: Agent[Any, Any] = Agent(
             name="assistant",
             model=FakeLiveModel(live_session),
             instructions="Be helpful.",
@@ -485,4 +519,217 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
         self.assertTrue(any(isinstance(event, RealtimeToolResultEvent) for event in events))
         self.assertEqual(live_session.sent_tool_results[0].output, {"forecast": "sunny in BA"})
         self.assertEqual(result.text, "Hace sol")
-        self.assertEqual(result.session.messages[-1].parts[0].text, "Hace sol")
+        final_part = result.session.messages[-1].parts[0]
+        self.assertIsInstance(final_part, TextPart)
+        self.assertEqual(final_part.text, "Hace sol")  # type: ignore[union-attr]
+
+    async def test_stream_live_agent_merges_agent_tools_into_explicit_realtime_config(self) -> None:
+        live_session = FakeLiveSession()
+        model = FakeLiveModel(live_session)
+        agent: Agent[Any, Any] = Agent(
+            name="assistant",
+            model=model,
+            tools={
+                "weather": ToolDefinition(
+                    name="weather",
+                    description="Weather lookup",
+                    schema={"type": "object"},
+                    execute=lambda payload: {"forecast": f"sunny in {payload['city']}"},
+                )
+            },
+        )
+
+        result = await stream_live_agent(
+            agent=agent,
+            realtime_config=RealtimeSessionConfig(voice="alloy"),
+        ).collect()
+
+        self.assertEqual(result.text, "Hace sol")
+        self.assertIsNotNone(model.last_config)
+        self.assertIn("weather", model.last_config.tools or {})
+        self.assertEqual(model.last_config.voice, "alloy")
+
+    async def test_stream_live_agent_persists_suspension_and_can_resume(self) -> None:
+        live_session = FakeLiveSession(
+            [
+                RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True),
+                RealtimeToolCallEvent(tool_call=ToolCall(id="call_approval", name="weather", input={"city": "BA"})),
+            ]
+        )
+        model = FakeLiveModel(live_session)
+        run_store = create_in_memory_agent_run_store()
+        executions: list[dict[str, Any]] = []
+
+        class SuspendPolicy:
+            async def __call__(self, _request: ToolApprovalRequest) -> ApprovalDecision:
+                return ApprovalDecision.require_human("Confirmar consulta externa.")
+
+        def weather(payload: dict[str, Any]) -> dict[str, Any]:
+            executions.append(payload)
+            return {"forecast": "sunny"}
+
+        agent: Agent[Any, Any] = Agent(
+            name="assistant",
+            model=model,
+            run_store=run_store,
+            approval_policy=SuspendPolicy(),  # type: ignore[arg-type]
+            tools={
+                "weather": ToolDefinition(
+                    name="weather",
+                    description="Weather lookup",
+                    schema={"type": "object"},
+                    execute=weather,
+                    requires_approval=True,
+                )
+            },
+        )
+
+        suspended = await stream_live_agent(agent=agent, idempotency_key="live:approval").collect()
+
+        self.assertEqual(suspended.state.status, "suspended")  # type: ignore[union-attr]
+        self.assertEqual(len(suspended.state.pending_approvals), 1)  # type: ignore[union-attr]
+        self.assertEqual(executions, [])
+        stored = await run_store.load(suspended.run_id)
+        self.assertEqual(stored.status, "suspended")  # type: ignore[union-attr]
+        self.assertIn("resume_messages", stored.metadata)  # type: ignore[union-attr]
+
+        resumed = await resume_agent_run(agent=agent, run_id=suspended.run_id)
+
+        self.assertEqual(resumed.text, "Aprobación resuelta")
+        self.assertEqual(executions, [{"city": "BA"}])
+        final_state = await run_store.load(suspended.run_id)
+        self.assertEqual(final_state.status, "completed")  # type: ignore[union-attr]
+
+    async def test_stream_live_agent_reuses_completed_idempotent_run(self) -> None:
+        live_session = FakeLiveSession(
+            [
+                RealtimeTranscriptEvent(text="listo", role="assistant", is_final=True),
+                RealtimeResponseCompletedEvent(reason="done"),
+            ]
+        )
+        model = FakeLiveModel(live_session)
+        run_store = create_in_memory_agent_run_store()
+        agent: Agent[Any, Any] = Agent(name="assistant", model=model, run_store=run_store)
+
+        first = await stream_live_agent(agent=agent, idempotency_key="live:completed").collect()
+        second = await stream_live_agent(agent=agent, idempotency_key="live:completed").collect()
+
+        self.assertEqual(first.run_id, second.run_id)
+        self.assertEqual(second.text, "listo")
+        self.assertEqual(second.state.status, "completed")  # type: ignore[union-attr]
+        self.assertEqual(model.connect_calls, 1)
+
+    async def test_stream_live_agent_observes_durable_cancellation(self) -> None:
+        release = asyncio.Event()
+
+        class BlockingLiveSession(FakeLiveSession):
+            def event_stream(self):
+                async def generator():
+                    await release.wait()
+                    if False:
+                        yield RealtimeResponseCompletedEvent(reason="done")
+
+                return generator()
+
+        live_session = BlockingLiveSession()
+        run_store = create_in_memory_agent_run_store()
+        agent: Agent[Any, Any] = Agent(name="assistant", model=FakeLiveModel(live_session), run_store=run_store)
+        stream = stream_live_agent(agent=agent, idempotency_key="live:cancel")
+
+        state = None
+        for _ in range(20):
+            state = await run_store.find_by_idempotency_key("live:cancel")
+            if state is not None:
+                break
+            await asyncio.sleep(0)
+        self.assertIsNotNone(state)
+        await cancel_agent_run(run_store, state.run_id, reason="operator stop")  # type: ignore[union-attr]
+
+        with self.assertRaises(AgentRunCancelled):
+            await stream.collect()
+
+        stored = await run_store.load(state.run_id)  # type: ignore[union-attr]
+        self.assertEqual(stored.status, "cancelled")  # type: ignore[union-attr]
+        self.assertEqual(stored.cancellation_reason, "operator stop")  # type: ignore[union-attr]
+        self.assertTrue(live_session.closed)
+
+    async def test_stream_live_agent_observes_in_process_cancellation_token(self) -> None:
+        release = asyncio.Event()
+
+        class BlockingLiveSession(FakeLiveSession):
+            def event_stream(self):
+                async def generator():
+                    await release.wait()
+                    if False:
+                        yield RealtimeResponseCompletedEvent(reason="done")
+
+                return generator()
+
+        live_session = BlockingLiveSession()
+        token = AgentCancellationToken()
+        model = FakeLiveModel(live_session)
+        agent: Agent[Any, Any] = Agent(name="assistant", model=model)
+        stream = stream_live_agent(agent=agent, cancellation_token=token)
+        for _ in range(20):
+            if model.connect_calls:
+                break
+            await asyncio.sleep(0)
+        self.assertEqual(model.connect_calls, 1)
+        await stream.send_text("ready")
+        token.cancel("request disconnected")
+
+        with self.assertRaisesRegex(AgentRunCancelled, "request disconnected"):
+            await stream.collect()
+
+        self.assertTrue(live_session.closed)
+
+    async def test_stream_live_agent_persists_failures(self) -> None:
+        live_session = FakeLiveSession([RuntimeError("realtime transport failed")])
+        run_store = create_in_memory_agent_run_store()
+        agent: Agent[Any, Any] = Agent(name="assistant", model=FakeLiveModel(live_session), run_store=run_store)
+        stream = stream_live_agent(agent=agent, idempotency_key="live:error")
+
+        with self.assertRaisesRegex(RuntimeError, "transport failed"):
+            await stream.collect()
+
+        state = await run_store.find_by_idempotency_key("live:error")
+        self.assertIsNotNone(state)
+        self.assertEqual(state.status, "failed")  # type: ignore[union-attr]
+        self.assertIn("transport failed", state.error or "")  # type: ignore[union-attr]
+        self.assertTrue(live_session.closed)
+
+    async def test_stream_live_agent_preserves_unknown_outcome_on_tool_timeout(self) -> None:
+        live_session = FakeLiveSession(
+            [RealtimeToolCallEvent(tool_call=ToolCall(id="call_slow", name="slow", input={}))]
+        )
+        run_store = create_in_memory_agent_run_store()
+
+        async def slow_tool(_payload: dict[str, Any]) -> dict[str, Any]:
+            await asyncio.sleep(1)
+            return {"ok": True}
+
+        agent: Agent[Any, Any] = Agent(
+            name="assistant",
+            model=FakeLiveModel(live_session),
+            run_store=run_store,
+            tools={
+                "slow": ToolDefinition(
+                    name="slow",
+                    description="Slow tool",
+                    schema={"type": "object"},
+                    execute=slow_tool,
+                )
+            },
+        )
+
+        with self.assertRaises(ToolExecutionOutcomeUnknown):
+            await stream_live_agent(
+                agent=agent,
+                idempotency_key="live:timeout",
+                tool_execution=ToolExecutionOptions(timeout_ms=10),
+            ).collect()
+
+        state = await run_store.find_by_idempotency_key("live:timeout")
+        self.assertIsNotNone(state)
+        self.assertEqual(state.status, "failed")  # type: ignore[union-attr]
+        self.assertIn("external outcome is unknown", state.error or "")  # type: ignore[union-attr]

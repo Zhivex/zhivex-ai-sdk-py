@@ -65,6 +65,8 @@ class NativeSupport:
     responses: bool = False
     conversations: bool = False
     caches: bool = False
+    count_tokens: bool = False
+    formulas: bool = False
 
 
 @dataclass(slots=True)
@@ -1327,6 +1329,92 @@ class ToolExecutionContext(Generic[ToolContextDepsT]):
     metadata: dict[str, Any] = field(default_factory=dict)
     handoff_path: list[str] = field(default_factory=list)
     deps: ToolContextDepsT | None = field(default=None, repr=False, compare=False)
+    cancellation_token: Any = field(default=None, repr=False, compare=False)
+
+    @property
+    def cancellation_requested(self) -> bool:
+        token = self.cancellation_token
+        if token is None:
+            return False
+        for attribute_name in ("cancellation_requested", "cancelled", "is_cancelled", "is_set"):
+            value = getattr(token, attribute_name, None)
+            if value is None:
+                continue
+            return bool(value() if callable(value) else value)
+        return False
+
+    def raise_if_cancelled(self) -> None:
+        token = self.cancellation_token
+        if token is None:
+            return
+        raise_if_cancelled = getattr(token, "raise_if_cancelled", None)
+        if callable(raise_if_cancelled):
+            raise_if_cancelled()
+            return
+        if self.cancellation_requested:
+            raise RuntimeError("Tool execution was cancelled.")
+
+
+ToolGuardrailStage = Literal["input", "output"]
+
+
+@dataclass(slots=True)
+class ToolGuardrailResult:
+    tripwire_triggered: bool = False
+    reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    replacement: Any = None
+    replace: bool = False
+
+
+@dataclass(slots=True)
+class ToolInputGuardrailRequest:
+    tool_name: str
+    input: Any
+    context: ToolExecutionContext[Any]
+
+
+@dataclass(slots=True)
+class ToolOutputGuardrailRequest:
+    tool_name: str
+    input: Any
+    output: Any
+    context: ToolExecutionContext[Any]
+
+
+class ToolInputGuardrail(Protocol):
+    def __call__(
+        self,
+        request: ToolInputGuardrailRequest,
+    ) -> ToolGuardrailResult | bool | None | Awaitable[ToolGuardrailResult | bool | None]: ...
+
+
+class ToolOutputGuardrail(Protocol):
+    def __call__(
+        self,
+        request: ToolOutputGuardrailRequest,
+    ) -> ToolGuardrailResult | bool | None | Awaitable[ToolGuardrailResult | bool | None]: ...
+
+
+class ToolGuardrailTripwireTriggered(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: ToolGuardrailStage,
+        tool_name: str,
+        guardrail_name: str,
+        reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.stage = stage
+        self.tool_name = tool_name
+        self.guardrail_name = guardrail_name
+        self.reason = reason
+        self.metadata = dict(metadata or {})
+        message = f'Tool {stage} guardrail "{guardrail_name}" triggered for "{tool_name}".'
+        if reason:
+            message = f"{message} {reason}"
+        super().__init__(message)
 
 
 @dataclass(slots=True)
@@ -1746,6 +1834,8 @@ class ToolDefinition:
     remote_config: RemoteHTTPToolConfig | None = None
     mcp_config: MCPToolConfig | None = None
     output_schema: Any = None
+    input_guardrails: list[ToolInputGuardrail] = field(default_factory=list)
+    output_guardrails: list[ToolOutputGuardrail] = field(default_factory=list)
 
 
 @dataclass(slots=True)

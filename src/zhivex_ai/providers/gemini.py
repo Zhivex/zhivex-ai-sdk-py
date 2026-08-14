@@ -106,7 +106,7 @@ from ..types import (
     VideosClient,
     PortableSupport,
 )
-from .base import ProviderAdapter, create_provider_bundle
+from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from ._payload import drop_none
 from ._url_security import validate_provider_url
 
@@ -592,6 +592,43 @@ def _is_gemini_3_model(model_id: str) -> bool:
 
 def _is_gemini_3_pro_model(model_id: str) -> bool:
     return _is_gemini_3_model(model_id) and "pro" in model_id
+
+
+_GEMINI_FIXED_SAMPLING_MODELS = frozenset({"gemini-3.6-flash", "gemini-3.5-flash-lite"})
+_GEMINI_DEPRECATED_SAMPLING_KEYS = frozenset(
+    {"temperature", "top_p", "topP", "top_k", "topK", "candidate_count", "candidateCount"}
+)
+
+
+def _validate_latest_gemini_request(
+    provider: str,
+    model_id: str,
+    input: ModelGenerateInput | GroundedModelGenerateInput,
+) -> None:
+    if model_id not in _GEMINI_FIXED_SAMPLING_MODELS:
+        return
+    if input.temperature is not None:
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" model "{model_id}" does not accept custom temperature, top_p, or top_k values.'
+        )
+    provider_options = dict(input.provider_options or {})
+    generation_config = provider_options.get("generationConfig") or provider_options.get("generation_config") or {}
+    configured_sampling = set(_GEMINI_DEPRECATED_SAMPLING_KEYS.intersection(provider_options))
+    if isinstance(generation_config, dict):
+        configured_sampling.update(_GEMINI_DEPRECATED_SAMPLING_KEYS.intersection(generation_config))
+    if configured_sampling:
+        names = ", ".join(sorted(configured_sampling))
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" model "{model_id}" does not accept custom sampling parameters: {names}.'
+        )
+    last_turn = next(
+        (message for message in reversed(input.messages) if message.role != "system" and message.parts),
+        None,
+    )
+    if last_turn is not None and last_turn.role == "assistant":
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" model "{model_id}" does not support a prefilled assistant/model turn.'
+        )
 
 
 def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] | None:
@@ -1879,6 +1916,7 @@ class GeminiLanguageModel(LanguageModel):
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
+        _validate_latest_gemini_request(self.provider, self.model_id, input)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
@@ -1921,6 +1959,7 @@ class GeminiLanguageModel(LanguageModel):
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
         validate_message_parts(self, input.messages)
+        _validate_latest_gemini_request(self.provider, self.model_id, input)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
@@ -2107,6 +2146,7 @@ class GeminiGroundedLanguageModel(GroundedLanguageModel):
         return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
 
     async def generate(self, input: GroundedModelGenerateInput) -> GroundedGenerateResult:
+        _validate_latest_gemini_request(self.provider, self.model_id, input)
         response = await with_retry(
             lambda: self.fetch(
                 self._url("generateContent"),
@@ -2669,6 +2709,20 @@ class GeminiInteractionsClient(InteractionsClient):
 
     async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
         payload = deepcopy(body)
+        legacy_fields: list[str] = []
+        if "response_mime_type" in payload or "responseMimeType" in payload:
+            legacy_fields.append("response_mime_type")
+        generation_config = payload.get("generation_config") or payload.get("generationConfig")
+        if isinstance(generation_config, dict):
+            if "image_config" in generation_config or "imageConfig" in generation_config:
+                legacy_fields.append("generation_config.image_config")
+            if "response_modalities" in generation_config or "responseModalities" in generation_config:
+                legacy_fields.append("generation_config.response_modalities")
+        if legacy_fields:
+            names = ", ".join(legacy_fields)
+            raise ValidationError(
+                f"Gemini Interactions no longer accepts legacy fields ({names}); use the current polymorphic response_format contract."
+            )
         agent = str(payload.get("agent") or "")
         if agent.startswith("deep-research"):
             payload.setdefault("background", True)
@@ -2955,7 +3009,7 @@ def create_gemini(
     realtime_url: str | None = None,
     auth_token_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
-):
+) -> ProviderBundle:
     resolved_key = (
         api_key
         or os.getenv("GEMINI_API_KEY")

@@ -20,13 +20,17 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             run_live_smoke._agent_smoke_generation_options("openai"),
-            {"temperature": 0, "max_tokens": 80},
+            {"temperature": None, "max_tokens": 512},
+        )
+        self.assertEqual(
+            run_live_smoke._agent_smoke_generation_options("meta"),
+            {"temperature": None, "max_tokens": 1024},
         )
 
     def test_gemini_agent_smoke_allows_reasoning_before_tool_output(self) -> None:
         self.assertEqual(
             run_live_smoke._agent_smoke_generation_options("gemini"),
-            {"temperature": 0, "max_tokens": 512},
+            {"temperature": None, "max_tokens": 512},
         )
 
     def test_selected_providers_normalizes_azure_alias(self) -> None:
@@ -34,6 +38,10 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             selected = run_live_smoke._selected_providers()
 
         self.assertEqual(selected, {"openai", "azure-openai"})
+
+    def test_selected_providers_accepts_meta(self) -> None:
+        with patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "meta"}, clear=True):
+            self.assertEqual(run_live_smoke._selected_providers(), {"meta"})
 
     def test_selected_providers_rejects_unknown_values(self) -> None:
         with patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "openai,typo"}, clear=True):
@@ -65,6 +73,61 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(status, 1)
 
+    async def test_strict_mode_requires_every_explicitly_selected_provider(self) -> None:
+        output = io.StringIO()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_PROVIDERS": "openai,gemini",
+                    "ZHIVEX_SMOKE_STRICT": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "_load_dotenv_if_available"),
+            patch.object(
+                run_live_smoke,
+                "_run_openai",
+                new=AsyncMock(return_value=("openai", True, "ok", False)),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_gemini",
+                new=AsyncMock(return_value=("gemini", False, "skip: missing configuration", False)),
+            ),
+            redirect_stdout(output),
+        ):
+            status = await run_live_smoke.main()
+
+        self.assertEqual(status, 1)
+        self.assertIn("every explicitly selected provider", output.getvalue())
+        self.assertIn("missing: gemini", output.getvalue())
+
+    async def test_strict_mode_without_selector_keeps_at_least_one_provider_semantics(self) -> None:
+        skipped = AsyncMock(return_value=("skipped", False, "skip: missing configuration", False))
+        with (
+            patch.dict(os.environ, {"ZHIVEX_SMOKE_STRICT": "1"}, clear=True),
+            patch.object(run_live_smoke, "_load_dotenv_if_available"),
+            patch.object(
+                run_live_smoke,
+                "_run_openai",
+                new=AsyncMock(return_value=("openai", True, "ok", False)),
+            ),
+            patch.object(run_live_smoke, "_run_gemini", new=skipped),
+            patch.object(run_live_smoke, "_run_anthropic", new=skipped),
+            patch.object(run_live_smoke, "_run_azure_openai", new=skipped),
+            patch.object(run_live_smoke, "_run_vertex", new=skipped),
+            patch.object(run_live_smoke, "_run_ollama", new=skipped),
+            patch.object(run_live_smoke, "_run_qwen", new=skipped),
+            patch.object(run_live_smoke, "_run_kimi", new=skipped),
+            patch.object(run_live_smoke, "_run_deepseek", new=skipped),
+            patch.object(run_live_smoke, "_run_meta", new=skipped),
+            patch.object(run_live_smoke, "_run_vllm", new=skipped),
+        ):
+            status = await run_live_smoke.main()
+
+        self.assertEqual(status, 0)
+
     async def test_non_strict_mode_keeps_missing_credentials_as_documented_skip(self) -> None:
         with (
             patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "openai"}, clear=True),
@@ -85,6 +148,7 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             run_live_smoke._run_qwen,
             run_live_smoke._run_kimi,
             run_live_smoke._run_deepseek,
+            run_live_smoke._run_meta,
             run_live_smoke._run_vllm,
         ]
 
@@ -138,6 +202,37 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             status = await run_live_smoke.main()
 
         self.assertEqual(status, 0)
+
+    async def test_strict_agent_mode_requires_agent_smoke_for_every_executed_selection(self) -> None:
+        output = io.StringIO()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_PROVIDERS": "openai,gemini",
+                    "ZHIVEX_SMOKE_STRICT": "1",
+                    "ZHIVEX_SMOKE_AGENTS": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "_load_dotenv_if_available"),
+            patch.object(
+                run_live_smoke,
+                "_run_openai",
+                new=AsyncMock(return_value=("openai", True, "ok, agent-tool=ok", True)),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_gemini",
+                new=AsyncMock(return_value=("gemini", True, "ok", False)),
+            ),
+            redirect_stdout(output),
+        ):
+            status = await run_live_smoke.main()
+
+        self.assertEqual(status, 1)
+        self.assertIn("agent tool smoke for every selected provider", output.getvalue())
+        self.assertIn("missing: gemini", output.getvalue())
 
     async def test_agent_tool_smoke_runs_and_validates_local_tool_result(self) -> None:
         model = create_mock_language_model(
@@ -230,6 +325,46 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ("deepseek", True, "ok: deepseek-v4-flash", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
+
+    async def test_meta_smoke_uses_standard_opt_in_configuration(self) -> None:
+        provider = MagicMock()
+        provider.return_value = object()
+        response = GenerateResult(
+            text="META_SMOKE_OK.",
+            messages=[create_text_message("assistant", "META_SMOKE_OK.")],
+            finish_reason="stop",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "MODEL_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_meta", return_value=provider) as create,
+            patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)) as generate,
+        ):
+            result = await run_live_smoke._run_meta()
+
+        self.assertEqual(result, ("meta", True, "ok: muse-spark-1.2", False))
+        create.assert_called_once_with(api_key="test-key")
+        self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "low")
+        self.assertEqual(generate.await_args.kwargs["max_tokens"], 512)
+
+    async def test_meta_smoke_rejects_contributor_privacy_tier(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_API_KEY": "test-key",
+                "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2-contributor",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "Standard muse-spark-1.2"):
+                await run_live_smoke._run_meta()
 
     async def test_agent_tool_smoke_rejects_a_marker_embedded_in_extra_text(self) -> None:
         model = create_mock_language_model(

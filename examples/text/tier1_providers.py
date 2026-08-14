@@ -40,7 +40,11 @@ def _configured_runs() -> list[tuple[str, Callable[[], Any], str]]:
                 os.environ["ZHIVEX_EXAMPLE_AZURE_OPENAI_MODEL"],
             )
         )
-    if os.getenv("GEMINI_API_KEY") and os.getenv("ZHIVEX_EXAMPLE_GEMINI_MODEL"):
+    if (
+        os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    ) and os.getenv("ZHIVEX_EXAMPLE_GEMINI_MODEL"):
         runs.append(("gemini", create_gemini, os.environ["ZHIVEX_EXAMPLE_GEMINI_MODEL"]))
     if (os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")) and (
         os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")

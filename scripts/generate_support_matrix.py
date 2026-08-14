@@ -9,13 +9,14 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import (
+from zhivex_ai import (  # noqa: E402
     create_anthropic,
     create_azure_openai,
     create_bedrock,
     create_deepseek,
     create_gemini,
     create_kimi,
+    create_meta,
     create_ollama,
     create_openai,
     create_openrouter,
@@ -23,7 +24,7 @@ from zhivex_ai import (
     create_vllm,
     create_vertex,
 )
-from zhivex_ai.provider_support import (
+from zhivex_ai.provider_support import (  # noqa: E402
     build_provider_support_rows,
     render_provider_support_markdown,
     replace_readme_support_matrix,
@@ -61,6 +62,7 @@ def main() -> None:
             create_openrouter(api_key="test"),
             create_qwen(api_key="test"),
             create_kimi(api_key="test"),
+            create_meta(api_key="test"),
             create_ollama(),
             create_vllm(api_key="test"),
         ]

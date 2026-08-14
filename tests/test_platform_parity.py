@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -105,6 +106,55 @@ class PlatformParityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.name for item in result.outputs], ["one", "two"])
         self.assertIsNotNone(result.outputs[0].output)
         self.assertIsNotNone(result.outputs[1].error)
+
+    async def test_run_agent_group_supports_idempotency_limits_and_fail_fast(self) -> None:
+        first_store = create_in_memory_agent_run_store()
+        second_store = create_in_memory_agent_run_store()
+        first = Agent(name="first", model=create_mock_language_model(), run_store=first_store)
+        second = Agent(name="second", model=create_mock_language_model(), run_store=second_store)
+
+        initial = await run_agent_group(
+            [AgentGroupMember("first", first), AgentGroupMember("second", second)],
+            prompt="go",
+            idempotency_key="group",
+            max_concurrency=1,
+        )
+        repeated = await run_agent_group(
+            [AgentGroupMember("first", first), AgentGroupMember("second", second)],
+            prompt="ignored",
+            idempotency_key="group",
+            max_concurrency=1,
+        )
+
+        self.assertEqual(
+            [item.output.run_id for item in initial.outputs if item.output is not None],
+            [item.output.run_id for item in repeated.outputs if item.output is not None],
+        )
+
+        slow = Agent(name="slow", model=create_mock_language_model())
+
+        async def delayed_generate(_input):
+            await asyncio.sleep(1)
+
+        slow.model.generate = delayed_generate  # type: ignore[method-assign]
+        timed = await run_agent_group(
+            [AgentGroupMember("slow", slow)],
+            prompt="go",
+            timeout_ms=1,
+        )
+        self.assertIsInstance(timed.outputs[0].error, TimeoutError)
+
+        failing = Agent(name="bad", model=create_mock_language_model(responses=[]))
+        fail_fast = await run_agent_group(
+            [AgentGroupMember("bad", failing), AgentGroupMember("slow", slow)],
+            prompt="go",
+            fail_fast=True,
+        )
+        self.assertIsNotNone(fail_fast.outputs[0].error)
+        self.assertIn("failed fast", str(fail_fast.outputs[1].error))
+
+        with self.assertRaisesRegex(Exception, "max_concurrency"):
+            await run_agent_group([], max_concurrency=0)
 
     async def test_replay_evaluation_and_report(self) -> None:
         state = AgentRunState(

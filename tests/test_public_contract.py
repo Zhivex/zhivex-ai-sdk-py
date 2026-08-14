@@ -147,6 +147,36 @@ DOCUMENTED_STABLE_EXPORTS = {
 
 
 class PublicContractTests(TestCase):
+    def test_meta_factory_is_a_lazy_beta_top_level_export(self) -> None:
+        meta_exports = {
+            "create_meta",
+            "meta_hosted_tool",
+            "meta_tool_search_tool",
+            "meta_web_search_tool",
+        }
+        sys.modules.pop("zhivex_ai.providers.meta", None)
+        for name in meta_exports:
+            zhivex_ai.__dict__.pop(name, None)
+
+        self.assertTrue(meta_exports.issubset(zhivex_ai.__all__))
+        self.assertTrue(meta_exports.issubset(BETA_EXPORTS))
+        self.assertNotIn("zhivex_ai.providers.meta", sys.modules)
+
+        factory = zhivex_ai.create_meta
+
+        self.assertIn("zhivex_ai.providers.meta", sys.modules)
+        self.assertIs(factory, sys.modules["zhivex_ai.providers.meta"].create_meta)
+        for name in meta_exports - {"create_meta"}:
+            self.assertIs(getattr(zhivex_ai, name), getattr(sys.modules["zhivex_ai.providers.meta"], name))
+
+    def test_example_fixture_types_are_beta_top_level_exports(self) -> None:
+        fixture_types = {"GenerateResult", "JsonValue", "ModelGenerateInput"}
+
+        self.assertTrue(fixture_types.issubset(zhivex_ai.__all__))
+        self.assertTrue(fixture_types.issubset(BETA_EXPORTS))
+        for name in fixture_types:
+            self.assertIsNotNone(getattr(zhivex_ai, name))
+
     def test_workflow_errors_are_typed_beta_top_level_exports(self) -> None:
         workflow_errors = {
             "WorkflowConflictError",

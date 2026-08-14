@@ -76,9 +76,39 @@ Use `create_budget_guard(...)` and `create_safety_policy(...)` for runtime ceili
 
 The SDK is async-first. Keep concurrency bounded per provider/model and give every production call a timeout budget. Tool implementations should accept cancellation from the worker or HTTP layer and avoid unbounded network calls.
 
+Use one cooperative token for the active run tree and pair it with the durable operator action:
+
+```python
+from zhivex_ai import (
+    AgentCancellationToken,
+    AgentRunStartEvent,
+    cancel_agent_run_tree,
+    stream_agent,
+)
+
+token = AgentCancellationToken()
+stream = stream_agent(agent=agent, prompt=prompt, cancellation_token=token)
+async for event in stream.event_stream():
+    if isinstance(event, AgentRunStartEvent):
+        run_id = event.run_id
+        break
+
+# On disconnect, job revocation, or operator cancellation:
+await cancel_agent_run_tree(
+    agent.run_store,
+    run_id,
+    reason="request disconnected",
+    cancellation_token=token,
+)
+```
+
+The token interrupts cancellable provider/event waits and is propagated to `ToolExecutionContext`; tool code should call `context.raise_if_cancelled()` around its own long-running boundaries. A durable cancellation performed by another process is observed at runtime boundaries, while the local token provides immediate same-process signaling. Cancellation cannot stop an already-running synchronous callable in a worker thread or undo an external write.
+
+For beta fan-out coordination, `run_agent_group(..., max_concurrency=..., timeout_ms=..., fail_fast=True)` bounds active members, applies a per-member timeout, and reports every member in input order. Use a stable group `idempotency_key` plus unique member names or explicit member keys; fail-fast cancellation still cannot prove that an external effect was rolled back.
+
 Tool timeouts are an uncertainty boundary, not proof that an external action was rolled back. The SDK raises `ToolExecutionOutcomeUnknown` and stops the agent loop when a tool exceeds `ToolExecutionOptions.timeout_ms`. Use `ToolExecutionContext.idempotency_key` with the downstream service to reconcile the operation before retrying; Python cannot terminate a synchronous callable that is already running in a worker thread.
 
-Use run stores when you need cancellation records, idempotency, replay, or auditability. Built-in stores cancel atomically and use state revisions so a late worker completion cannot overwrite `cancelled`. Cancellation does not terminate a provider request, thread, or external side effect already in flight; workers and tools must still cooperate to stop promptly.
+Use run stores when you need cancellation records, idempotency, replay, or auditability. Built-in stores cancel atomically and use state revisions so a late worker completion cannot overwrite `cancelled`. A store record alone does not terminate a thread or external side effect already in flight; workers and tools must still cooperate to stop promptly.
 
 ## Serverless Vs Workers
 

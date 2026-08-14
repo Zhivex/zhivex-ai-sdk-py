@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (
     Agent,
+    GenerateResult,
     ParallelAgent,
     SequentialAgent,
     WorkflowStep,
@@ -21,7 +22,6 @@ from zhivex_ai import (
     create_mock_language_model,
     replay_agent_run,
 )
-from zhivex_ai.types import GenerateResult
 
 
 @dataclass(slots=True)

@@ -12,10 +12,12 @@ from zhivex_ai.agent_evaluation import (
     AgentEvaluationCase,
     AgentEvaluationExpectations,
     AgentEvaluationGate,
+    AgentEvaluationJudgeResult,
     AgentEvaluationMetric,
     AgentEvaluationVariant,
     create_agent_evaluation_report,
     create_agent_evaluation_dataset_from_traces,
+    judge_agent_evaluation,
     run_agent_evaluation,
     run_agent_evaluation_experiment,
 )
@@ -172,10 +174,73 @@ class AgentEvaluationExperimentTests(unittest.IsolatedAsyncioTestCase):
         report = create_agent_evaluation_report(result)
         self.assertEqual(report.trial_total, 6)
         self.assertEqual(report.metrics["trial_pass_rate"], 1.0)
+        self.assertAlmostEqual(report.metrics["trial_pass_rate_ci95_lower"], 0.6096657121)
+        self.assertEqual(report.metrics["trial_pass_rate_ci95_upper"], 1.0)
         self.assertEqual(report.metrics["total_cost"], 1.5)
         self.assertEqual(report.metrics["mean_total_tokens"], 5.0)
         self.assertGreaterEqual(report.metrics["mean_latency_ms"], 0)
         self.assertGreaterEqual(report.metrics["p95_latency_ms"], report.metrics["mean_latency_ms"])
+        self.assertGreaterEqual(report.metrics["latency_stddev_ms"], 0)
+
+        payload = json.loads(report.to_json(), parse_constant=lambda value: self.fail(value))
+        self.assertEqual(payload["metrics"]["trial_pass_rate_ci95_lower"], report.metrics["trial_pass_rate_ci95_lower"])
+        self.assertEqual(payload["metrics"]["trial_pass_rate_ci95_upper"], 1.0)
+
+    async def test_repeated_trial_pass_rate_uses_wilson_confidence_interval(self) -> None:
+        responses = [
+            GenerateResult(
+                text="ok" if repetition % 2 == 0 else "wrong",
+                message=create_text_message("assistant", "ok" if repetition % 2 == 0 else "wrong"),
+                finish_reason="stop",
+            )
+            for repetition in range(10)
+        ]
+        agent = Agent(name="assistant", model=create_mock_language_model(responses=responses))
+
+        result = await run_agent_evaluation(
+            agent=agent,
+            dataset=[
+                AgentEvaluationCase(
+                    "variable",
+                    expectations=AgentEvaluationExpectations(output_equals="ok"),
+                )
+            ],
+            repetitions=10,
+        )
+        report = create_agent_evaluation_report(result)
+
+        self.assertEqual(report.trial_pass_rate, 0.5)
+        self.assertAlmostEqual(report.metrics["trial_pass_rate_ci95_lower"], 0.2365930905)
+        self.assertAlmostEqual(report.metrics["trial_pass_rate_ci95_upper"], 0.7634069095)
+        self.assertTrue(math.isfinite(report.metrics["latency_stddev_ms"]))
+
+    async def test_default_judge_is_deterministic_and_custom_judges_remain_supported(self) -> None:
+        result = await run_agent_evaluation(
+            agent=_agent_with_text("wrong"),
+            dataset=[
+                AgentEvaluationCase(
+                    "case",
+                    expectations=AgentEvaluationExpectations(output_equals="expected"),
+                )
+            ],
+        )
+
+        deterministic = await judge_agent_evaluation(result)
+        self.assertEqual(deterministic.score, 0.0)
+        self.assertEqual(deterministic.metadata["judge_type"], "deterministic_expectations")
+        self.assertEqual(deterministic.metadata["scoring"], "case_pass_rate")
+        self.assertEqual(deterministic.feedback, "One or more evaluation cases failed.")
+
+        async def custom_judge(_):
+            return AgentEvaluationJudgeResult(
+                score=0.75,
+                feedback="Application rubric",
+                metadata={"judge_type": "application_rubric"},
+            )
+
+        custom = await judge_agent_evaluation(result, judge=custom_judge)
+        self.assertEqual(custom.score, 0.75)
+        self.assertEqual(custom.metadata["judge_type"], "application_rubric")
 
     async def test_validates_dataset_execution_options_and_previously_ignored_expectations(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot be empty"):

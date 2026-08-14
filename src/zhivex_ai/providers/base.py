@@ -248,9 +248,18 @@ class PortableLanguageModel:
     provider: str
     model_id: str
     capabilities: object
+    portable_support: PortableSupport
     portable: bool = True
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        if input.structured_output is not None and not self.portable_support.structured_output:
+            raise UnsupportedFeatureError(
+                f'Provider "{self.provider}" does not support structured output through the portable contract.'
+            )
+        if input.tools and not self.portable_support.tools:
+            raise UnsupportedFeatureError(
+                f'Provider "{self.provider}" does not support tools through the portable contract.'
+            )
         if input.provider_options is not None:
             raise ValidationError(
                 f'Portable model "{self.provider}/{self.model_id}" does not accept provider_options. '
@@ -259,6 +268,18 @@ class PortableLanguageModel:
         return await self.native_model.generate(input)
 
     async def stream(self, input: ModelGenerateInput):
+        if not self.portable_support.streaming:
+            raise UnsupportedFeatureError(
+                f'Provider "{self.provider}" does not support streaming through the portable contract.'
+            )
+        if input.structured_output is not None and not self.portable_support.structured_output:
+            raise UnsupportedFeatureError(
+                f'Provider "{self.provider}" does not support structured output through the portable contract.'
+            )
+        if input.tools and not self.portable_support.tools:
+            raise UnsupportedFeatureError(
+                f'Provider "{self.provider}" does not support tools through the portable contract.'
+            )
         if input.provider_options is not None:
             raise ValidationError(
                 f'Portable model "{self.provider}/{self.model_id}" does not accept provider_options. '
@@ -351,41 +372,50 @@ class PortableProviderNamespace:
     native_adapter: ProviderAdapter
     portable_support: PortableSupport
 
-    def _unsupported(self) -> UnsupportedFeatureError:
+    def _unsupported(self, feature: str | None = None) -> UnsupportedFeatureError:
+        detail = f' does not support portable {feature}' if feature else " does not satisfy the portable contract"
         return UnsupportedFeatureError(
-            f'Provider "{self.name}" does not satisfy the portable contract. '
+            f'Provider "{self.name}"{detail}. '
             'Use the explicit native namespace (`provider.native`) for provider-specific access.'
         )
 
-    def _ensure_portable(self) -> None:
+    def _ensure_portable(self, feature: str, supported: bool) -> None:
         if not self.portable_support.portable_badge:
             raise self._unsupported()
+        if not supported:
+            raise self._unsupported(feature)
 
     def __call__(self, model_id: str) -> PortableLanguageModel:
         return self.language_model(model_id)
 
     def language_model(self, model_id: str) -> PortableLanguageModel:
-        self._ensure_portable()
+        self._ensure_portable("text generation", self.portable_support.text_generation)
         model = self.native_adapter.language_model(model_id)
-        return PortableLanguageModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
+        return PortableLanguageModel(
+            native_model=model,
+            provider=model.provider,
+            model_id=model.model_id,
+            capabilities=model.capabilities,
+            portable_support=self.portable_support,
+        )
 
     def embedding_model(self, model_id: str) -> PortableEmbeddingModel:
-        self._ensure_portable()
+        self._ensure_portable("embeddings", self.portable_support.embeddings)
         model = self.native_adapter.embedding_model(model_id)
         return PortableEmbeddingModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
 
     def grounded_language_model(self, model_id: str) -> PortableGroundedLanguageModel:
-        self._ensure_portable()
+        self._ensure_portable("grounding", self.portable_support.grounding)
         model = self.native_adapter.grounded_language_model(model_id)
         return PortableGroundedLanguageModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
 
     def transcription_model(self, model_id: str) -> PortableTranscriptionModel:
-        self._ensure_portable()
+        self._ensure_portable("transcription", self.portable_support.transcription)
         model = self.native_adapter.transcription_model(model_id)
         return PortableTranscriptionModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
 
     def speech_model(self, model_id: str) -> PortableSpeechModel:
-        self._ensure_portable()
+        self._ensure_portable("speech", self.portable_support.speech)
         model = self.native_adapter.speech_model(model_id)
         return PortableSpeechModel(native_model=model, provider=model.provider, model_id=model.model_id, capabilities=model.capabilities)
 
@@ -496,6 +526,8 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         responses=adapter.responses_client_factory is not None,
         conversations=adapter.conversations_client_factory is not None,
         caches=adapter.caches_client_factory is not None,
+        count_tokens=adapter.count_tokens_client_factory is not None,
+        formulas=adapter.formulas_client_factory is not None,
     )
 
 
