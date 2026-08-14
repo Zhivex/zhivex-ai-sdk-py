@@ -19,6 +19,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseArtifactToolingTests(TestCase):
+    def test_ci_and_publish_workflows_provision_the_pinned_uv_release_dependency(self) -> None:
+        setup_uv = (
+            "uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d "
+            "# v10.0.1"
+        )
+        for workflow_name in ["ci.yml", "publish-pypi.yml", "publish-testpypi.yml"]:
+            workflow = (ROOT / ".github/workflows" / workflow_name).read_text("utf-8")
+            self.assertIn(setup_uv, workflow)
+            self.assertIn('version: "0.12.4"', workflow)
+
+        ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text("utf-8")
+        self.assertIn("make PYTHON=python security-check", ci_workflow)
+
     @staticmethod
     def _write_wheel(path: Path, *, metadata_version: str, project_name: str = "zhivex-ai-sdk") -> None:
         metadata = f"Metadata-Version: 2.4\nName: {project_name}\nVersion: {metadata_version}\n"
@@ -345,7 +358,7 @@ class ReleaseArtifactToolingTests(TestCase):
 
         for workflow in [ci, publish, test_publish]:
             self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("python -m pip_audit --skip-editable", ci)
+        self.assertIn("make PYTHON=python security-check", ci)
         self.assertEqual(ci.count('"setuptools>=83.0.0"'), 3)
         self.assertIn('"setuptools>=83.0.0"', publish)
         self.assertIn('"setuptools>=83.0.0"', test_publish)
