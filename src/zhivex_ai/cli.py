@@ -27,7 +27,7 @@ def _sdk_version() -> str:
     try:
         return version("zhivex-ai-sdk")
     except PackageNotFoundError:
-        return "0.18.1"
+        return "0.18.2"
 
 
 def load_agent(spec: str) -> Agent:

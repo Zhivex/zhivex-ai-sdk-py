@@ -39,6 +39,29 @@ Related documents:
 
 - None.
 
+## 0.18.2
+
+### Added
+
+- None.
+
+### Changed
+
+- Bumped the package version to `0.18.2` for the PyPI publisher recovery; public API stability and provider-support classifications are unchanged from `0.18.1`.
+
+### Fixed
+
+- Updated the commit-pinned PyPI and TestPyPI publisher to `v1.14.2`, whose bundled Twine 7 accepts Core Metadata 2.5 emitted by current build tooling.
+- Added a release regression contract that keeps both publication workflows on the Metadata 2.5-compatible publisher.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.18.1
 
 ### Added

@@ -32,6 +32,15 @@ class ReleaseArtifactToolingTests(TestCase):
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text("utf-8")
         self.assertIn("make PYTHON=python security-check", ci_workflow)
 
+    def test_publish_workflows_use_metadata_25_compatible_publisher(self) -> None:
+        publisher = (
+            "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 "
+            "# v1.14.2"
+        )
+        for workflow_name in ["publish-pypi.yml", "publish-testpypi.yml"]:
+            workflow = (ROOT / ".github/workflows" / workflow_name).read_text("utf-8")
+            self.assertIn(publisher, workflow)
+
     @staticmethod
     def _write_wheel(path: Path, *, metadata_version: str, project_name: str = "zhivex-ai-sdk") -> None:
         metadata = f"Metadata-Version: 2.4\nName: {project_name}\nVersion: {metadata_version}\n"
