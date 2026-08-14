@@ -21,6 +21,28 @@ Related documents:
 
 ### Added
 
+- None.
+
+### Changed
+
+- None.
+
+### Fixed
+
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.18.0
+
+### Added
+
 - Added Beta portable `create_meta()` support for Meta Model API Muse Spark through Chat Completions and Responses, including text/streaming, JSON Schema output, callable and hosted tools, files, continuation, catalog metadata, gateway typing, optional live smoke, and offline contracts. Meta remains non-Tier-1 and no live certification is implied.
 - Added Muse Spark direct catalog entries, conservative Muse Glimmer routes for vLLM/Ollama/OpenRouter, and official Llama 4 Scout/Maverick vLLM references. Glimmer is modeled as one tool call per turn without parallel tools or a guaranteed structured-output contract; Llama 4 remains host/open-weight rather than a direct Meta Model API claim.
 - Added beta top-level exports for `GenerateResult`, `ModelGenerateInput`, and `JsonValue` so runnable examples can use the documented `zhivex_ai` entrypoint without deep imports.
@@ -30,6 +52,7 @@ Related documents:
 
 ### Changed
 
+- Bumped the package version to `0.18.0`; the package remains Beta, Meta remains a Beta non-Tier-1 provider, and the newly added tool, cancellation, evaluation, and realtime surfaces retain the stability levels documented in `STABILITY.md`.
 - Reclassified the non-portable `create_bedrock()`, `create_openrouter()`, and `create_ollama()` factories as Experimental, matching the stability policy for native-only and compatibility providers.
 - Clarified that tier-1 is an offline contract/support classification and that live certification must be attributed to the exact provider, model, operation, and release SHA that was smoked.
 - Extended model-catalog entries with API surface, availability, region, evidence level, and source metadata; added the current stable Gemini/Vertex `gemini-3.6-flash` and `gemini-3.5-flash-lite` references.
