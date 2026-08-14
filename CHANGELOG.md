@@ -39,6 +39,29 @@ Related documents:
 
 - None.
 
+## 0.18.1
+
+### Added
+
+- None.
+
+### Changed
+
+- Bumped the package version to `0.18.1` for the release-workflow recovery; public API stability and provider-support classifications are unchanged from `0.18.0`.
+
+### Fixed
+
+- Provisioned a pinned `uv` executable in CI, PyPI, and TestPyPI workflows before dependency auditing, and aligned regular CI with the same `security-check` invoked by `release-check`.
+- Added a release-workflow regression contract so a missing or drifting `uv` setup cannot silently leave ordinary CI green while tagged publication fails.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.18.0
 
 ### Added

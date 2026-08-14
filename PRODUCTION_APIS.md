@@ -116,7 +116,7 @@ See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTIO
 
 ## Protocol APIs
 
-The current `0.18.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
+The current `0.18.1` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
 
 - Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
 - Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.
@@ -133,7 +133,7 @@ See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md) for supported routes, extras, wire 
 
 ## Workflow APIs
 
-Durable workflow graphs were introduced in `0.15.0` and remain beta in the current `0.18.0` line; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
+Durable workflow graphs were introduced in `0.15.0` and remain beta in the current `0.18.1` line; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
 
 Recommended endpoint boundaries:
 
