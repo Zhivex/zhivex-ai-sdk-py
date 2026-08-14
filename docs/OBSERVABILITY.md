@@ -7,6 +7,7 @@ Related examples:
 - `examples/integrations/observability.py`
 - `examples/integrations/operations_hardening.py`
 - [../PRODUCTION_APIS.md](../PRODUCTION_APIS.md)
+- [../STABILITY.md](../STABILITY.md)
 - [AGENTS.md](./AGENTS.md)
 - [OPERATIONS.md](./OPERATIONS.md)
 
@@ -25,6 +26,8 @@ make dev
 ## Foundation Telemetry
 
 `create_telemetry_middleware(...)` emits lifecycle events around model calls. The event payload includes model identity, input, start time, finish time, latency, output, or error.
+
+The telemetry middleware is a Beta API. It is suitable for evaluated production adoption behind an application-owned observability boundary, but its exact event ergonomics may change between minor releases with changelog coverage.
 
 Recommended log fields:
 
@@ -45,6 +48,10 @@ pip install "zhivex-ai-sdk[otel]"
 ```
 
 Use `create_otel_agent_observer(...)` to connect agent runs, guardrails, tools, handoffs, summaries, and errors to your tracer. Your service should set resource attributes such as service name, deployment environment, tenant, and region through the OpenTelemetry SDK. The SDK-level observer should receive already-approved metadata, not secrets.
+
+Per-tool guardrail events use the existing `guardrail` event with `scope="tool"`, `tool_name`, `tool_stage`, and whether a replacement occurred. They intentionally omit tool input, tool output, runtime dependencies, and underlying policy exception details; keep any additional guardrail metadata low-cardinality and non-sensitive.
+
+`create_otel_agent_observer(...)` and its concrete observer type are Beta. Keep exporter configuration and your durable telemetry schema application-owned rather than treating SDK span names or attributes as an independently stable storage contract.
 
 Recommended span attributes:
 

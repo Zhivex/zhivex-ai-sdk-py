@@ -256,10 +256,10 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     requests[-1]["json"]["input"][0]["content"],
                     [
-                        {"type": "text", "text": "What color is this?"},
+                        {"type": "input_text", "text": "What color is this?"},
                         {
-                            "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,iVBORw0KGgo=",
                         },
                     ],
                 )
@@ -267,6 +267,49 @@ class QwenProviderTests(IsolatedAsyncioTestCase):
                     requests[-1]["url"],
                     "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
                 )
+
+    async def test_qwen_responses_replays_assistant_text_as_output_text(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            return FakeResponse(
+                status_code=200,
+                payload={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "done"}],
+                        }
+                    ],
+                },
+            )
+
+        provider = create_qwen(api_key="test", fetch=fetch)
+        await generate_text(
+            model=provider.native.language_model("qwen3.8-max"),
+            messages=[
+                ModelMessage(role="user", parts=[TextPart(text="First turn")]),
+                ModelMessage(role="assistant", parts=[TextPart(text="Prior answer")]),
+                ModelMessage(role="user", parts=[TextPart(text="Continue")]),
+            ],
+        )
+
+        self.assertEqual(
+            requests[0]["json"]["input"][1]["content"],
+            [{"type": "output_text", "text": "Prior answer"}],
+        )
 
     async def test_qwen38_routes_json_schema_output_to_non_thinking_chat(self) -> None:
         requests: list[dict[str, Any]] = []

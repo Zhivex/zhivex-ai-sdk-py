@@ -53,7 +53,7 @@ from ..types import (
     TranscriptionModel,
     TranscriptionOutput,
 )
-from .base import create_provider_bundle
+from .base import ProviderBundle, create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OPENAI_COMPAT_SPEECH_CAPABILITIES,
@@ -892,7 +892,7 @@ def create_qwen(
     base_url: str | None = None,
     responses_base_url: str | None = None,
     fetch: Fetcher | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing qwen API key.")

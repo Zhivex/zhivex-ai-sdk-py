@@ -26,17 +26,19 @@ export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_QWEN_MODEL=qwen3.8-max
 export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
 export ZHIVEX_SMOKE_DEEPSEEK_MODEL=deepseek-v4-flash
+export ZHIVEX_SMOKE_META_MODEL=muse-spark-1.2
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_VLLM_MODEL=your-local-vllm-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,vllm`.
+It only runs providers that have the required credentials and model IDs in the environment. You can restrict the run with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,meta,vllm`.
 Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` plus the matching image, video, or media model ID environment variable, such as `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`, `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`, `lyria-3-pro-preview`, or `lyria-3-clip-preview`.
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
 Qwen uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`; optional checks are enabled by `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
+Meta uses `MODEL_API_KEY` plus an explicit `ZHIVEX_SMOKE_META_MODEL`; `muse-spark-1.2` Standard is the recommended smoke target. Meta is Beta, non-Tier-1, and not certified until an authenticated run is recorded.
 
 If a realtime example fails on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, that usually means the local Python install is missing CA roots. You can work around it per-command with:
 
@@ -74,6 +76,7 @@ Suggested order if you are new to the SDK:
 ```bash
 .venv/bin/python examples/text/openai_text.py
 .venv/bin/python examples/text/tier1_providers.py
+.venv/bin/python examples/text/meta_text.py
 .venv/bin/python examples/text/kimi_native.py
 .venv/bin/python examples/text/stream_text.py
 .venv/bin/python examples/text/structured_output.py
@@ -110,6 +113,7 @@ Suggested order if you are new to the SDK:
 ```bash
 .venv/bin/python examples/text/openai_text.py
 .venv/bin/python examples/text/tier1_providers.py
+.venv/bin/python examples/text/meta_text.py
 .venv/bin/python examples/text/kimi_native.py
 .venv/bin/python examples/text/qwen_native.py
 .venv/bin/python examples/text/ollama_text.py
@@ -224,6 +228,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 | `agents/hr_candidate_selection_agent.py` | offline | dev env | `.venv/bin/python examples/agents/hr_candidate_selection_agent.py` | `make test-examples` |
 | `text/tier1_providers.py` | live optional | one tier-1 provider credential and model env | `.venv/bin/python examples/text/tier1_providers.py` | `ZHIVEX_SMOKE_PROVIDERS=openai make smoke` |
 | `text/deepseek_native.py` | live optional | `DEEPSEEK_API_KEY`; optional `DEEPSEEK_MODEL` | `.venv/bin/python examples/text/deepseek_native.py` | `ZHIVEX_SMOKE_PROVIDERS=deepseek make smoke` |
+| `text/meta_text.py` | live optional | `MODEL_API_KEY`; optional `ZHIVEX_EXAMPLE_META_MODEL` | `.venv/bin/python examples/text/meta_text.py` | `ZHIVEX_SMOKE_PROVIDERS=meta make smoke` |
 | `integrations/fastapi_chat_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_chat_api:app --reload` | manual HTTP smoke |
 | `integrations/fastapi_streaming_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_streaming_api:app --reload` | manual streaming smoke |
 | `integrations/fastapi_gateway_api.py` | live optional | `zhivex-ai-sdk[api]` and provider env | `uvicorn examples.integrations.fastapi_gateway_api:app --reload` | manual HTTP smoke |

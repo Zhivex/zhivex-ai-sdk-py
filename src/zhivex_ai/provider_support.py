@@ -75,6 +75,10 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         "Streaming",
         "Structured Output",
         "Tools",
+        "Embeddings",
+        "Grounding",
+        "Transcription",
+        "Speech",
         "Files",
         "File Search",
         "Images",
@@ -90,6 +94,8 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         "Responses",
         "Conversations",
         "Caches",
+        "Token Count",
+        "Formulas",
     ]
     agent_headers = [
         "Provider",
@@ -111,15 +117,15 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
                 row.provider,
                 row.tier,
                 _yes_no(row.portable_badge),
-                _yes_no(row.portable_support.text_generation),
-                _yes_no(row.portable_support.streaming),
-                _yes_no(row.portable_support.structured_output),
-                _yes_no(row.portable_support.tools),
-                _yes_no(row.portable_support.embeddings),
-                _yes_no(row.portable_support.grounding),
-                _yes_no(row.portable_support.retrieval),
-                _yes_no(row.portable_support.transcription),
-                _yes_no(row.portable_support.speech),
+                _portable_yes_no(row, row.portable_support.text_generation),
+                _portable_yes_no(row, row.portable_support.streaming),
+                _portable_yes_no(row, row.portable_support.structured_output),
+                _portable_yes_no(row, row.portable_support.tools),
+                _portable_yes_no(row, row.portable_support.embeddings),
+                _portable_yes_no(row, row.portable_support.grounding),
+                _portable_yes_no(row, row.portable_support.retrieval),
+                _portable_yes_no(row, row.portable_support.transcription),
+                _portable_yes_no(row, row.portable_support.speech),
             ]
             for row in materialized
         ],
@@ -133,6 +139,10 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
                 _yes_no(row.native_support.streaming),
                 _yes_no(row.native_support.structured_output),
                 _yes_no(row.native_support.tools),
+                _yes_no(row.native_support.embeddings),
+                _yes_no(row.native_support.grounding),
+                _yes_no(row.native_support.transcription),
+                _yes_no(row.native_support.speech),
                 _yes_no(row.native_support.files),
                 _yes_no(row.native_support.file_search),
                 _yes_no(row.native_support.images),
@@ -148,6 +158,8 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
                 _yes_no(row.native_support.responses),
                 _yes_no(row.native_support.conversations),
                 _yes_no(row.native_support.caches),
+                _yes_no(row.native_support.count_tokens),
+                _yes_no(row.native_support.formulas),
             ]
             for row in materialized
         ],
@@ -210,6 +222,10 @@ def replace_readme_support_matrix(markdown: str, rows: Iterable[ProviderSupportR
 
 def _yes_no(value: bool) -> str:
     return "Yes" if value else "No"
+
+
+def _portable_yes_no(row: ProviderSupportRow, value: bool) -> str:
+    return _yes_no(value) if row.portable_badge else "N/A"
 
 
 def _render_table(headers: list[str], rows: list[list[str]]) -> str:

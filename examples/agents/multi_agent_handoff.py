@@ -9,9 +9,18 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import Agent, create_mock_language_model, create_text_message, handoff_to, run_agent, tool  # noqa: E402
-from zhivex_ai.messages import tool_call_part  # noqa: E402
-from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall  # noqa: E402
+from zhivex_ai import (  # noqa: E402
+    Agent,
+    GenerateResult,
+    ModelMessage,
+    ToolCall,
+    create_mock_language_model,
+    create_text_message,
+    handoff_to,
+    run_agent,
+    tool,
+    tool_call_part,
+)
 
 
 async def main() -> None:

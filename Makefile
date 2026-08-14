@@ -1,6 +1,6 @@
 PYTHON := .venv/bin/python
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv venv .venv
@@ -22,13 +22,13 @@ test-core:
 	$(PYTHON) -m pytest tests/test_core.py tests/test_gateway.py tests/test_runtime.py tests/test_transport.py tests/test_http.py tests/test_catalog_and_middleware.py -q
 
 test-providers:
-	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_deepseek_provider.py tests/test_kimi_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_hosted_tools.py tests/test_realtime.py -q
+	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_deepseek_provider.py tests/test_kimi_provider.py tests/test_meta_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_hosted_tools.py tests/test_realtime.py -q
 
 test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
 
 test-agents:
-	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
+	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_dx_guardrails.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
 
 test-evals:
 	$(PYTHON) -m pytest tests/test_agent_evaluation.py tests/test_cli.py -q
@@ -45,8 +45,11 @@ test-cov:
 lint:
 	$(PYTHON) -m ruff check src tests examples
 
-typecheck:
+typecheck: public-stub-check
 	$(PYTHON) -m mypy
+
+public-stub-check:
+	$(PYTHON) scripts/generate_public_stub.py --check
 
 smoke:
 	$(PYTHON) scripts/run_live_smoke.py
@@ -62,7 +65,7 @@ support-matrix-check:
 
 security-check:
 	$(PYTHON) -m pip check
-	$(PYTHON) -m pip_audit . --strict
+	$(PYTHON) scripts/audit_dependencies.py
 	$(PYTHON) -m pip_audit --local --skip-editable
 
 check: compile lint typecheck support-matrix-check test-cov

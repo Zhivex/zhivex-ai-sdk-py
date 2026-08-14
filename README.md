@@ -9,7 +9,7 @@ Zhivex AI SDK for Python is an async-first, agent-first SDK for building orchest
 
 It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
 
-- one agent runtime with executable handoffs, native subagent tools, shared sessions, durable run state, evaluation helpers, safety policies, tool registries, and traces
+- one agent runtime with executable handoffs, native subagent tools, shared sessions, durable run state, cooperative cancellation, tool guardrails, evaluation helpers, safety policies, tool registries, and traces
 - one normalized foundation layer for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
 - thin provider adapters instead of provider-specific app logic everywhere
 - portable application code across the portable tier, with explicit native escape hatches for provider-specific features
@@ -56,16 +56,16 @@ See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.m
 
 ## Highlights
 
-- Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, input/output guardrails, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
+- Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, agent and per-tool input/output guardrails, cooperative cancellation, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
 - Beta durable workflow graphs with validated DAGs, persisted routing/checkpoints, in-memory/SQLite/Postgres execution leases with heartbeat/fencing, resume/fork/cancel, interrupts, step retries, and callback adapters
-- Beta repeated evaluation trials with bounded concurrency, latency/token/application-cost metrics, redacted trajectories, JSON/JUnit artifacts, variants, and CI regression gates
+- Beta repeated evaluation trials with bounded concurrency, pass-rate confidence intervals, latency dispersion, token/application-cost metrics, redacted trajectories, JSON/JUnit artifacts, variants, and CI regression gates
 - Beta A2A v1, AG-UI, and strict Responses-compatible hosting with trusted run context, safe errors, lifecycle events, finite limits, injectable durability/replay, and a loopback-only local playground
 - `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
 - Unified `generate_text()` and `stream_text()` foundation primitives
 - Structured output with `generate_object()` and `stream_object()`
 - Grounded text for providers with web search support
 - Audio transcription and speech generation where the provider supports it
-- Experimental realtime/live voice sessions plus `stream_live_agent()` for voice-first agents
+- Experimental realtime/live voice sessions plus `stream_live_agent()` with durable approval suspension, idempotency, middleware, tool timeouts, and cancellation for voice-first agents
 - Text and multimodal embeddings support where the provider supports it
 - Google native clients for Gemini/Vertex image, video, music, batch, interaction, and Gemini context-cache workflows
 - Provider factories for hosted and local models
@@ -92,6 +92,8 @@ Portable construction fails fast for providers that do not satisfy the portable 
 
 For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
+Meta Model API is a Beta portable, non-Tier-1 provider. Its portable badge means the SDK-owned namespace is available for the capabilities marked `Yes`; it does not imply Stable API status, complete coverage of every Meta model family, or authenticated live certification. See [docs/providers/meta.md](./docs/providers/meta.md).
+
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
 It includes beta provider agent capability metadata alongside portable support and native extras, so the docs stay aligned with the runtime support model instead of drifting by hand.
@@ -117,33 +119,35 @@ These providers back the stable surface for production API work in this SDK toda
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | anthropic | portable | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No | No |
 | azure-openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| bedrock | native-only | No | Yes | No | No | No | No | No | Yes | No | No |
+| bedrock | native-only | No | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | deepseek | portable | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No |
 | gemini | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | kimi | portable | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No |
-| ollama | compatibility | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No |
+| meta | portable | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No |
+| ollama | compatibility | No | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | openai | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| openrouter | native-only | No | Yes | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
+| openrouter | native-only | No | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | qwen | portable | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No |
 | vertex | portable | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | vllm | portable | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | No |
 
 ### Native Extras
 
-| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| azure-openai | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No |
-| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No |
-| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes |
-| kimi | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No |
-| ollama | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No |
-| openrouter | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No |
-| vertex | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No |
-| vllm | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No |
+| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches | Token Count | Formulas |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | Yes | Yes | Yes | No | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No |
+| azure-openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No | No | No |
+| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No |
+| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No |
+| kimi | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes |
+| meta | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No |
+| ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No |
+| openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No | No | No |
+| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No | Yes | No |
+| vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No |
 
 ### Agent Capabilities
 
@@ -155,6 +159,7 @@ These providers back the stable surface for production API work in this SDK toda
 | deepseek | tier-b | Yes | No | No | No | No | No | No | No |
 | gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 | kimi | tier-b | Yes | No | No | No | No | No | No | Yes |
+| meta | tier-c | No | No | Yes | No | No | No | No | Yes |
 | ollama | tier-c | No | No | No | No | No | No | No | No |
 | openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
@@ -168,11 +173,13 @@ These providers back the stable surface for production API work in this SDK toda
 Tool support now follows the same rule everywhere:
 
 - The portable layer accepts only the SDK-owned contract. It rejects `provider_options` and any provider-managed tool payloads.
+- `N/A` in the portable table means model construction through `provider(...)` is disabled for that provider; native capability values belong to the separate `Native Extras` table.
 - Provider-specific hosted tools, raw Responses settings, Gemini built-in tools, and similar knobs must go through `provider.native.*`.
 - First-class hosted tool definitions are the preferred native path for OpenAI, Azure OpenAI, Gemini, Vertex, and Anthropic. Legacy raw `provider_options` payloads remain accepted where already supported for backward compatibility.
 - Hosted tools now fail fast in the shared foundation layer when they target the wrong provider, request an unsupported hosted-tool class, or use hosted-only combinations such as unsupported `tool_choice="none"` / `ToolChoiceName(...)`.
 - The `Agent Capabilities` table above is beta metadata. It documents the current hosted-tool and provider-managed approval story, but it is not a stable promise that every provider will keep identical semantics release to release.
 - Tier-1 support means the provider participates in the stable surface story, production API examples, and contract-level support assertions in this repository.
+- Tier-1 is primarily an offline contract/support classification. It does not certify that every provider, model, or operation was live-smoked for the current release SHA; live claims apply only to the exact configured smoke evidence recorded for that artifact and SHA.
 - Anthropic is part of the tier-1 text-generation story in this SDK. Claude Opus 5, Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8 are cataloged. Opus 5 uses adaptive thinking by default; `ReasoningConfig(effort="low" | "medium" | "high" | "xhigh" | "max")` selects effort, while `ReasoningConfig(effort="none")` disables thinking only through `high`. Manual thinking budgets and non-default sampling are rejected for Opus 5. Forced tool choice is supported with adaptive thinking; the `auto`/`none` restriction applies only to manual extended thinking on older models.
 - Claude Opus 5, Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` sections on the Anthropic native path when they follow Anthropic's placement rules. Opus 5 does not support assistant prefill or server-side Web Fetch. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}` and the adapter adds its required beta header.
 - Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason` and `stop_details`; collected partial streaming text is discarded after a refusal. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`. Anthropic server-side fallback remains a beta raw `provider_options` escape hatch.
@@ -181,11 +188,11 @@ Tool support now follows the same rule everywhere:
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
-- Gemini and Vertex are portable for the core contract, with `gemini-3.5-flash` as the current stable Flash reference and `gemini-3.1-flash-lite` as the stable low-latency Flash-Lite reference. Gemini Developer API guidance also tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Gemini built-in tools remain native-only entrypoints.
+- Gemini and Vertex are portable for the core contract, with `gemini-3.6-flash` as the current stable Flash reference and `gemini-3.5-flash-lite` as the stable low-latency Flash-Lite reference. Those two current models reject custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Gemini built-in tools remain native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
-- Qwen catalog guidance now starts with GA `qwen3.8-max` for pay-as-you-go Singapore. Text, streaming, image understanding, function tools, all seven portable reasoning efforts, and the five announced built-ins use the current `/compatible-mode/v1/responses` route. Mixed vision input follows Qwen's current Responses `text` / `image_url` content contract; the legacy `/api/v2/apps/protocols/compatible-mode/v1` route is not used.
+- Qwen catalog guidance now starts with GA `qwen3.8-max` for pay-as-you-go Singapore. Text, streaming, image understanding, function tools, all seven portable reasoning efforts, and the five announced built-ins use the current `/compatible-mode/v1/responses` route. Mixed vision input follows Qwen's current Responses `input_text` / `input_image` content contract; the legacy `/api/v2/apps/protocols/compatible-mode/v1` route is not used.
 - `qwen3.8-max` transparently selects Chat Completions for native JSON Schema output, `FilePart` image/video inputs, or `ReasoningConfig.budget_tokens`, because those operations are not part of Qwen Responses. Structured output disables thinking, video uses `video_url`, and Chat reasoning state is preserved as Qwen `provider-data` for replay. Qwen hosted helpers cover `web_search`, `web_extractor`, `code_interpreter`, `web_search_image`, and `image_search`; Web Extractor still requires Web Search. The Token Plan continues to list the separate `qwen3.8-max-preview` ID, so it is not treated as a GA alias.
 - Qwen native support also includes raw `provider.responses()`, Files, Batch, Qwen3-ASR, and DashScope TTS. File Search is exposed as a hosted Responses tool with `vector_store_ids`, not as a lifecycle client. Explicit reasoning-enabled requests must leave forced tool choice on `auto`; when no reasoning mode is selected, the `qwen3.8-max` adapter disables its default thinking only as needed to honor portable forced tool choice. Batch model availability is regional: Singapore currently documents the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases.
 - Kimi/Moonshot uses the official Chat Completions route for portable text generation, streaming, structured output, and callable tools. `create_kimi()` reads `MOONSHOT_API_KEY` first, then `KIMI_API_KEY`, and defaults to `https://api.moonshot.ai/v1`.
@@ -1139,6 +1146,7 @@ The package currently exposes:
 - `create_openrouter()`
 - `create_qwen()`
 - `create_kimi()`
+- `create_meta()`
 - `create_deepseek()`
 - `create_ollama()`
 
@@ -1165,6 +1173,8 @@ Native usage:
 Portable model construction fails fast when the provider does not hold the portable badge. That is intentional: the default path is the portability promise, and `provider.native` is the explicit escape hatch.
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot and DeepSeek use dedicated Chat Completions adapters so their reasoning, tool replay, streaming, and error semantics remain faithful to their official APIs.
+
+Meta uses a dedicated Model API adapter rather than the generic OpenAI-compatible helper. It selects Chat Completions for ordinary portable calls and Responses for hosted tools, file inputs, or native `previous_response_id` continuation. Meta is Beta and non-Tier-1; `tool_choice` is currently `auto` only.
 
 Azure OpenAI supports API key authentication and Microsoft Entra ID authentication through the versionless `/openai/v1` route. API key usage reads `AZURE_OPENAI_API_KEY` plus `AZURE_OPENAI_ENDPOINT`; Entra ID usage passes a token or token provider explicitly and is mutually exclusive with API keys.
 
@@ -1210,6 +1220,29 @@ asyncio.run(main())
 `create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"` and uses the current `/compatible-mode/v1/responses` path; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Existing DashScope domains remain supported, while a workspace-specific domain can be supplied with `base_url=...`; reserve `responses_base_url=...` for a gateway whose Responses root differs. GA `qwen3.8-max` uses Responses for text, streaming, images, reasoning, functions, and hosted tools. The adapter selects `/chat/completions` only for native JSON Schema output, `FilePart(url=..., media_type="video/mp4")` input, or a reasoning token budget; structured output is always sent with thinking disabled. The Token Plan's exact `qwen3.8-max-preview` ID remains separate from the GA pay-as-you-go model. Web Extractor must be registered together with Web Search, and explicit thinking cannot be combined with forced required/named tool choice. Singapore Batch currently supports the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases, so check regional model availability before submitting a batch.
 
 See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen3.8 text/reasoning, JSON Schema output, optional video, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
+
+Meta Model API usage:
+
+```python
+import asyncio
+
+from zhivex_ai import create_meta, generate_text, meta_web_search_tool
+
+
+async def main() -> None:
+    meta = create_meta()  # MODEL_API_KEY
+    result = await generate_text(
+        model=meta.native.language_model("muse-spark-1.2"),
+        prompt="Summarize the latest relevant public information.",
+        tools={"web_search": meta_web_search_tool()},
+    )
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+Use `meta("muse-spark-1.2")` for the portable text/tool/structured-output path. Hosted `web_search` and `tool_search`, raw Responses continuation, and Files are Beta native features. The Contributor variant has different data-use terms and is never selected implicitly. Muse Glimmer and Llama 4 are open-weight/host routes rather than direct Meta Model API IDs; their exact structured-output and tool behavior depends on the runtime. See [docs/providers/meta.md](./docs/providers/meta.md) and [meta_text.py](./examples/text/meta_text.py).
 
 vLLM usage targets its OpenAI-compatible server:
 
@@ -1367,7 +1400,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Opus/Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, GA Qwen3.8 Max plus retained Qwen3.7 guidance, and Kimi K3. It is guidance for model selection, not a separate execution path.
+- `default_model_catalog` keeps recommendation metadata for current reference models such as OpenAI/Azure GPT-5.6 Sol/Terra/Luna, GPT Image 2 and GPT Realtime 2.1, Claude Opus/Fable/Sonnet/Mythos 5 and Opus 4.8, Gemini 3.5 Flash plus current Gemini 3.1 image/live and Omni guidance, Vertex Gemini, Bedrock Claude/Nova, GA Qwen3.8 Max plus retained Qwen3.7 guidance, Kimi K3, Meta Muse Spark, and hosted Muse Glimmer routes. It is guidance for model selection, not a separate execution path or live certification.
 
 To regenerate the markdown tables used above:
 
@@ -1379,6 +1412,7 @@ Notes:
 
 - `provider("model-id")` is shorthand for the portable namespace.
 - `provider.native.*` is the only place where provider-specific request shapes belong.
+- Meta Model API is Beta portable and non-Tier-1; `meta_web_search_tool()` and `meta_tool_search_tool()` use Responses, and forced/disabled/named tool choice is rejected because the current API accepts only `auto`.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `create_anthropic().tokens()` exposes Anthropic message token counting.
@@ -1391,7 +1425,7 @@ Notes:
 - `create_vertex().images()` mirrors Google image routes through Vertex publisher model endpoints.
 - `create_gemini().videos()` and `create_vertex().videos()` expose Veo long-running operation creation, polling, and download helpers, including the current `veo-3.1-*` model IDs where available.
 - `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it, including `lyria-3-pro-preview` and `lyria-3-clip-preview`.
-- `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model. The catalog also tracks stable `gemini-3.5-flash` and stable `gemini-3.1-flash-lite` for regular generation paths.
+- `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model. The catalog also tracks stable `gemini-3.6-flash` and stable `gemini-3.5-flash-lite` for regular generation paths.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
 - `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client, including `gemini-omni-flash-preview` payloads on the Gemini Developer API. Deep Research payloads default to background storage; Omni is not claimed for Vertex.
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
@@ -1461,6 +1495,7 @@ The Python SDK now exposes an agent-first runtime on top of the core model contr
 The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, durable workflow graphs/checkpoints, declarative workflow agents, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
 
 - `Agent(...)`
+- `AgentCancellationToken`
 - `AgentContext`, `AgentHooks`, `AgentMiddleware`, `AgentRunRequest`
 - `AgentRuntime(...)`
 - `AgentRegistry(...)`
@@ -1493,8 +1528,10 @@ The stable agent slice covers the run/result/stream lifecycle, local tools, dire
 - `ApprovalDecision`, `ToolApprovalRequest`
 - `PendingApproval`, `get_pending_agent_approvals(...)`
 - `GuardrailResult`, `InputGuardrailRequest`, `OutputGuardrailRequest`
+- `ToolGuardrailResult`, `ToolInputGuardrailRequest`, `ToolOutputGuardrailRequest`
 - `permission_allowlist_approval_policy(...)`
 - input and output guardrails on `Agent(...)`
+- annotation-derived `@tool` schemas and input/output guardrails on each tool
 - `handoff_to(...)`
 - `create_subagent_tool(...)`
 - `prepare_subagents_for_agent(...)`
@@ -1508,7 +1545,7 @@ The stable agent slice covers the run/result/stream lifecycle, local tools, dire
 - `mcp_http_server(...)`
 - `create_mcp_tool_registry(...)`
 
-This layer is intended for stateful, tool-using, multi-agent assistants where you want typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, shared sessions, transcript + summary memory, durable pending approvals, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
+This layer is intended for stateful, tool-using, multi-agent assistants where you want typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, shared sessions, transcript + summary memory, durable pending approvals, cooperative cancellation, replay/evaluation, traces, durable run state, and MCP-backed tool registries without rewriting the lower-level loop yourself.
 
 For production semantics, persistence, approvals, tool registries, event ordering, and recovery guidance, see [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).
 
@@ -1570,7 +1607,7 @@ result = await run_agent(agent=agent, prompt="Draft a reply", idempotency_key="r
 state = await store.load(result.run_id)
 ```
 
-Built-in stores use optimistic revisions and atomic idempotency/cancellation claims. If an operator cancellation wins while a worker is still active, the durable state remains `cancelled` and the worker raises `AgentRunCancelled` instead of publishing or persisting a late success.
+Built-in stores use optimistic revisions and atomic idempotency/cancellation claims. Pair `AgentCancellationToken` with `cancel_agent_run_tree(..., cancellation_token=token)` when the same process should also interrupt an active provider wait and signal cooperative tools. If an operator cancellation wins while a worker is still active, the durable state remains `cancelled` and the worker raises `AgentRunCancelled` instead of publishing or persisting a late success.
 
 Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. A tool with `requires_approval=True` fails closed if the agent has no approval policy. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call. Built-in run stores atomically claim the approval before executing it, so concurrent resume attempts cannot invoke the same tool twice.
 
@@ -1592,7 +1629,7 @@ timeline = replay_agent_run(state)
 summary = summarize_agent_trace(state)
 ```
 
-Version `0.16.0` also supports repeated, bounded-concurrency evaluation trials with strict JSON/JUnit artifacts, built-in latency/token/application-cost metrics, redacted trajectories, and baseline-aware CI gates:
+The beta evaluation layer also supports repeated, bounded-concurrency trials with strict JSON/JUnit artifacts, finite pass-rate confidence intervals, latency/token/application-cost metrics, redacted trajectories, and baseline-aware CI gates:
 
 ```python
 from zhivex_ai import AgentEvaluationGate, run_agent_evaluation_experiment
@@ -1758,7 +1795,7 @@ The example pins the MCP server package, limits its filesystem root, and denies 
 
 See [examples/README.md](./examples/README.md) for the full list. Highlights:
 
-- Text: [openai_text.py](./examples/text/openai_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py), [deepseek_native.py](./examples/text/deepseek_native.py)
+- Text: [openai_text.py](./examples/text/openai_text.py), [meta_text.py](./examples/text/meta_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py), [deepseek_native.py](./examples/text/deepseek_native.py)
 - Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
 - Local vLLM: [vllm_text.py](./examples/text/vllm_text.py)
 - Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
@@ -1779,13 +1816,14 @@ export ZHIVEX_SMOKE_VERTEX_MODEL=your-vertex-model
 export ZHIVEX_SMOKE_QWEN_MODEL=qwen3.8-max
 export ZHIVEX_SMOKE_KIMI_MODEL=your-kimi-model
 export ZHIVEX_SMOKE_DEEPSEEK_MODEL=deepseek-v4-flash
+export ZHIVEX_SMOKE_META_MODEL=muse-spark-1.2
 export ZHIVEX_SMOKE_VLLM_MODEL=your-vllm-model
 export ZHIVEX_SMOKE_OLLAMA_MODEL=your-local-ollama-model
 export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: it requires a real `run_agent(...)` loop to call a local nonce-validation tool exactly once, consume its result, and finish successfully. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider smoke runs from the exact verified wheel before the Trusted Publisher job can start. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`. DeepSeek smoke uses `DEEPSEEK_API_KEY` and `ZHIVEX_SMOKE_DEEPSEEK_MODEL`, with optional `DEEPSEEK_BASE_URL` or `ZHIVEX_SMOKE_DEEPSEEK_BASE_URL`.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,meta,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: every explicitly selected provider must execute its generation smoke and a real `run_agent(...)` loop that calls a local nonce-validation tool exactly once, consumes its result, and finishes successfully. Without a selector, strict mode keeps the local-development rule that at least one configured provider must execute. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider subset runs from the exact verified wheel before the Trusted Publisher job can start. That gate certifies only the providers and models actually configured in the recorded run, not the complete tier-1 set. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`. DeepSeek smoke uses `DEEPSEEK_API_KEY` and `ZHIVEX_SMOKE_DEEPSEEK_MODEL`, with optional `DEEPSEEK_BASE_URL` or `ZHIVEX_SMOKE_DEEPSEEK_BASE_URL`. Meta smoke uses `MODEL_API_KEY` and an explicit `ZHIVEX_SMOKE_META_MODEL`; use `muse-spark-1.2` Standard for sensitive smoke data and do not infer live certification until that exact run is recorded.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

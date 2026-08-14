@@ -110,7 +110,7 @@ class DeepSeekProviderConfigTests(TestCase):
         self.assertFalse(model.capabilities.vision)
         self.assertFalse(model.capabilities.embeddings)
         self.assertFalse(provider.native_support.embeddings)
-        with self.assertRaises(AttributeError):
+        with self.assertRaisesRegex(UnsupportedFeatureError, "portable embeddings"):
             provider.embedding_model("text-embedding")
 
 

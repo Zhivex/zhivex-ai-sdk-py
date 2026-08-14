@@ -912,16 +912,48 @@ def _nearest_rank_percentile(values: list[float], percentile: float) -> float:
     return ordered[index]
 
 
+def _wilson_score_interval(passed: int, total: int) -> tuple[float, float]:
+    """Return the two-sided 95% Wilson interval for a Bernoulli pass rate."""
+
+    if total == 0:
+        return 0.0, 1.0
+    z = 1.959963984540054
+    proportion = passed / total
+    z_squared = z * z
+    denominator = 1.0 + z_squared / total
+    center = (proportion + z_squared / (2.0 * total)) / denominator
+    margin = z * math.sqrt(
+        (proportion * (1.0 - proportion) + z_squared / (4.0 * total)) / total
+    ) / denominator
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def _sample_standard_deviation(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = math.fsum(values) / len(values)
+    squared_deviations = math.fsum((value - mean) ** 2 for value in values)
+    return math.sqrt(squared_deviations / (len(values) - 1))
+
+
 def _builtin_trial_metrics(result: AgentEvaluationResult) -> dict[str, float]:
     trials = [trial for case in result.cases for trial in _effective_case_trials(case)]
     if not trials:
-        return {"trial_pass_rate": 1.0}
+        return {
+            "trial_pass_rate": 1.0,
+            "trial_pass_rate_ci95_lower": 0.0,
+            "trial_pass_rate_ci95_upper": 1.0,
+        }
     latencies = [trial.latency_ms for trial in trials]
     passed = sum(1 for trial in trials if trial.ok)
+    pass_rate_ci_lower, pass_rate_ci_upper = _wilson_score_interval(passed, len(trials))
     metrics = {
         "trial_pass_rate": passed / len(trials),
+        "trial_pass_rate_ci95_lower": pass_rate_ci_lower,
+        "trial_pass_rate_ci95_upper": pass_rate_ci_upper,
         "mean_latency_ms": math.fsum(latencies) / len(latencies),
         "p95_latency_ms": _nearest_rank_percentile(latencies, 0.95),
+        "latency_stddev_ms": _sample_standard_deviation(latencies),
     }
     costs = [trial.cost for trial in trials if trial.cost is not None]
     if len(costs) == len(trials):
@@ -1009,8 +1041,11 @@ def _normalize_experiment_metrics(metrics: list[AgentEvaluationMetric] | None) -
     names = {
         "pass_rate",
         "trial_pass_rate",
+        "trial_pass_rate_ci95_lower",
+        "trial_pass_rate_ci95_upper",
         "mean_latency_ms",
         "p95_latency_ms",
+        "latency_stddev_ms",
         "total_cost",
         "mean_cost",
         "mean_total_tokens",
@@ -1066,8 +1101,11 @@ def _evaluate_experiment_gates(
     directions = {
         "pass_rate": True,
         "trial_pass_rate": True,
+        "trial_pass_rate_ci95_lower": True,
+        "trial_pass_rate_ci95_upper": True,
         "mean_latency_ms": False,
         "p95_latency_ms": False,
+        "latency_stddev_ms": False,
         "total_cost": False,
         "mean_cost": False,
         "mean_total_tokens": False,
@@ -1194,8 +1232,22 @@ async def judge_agent_evaluation(
     result: AgentEvaluationResult,
     judge: Callable[[AgentEvaluationResult], AgentEvaluationJudgeResult | Awaitable[AgentEvaluationJudgeResult]] | None = None,
 ) -> AgentEvaluationJudgeResult:
+    """Score an evaluation with a custom judge or deterministic expectations.
+
+    The built-in path does not call a language model. It reports the case pass
+    rate produced by :class:`AgentEvaluationExpectations`. Applications may
+    supply a provider-agnostic callable for rubric or model-based judging.
+    """
+
     if judge is not None:
         judged = judge(result)
         return await judged if isinstance(judged, Awaitable) else judged
     report = create_agent_evaluation_report(result)
-    return AgentEvaluationJudgeResult(score=report.pass_rate, feedback=None if result.ok else "One or more evaluation cases failed.")
+    return AgentEvaluationJudgeResult(
+        score=report.pass_rate,
+        feedback=None if result.ok else "One or more evaluation cases failed.",
+        metadata={
+            "judge_type": "deterministic_expectations",
+            "scoring": "case_pass_rate",
+        },
+    )

@@ -49,7 +49,7 @@ from ..types import (
     PortableSupport,
 )
 from ._payload import drop_none
-from .base import ProviderAdapter, create_provider_bundle
+from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 
 ANTHROPIC_CAPABILITIES = ModelCapabilities(
     streaming=True,
@@ -1822,7 +1822,7 @@ def create_anthropic(
     anthropic_version: str = "2023-06-01",
     beta_headers: str | list[str] | tuple[str, ...] | None = None,
     fetch: Fetcher | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("ANTHROPIC_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing Anthropic API key.")

@@ -366,18 +366,31 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
     return content
 
 
-def _map_qwen_message_content(message: ModelMessage) -> str | list[dict[str, Any]]:
+def _map_qwen_responses_message_content(message: ModelMessage) -> str | list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     text_chunks: list[str] = []
     for part in message.parts:
         if part.type == "text":
             text_chunks.append(part.text)
-            content.append({"type": "text", "text": part.text})
+            content.append(
+                {
+                    "type": "output_text" if message.role == "assistant" else "input_text",
+                    "text": part.text,
+                }
+            )
         elif part.type == "image":
-            content.append({"type": "image_url", "image_url": {"url": part.image}})
+            if message.role == "assistant":
+                raise UnsupportedFeatureError(
+                    'Provider "qwen" Responses history does not accept assistant image input.'
+                )
+            content.append({"type": "input_image", "image_url": part.image})
         elif part.type == "file":
+            if message.role == "assistant":
+                raise UnsupportedFeatureError(
+                    'Provider "qwen" Responses history does not accept assistant file input.'
+                )
             content.append(_map_file_part(part))
-    if content and all(item.get("type") == "text" for item in content):
+    if message.role != "assistant" and content and all(item.get("type") == "input_text" for item in content):
         return "".join(text_chunks)
     return content
 
@@ -578,7 +591,7 @@ def _to_qwen_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any
                     )
             items.extend(_serialize_provider_data_input(message, "qwen"))
             continue
-        content = _map_qwen_message_content(message)
+        content = _map_qwen_responses_message_content(message)
         if content:
             items.append(
                 {

@@ -12,7 +12,7 @@ import tomllib
 from unittest import TestCase
 import zipfile
 
-from scripts import collect_release_evidence, verify_release_artifacts
+from scripts import audit_dependencies, collect_release_evidence, verify_release_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +185,17 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertNotIn("/Library/Frameworks/", evidence)
         self.assertNotRegex(evidence, r"[A-Za-z]:\\Users\\")
 
+    def test_reconstructed_017_evidence_does_not_claim_retroactive_qwen_certification(self) -> None:
+        evidence = (ROOT / "docs/releases/0.17.0-evidence.md").read_text("utf-8")
+
+        self.assertIn("d7d0dc592c3f3dbc78bc8c4e0edf58e880f8c711", evidence)
+        self.assertIn("run 31121324133", evidence)
+        self.assertIn("run 31121403493", evidence)
+        self.assertIn("OpenAI | yes | yes", evidence)
+        self.assertIn("Qwen | no | no", evidence)
+        self.assertIn("no live Qwen 3.8 Max certification", evidence)
+        self.assertIn("cannot turn that later observation into evidence that existed before publication", evidence)
+
     def test_release_evidence_can_sanitize_an_existing_file_without_rerunning_gates(self) -> None:
         script = ROOT / "scripts/collect_release_evidence.py"
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -253,6 +264,31 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("mcp>=1.28.1", extras["mcp"])
         self.assertIn("a2a-sdk[fastapi]>=1.1.2,<2", extras["a2a"])
         self.assertIn("ag-ui-protocol>=0.1.19,<0.2", extras["ag-ui"])
+        for extra in ["dev", "mcp", "a2a"]:
+            self.assertIn("cryptography>=50.0.0", extras[extra])
+
+    def test_dependency_audit_resolves_and_audits_all_extras_without_reresolution(self) -> None:
+        requirements = Path("/tmp/all-extras-requirements.txt")
+        compile_command = audit_dependencies._compile_command(
+            uv="uv",
+            requirements=requirements,
+            cache_dir=Path("/tmp/uv-cache"),
+        )
+        audit_command = audit_dependencies._audit_command(
+            requirements=requirements,
+            cache_dir=Path("/tmp/pip-audit-cache"),
+        )
+
+        self.assertIn("--all-extras", compile_command)
+        self.assertIn("--universal", compile_command)
+        self.assertIn("--generate-hashes", compile_command)
+        self.assertIn("--quiet", compile_command)
+        self.assertIn("--no-emit-package", compile_command)
+        self.assertIn("zhivex-ai-sdk", compile_command)
+        self.assertIn("--no-deps", audit_command)
+        self.assertIn("--require-hashes", audit_command)
+        self.assertIn("--disable-pip", audit_command)
+        self.assertIn("--cache-dir", audit_command)
 
     def test_makefile_release_check_runs_install_verification(self) -> None:
         makefile = (ROOT / "Makefile").read_text("utf-8")
@@ -265,14 +301,19 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("release-check: check test-release build release-install-check security-check", makefile)
         self.assertIn("rm -rf dist build", makefile)
         self.assertIn("security-check:", makefile)
-        self.assertIn("pip_audit . --strict", makefile)
+        self.assertIn("scripts/audit_dependencies.py", makefile)
+        self.assertNotIn("pip_audit . --strict", makefile)
         self.assertIn("pip_audit --local --skip-editable", makefile)
 
     def test_sdist_includes_root_docs_linked_from_packaged_docs(self) -> None:
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
+        wheel_force_include = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
         sdist = pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]
         include = set(sdist["include"])
         force_include = sdist["force-include"]
+
+        self.assertEqual(wheel_force_include["src/zhivex_ai/py.typed"], "zhivex_ai/py.typed")
+        self.assertEqual(wheel_force_include["src/zhivex_ai/__init__.pyi"], "zhivex_ai/__init__.pyi")
 
         for path in [
             "/CHANGELOG.md",

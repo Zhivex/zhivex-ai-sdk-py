@@ -41,7 +41,7 @@ from ..types import (
     ToolDefinition,
     ToolResultPart,
 )
-from .base import ProviderAdapter, create_provider_bundle
+from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from .openai_compat import OpenAICompatibleBatchesClient, OpenAICompatibleFilesClient, _normalize_binary, _parse_json_error
 
 
@@ -702,7 +702,7 @@ def create_kimi(
     api_key: str | None = None,
     base_url: str | None = None,
     fetch: Fetcher | None = None,
-):
+) -> ProviderBundle:
     resolved_key = api_key or os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY")
     if not resolved_key:
         raise ConfigurationError("Missing kimi API key. Set MOONSHOT_API_KEY or KIMI_API_KEY.")

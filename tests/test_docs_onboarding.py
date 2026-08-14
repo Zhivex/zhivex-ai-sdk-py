@@ -11,6 +11,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DocsOnboardingTests(TestCase):
+    def test_examples_use_only_the_top_level_public_package(self) -> None:
+        deep_imports: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("*.py")):
+            tree = ast.parse(path.read_text("utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("zhivex_ai."):
+                    deep_imports.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} imports {node.module}"
+                    )
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith("zhivex_ai."):
+                            deep_imports.append(
+                                f"{path.relative_to(ROOT)}:{node.lineno} imports {alias.name}"
+                            )
+
+        self.assertEqual(deep_imports, [])
+
     def test_onboarding_docs_exist_and_are_linked_from_readme(self) -> None:
         expected = [
             "docs/QUICKSTART.md",
@@ -47,6 +65,7 @@ class DocsOnboardingTests(TestCase):
             ".venv/bin/python examples/agents/artifact_document_workflow.py",
             ".venv/bin/python examples/agents/research_report_workflow.py",
             ".venv/bin/python examples/text/tier1_providers.py",
+            ".venv/bin/python examples/text/meta_text.py",
             "uvicorn examples.integrations.fastapi_chat_api:app --reload",
         ]:
             self.assertIn(command, examples)

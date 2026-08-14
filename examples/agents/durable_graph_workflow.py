@@ -8,6 +8,7 @@ from pathlib import Path
 
 from zhivex_ai import (
     Agent,
+    GenerateResult,
     WorkflowBuilder,
     WorkflowCheckpointStore,
     WorkflowGraph,
@@ -17,7 +18,6 @@ from zhivex_ai import (
     fork_workflow,
     resume_workflow,
 )
-from zhivex_ai.types import GenerateResult
 
 
 @dataclass(slots=True)

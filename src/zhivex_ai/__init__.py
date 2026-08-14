@@ -10,6 +10,7 @@ from .generate_text import generate_text, stream_text
 if TYPE_CHECKING:
     from .agent import (
         Agent as Agent,
+        AgentCancellationToken as AgentCancellationToken,
         AgentContext as AgentContext,
         AgentHooks as AgentHooks,
         AgentMiddleware as AgentMiddleware,
@@ -71,11 +72,24 @@ if TYPE_CHECKING:
         create_agent_playground_app as create_agent_playground_app,
         create_responses_app as create_responses_app,
     )
-    from .types import ToolExecutionContext as ToolExecutionContext
+    from .types import (
+        GenerateResult as GenerateResult,
+        JsonValue as JsonValue,
+        ModelGenerateInput as ModelGenerateInput,
+        ToolExecutionContext as ToolExecutionContext,
+        ToolGuardrailResult as ToolGuardrailResult,
+        ToolGuardrailStage as ToolGuardrailStage,
+        ToolGuardrailTripwireTriggered as ToolGuardrailTripwireTriggered,
+        ToolInputGuardrail as ToolInputGuardrail,
+        ToolInputGuardrailRequest as ToolInputGuardrailRequest,
+        ToolOutputGuardrail as ToolOutputGuardrail,
+        ToolOutputGuardrailRequest as ToolOutputGuardrailRequest,
+    )
 
 _MODULE_EXPORTS = {
     "agent": (
         "Agent",
+        "AgentCancellationToken",
         "AgentContext",
         "AgentHooks",
         "AgentMiddleware",
@@ -549,6 +563,12 @@ _MODULE_EXPORTS = {
         "parse_openai_provider_data_part",
     ),
     "providers.openrouter": ("create_openrouter",),
+    "providers.meta": (
+        "create_meta",
+        "meta_hosted_tool",
+        "meta_tool_search_tool",
+        "meta_web_search_tool",
+    ),
     "providers.qwen": (
         "create_qwen",
         "qwen_code_interpreter_tool",
@@ -603,6 +623,7 @@ _MODULE_EXPORTS = {
         "FinishReason",
         "GenerateGroundedTextOutput",
         "GenerateObjectOutput",
+        "GenerateResult",
         "GenerateTextOutput",
         "GroundedLanguageModel",
         "GroundingSource",
@@ -613,11 +634,13 @@ _MODULE_EXPORTS = {
         "ImagesResult",
         "GeneratedMedia",
         "InteractionsClient",
+        "JsonValue",
         "LanguageModel",
         "MCPServerConfig",
         "MCPToolConfig",
         "MessageRole",
         "ModelCapabilities",
+        "ModelGenerateInput",
         "ModelMessage",
         "ModerationsClient",
         "MediaClient",
@@ -673,6 +696,13 @@ _MODULE_EXPORTS = {
         "ToolChoiceName",
         "ToolExecutionContext",
         "ToolExecutionOptions",
+        "ToolGuardrailResult",
+        "ToolGuardrailStage",
+        "ToolGuardrailTripwireTriggered",
+        "ToolInputGuardrail",
+        "ToolInputGuardrailRequest",
+        "ToolOutputGuardrail",
+        "ToolOutputGuardrailRequest",
         "ToolSet",
         "ToolSource",
         "TokenUsage",
@@ -959,6 +989,10 @@ __all__ = [
     "KimiFormulaClient",
     "create_kimi",
     "kimi_formula_toolset",
+    "create_meta",
+    "meta_hosted_tool",
+    "meta_tool_search_tool",
+    "meta_web_search_tool",
     "create_model_catalog",
     "create_otel_agent_observer",
     "create_ollama",

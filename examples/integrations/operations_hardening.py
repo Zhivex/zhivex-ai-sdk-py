@@ -7,7 +7,9 @@ from dataclasses import asdict, dataclass
 from zhivex_ai import (
     Agent,
     AgentRunState,
+    GenerateResult,
     ModelCapabilities,
+    ModelGenerateInput,
     ProviderHTTPError,
     TokenUsage,
     apply_safety_policy_to_agent,
@@ -19,7 +21,6 @@ from zhivex_ai import (
     create_text_message,
     wrap_language_model,
 )
-from zhivex_ai.types import GenerateResult, ModelGenerateInput
 
 
 class OfflineOperationsModel:

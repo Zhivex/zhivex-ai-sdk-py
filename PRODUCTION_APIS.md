@@ -37,6 +37,7 @@ For production-facing API servers:
 - enforce request-body, field-length, concurrency, and rate limits before invoking a provider
 - import supported APIs from `zhivex_ai`
 - prefer the current tier-1 providers for stable production API paths: OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, and vLLM
+- keep Beta providers such as Meta Model API behind an application-owned allowlist, pinned model ID, privacy-tier policy, and provider-specific integration evidence
 - validate request bodies with Pydantic
 - pass `timeout_ms` explicitly from the API layer into SDK calls
 - map SDK exceptions into stable HTTP error responses
@@ -94,6 +95,8 @@ For DeepSeek-backed APIs, pin a current V4 model ID and let the adapter own thin
 
 For vLLM-backed APIs, keep the app contract tied to SDK primitives rather than vLLM custom endpoints. Text, streaming, structured output/tools, embeddings, transcription, and realtime ASR are supported through the OpenAI-compatible server when the served model/task supports them; custom endpoints such as tokenize, rerank, classify, and score should stay behind app-owned code if needed.
 
+For direct Meta Model API routes, pin the Standard `muse-spark-1.2` model unless an explicit data-governance decision authorizes the Contributor tier. Keep `tool_choice` on `auto`, validate tool arguments in the application, and do not convert offline adapter tests into a production-readiness claim. Meta remains Beta and non-Tier-1 until an exact provider/model/artifact/SHA live smoke and the broader promotion criteria are satisfied.
+
 ## Agent APIs
 
 For agent-backed API servers, keep application policy outside the SDK:
@@ -113,7 +116,7 @@ See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTIO
 
 ## Protocol APIs
 
-Version `0.16.0` includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
+The current `0.17.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
 
 - Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
 - Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.
@@ -130,7 +133,7 @@ See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md) for supported routes, extras, wire 
 
 ## Workflow APIs
 
-Durable workflow graphs were introduced in `0.15.0` and remain beta in `0.16.0`; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
+Durable workflow graphs were introduced in `0.15.0` and remain beta in the current `0.17.0` line; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
 
 Recommended endpoint boundaries:
 

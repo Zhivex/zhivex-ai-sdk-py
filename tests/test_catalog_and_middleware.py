@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (
     ModelCapabilities,
+    ModelCatalogEntry,
     create_cached_generate_middleware,
     create_circuit_breaker_middleware,
     create_file_generate_cache,
@@ -56,6 +57,23 @@ class CountingModel:
 
 
 class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
+    async def test_model_catalog_entry_metadata_defaults_are_compatible(self) -> None:
+        entry = ModelCatalogEntry("test", "test-model", ["test-alias"], 1.25, ["chat"])
+        other_entry = ModelCatalogEntry("test", "other-model")
+
+        self.assertEqual(entry.api_surface, "language")
+        self.assertEqual(entry.availability, "stable")
+        self.assertEqual(entry.regions, [])
+        self.assertEqual(entry.support_evidence, "catalog-only")
+        self.assertEqual(entry.source_urls, [])
+        self.assertIsNone(entry.max_tool_calls_per_turn)
+        self.assertIsNone(entry.parallel_tool_calls)
+        self.assertIsNone(entry.structured_output)
+        entry.regions.append("global")
+        entry.source_urls.append("https://example.test/model")
+        self.assertEqual(other_entry.regions, [])
+        self.assertEqual(other_entry.source_urls, [])
+
     async def test_model_catalog_find_supports_lookup(self) -> None:
         openai_entry = default_model_catalog.find("openai", "gpt-5.4-mini")
         self.assertIsNotNone(openai_entry)
@@ -88,6 +106,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("anthropic", "claude-sonnet-5", {"reasoning", "tools", "vision"}),
             ("anthropic", "claude-sonnet-4-6", {"reasoning", "tools", "vision"}),
             ("gemini", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("gemini", "gemini-3.6-flash", {"chat", "reasoning", "speed", "tools", "vision"}),
+            ("gemini", "gemini-3.5-flash-lite", {"chat", "reasoning", "speed", "tools", "vision"}),
             ("gemini", "gemini-3.5-flash", {"speed", "tools", "vision"}),
             ("gemini", "gemini-omni-flash-preview", {"audio", "speed", "tools", "vision"}),
             ("gemini", "gemini-3.1-flash-lite", {"speed", "tools", "vision"}),
@@ -100,6 +120,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("gemini", "veo-3.1-fast-generate-preview", {"speed", "vision"}),
             ("gemini", "lyria-3-pro-preview", {"audio"}),
             ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("vertex", "gemini-3.6-flash", {"chat", "reasoning", "speed", "tools", "vision"}),
+            ("vertex", "gemini-3.5-flash-lite", {"chat", "reasoning", "speed", "tools", "vision"}),
             ("vertex", "gemini-3.5-flash", {"speed", "tools", "vision"}),
             ("vertex", "gemini-3.1-flash-lite", {"speed", "tools", "vision"}),
             ("vertex", "gemini-3.1-flash-live-preview", {"audio", "speed", "vision"}),
@@ -124,6 +146,14 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("kimi", "kimi-k2.6", {"reasoning", "tools", "vision"}),
             ("deepseek", "deepseek-v4-pro", {"chat", "reasoning", "tools"}),
             ("deepseek", "deepseek-v4-flash", {"chat", "speed", "reasoning", "tools"}),
+            ("meta", "muse-spark-1.2", {"chat", "reasoning", "tools", "vision"}),
+            ("meta", "muse-spark-1.2-contributor", {"chat", "reasoning", "tools", "vision"}),
+            ("meta", "muse-spark-1.1", {"chat", "reasoning", "tools", "vision"}),
+            ("openrouter", "meta/muse-spark-1.2", {"chat", "reasoning", "tools", "vision"}),
+            ("openrouter", "meta/muse-glimmer-30b", {"chat", "reasoning", "tools", "vision"}),
+            ("ollama", "muse-glimmer:30b", {"chat", "reasoning", "tools", "vision"}),
+            ("ollama", "muse-glimmer:30b-mlx", {"chat", "reasoning", "tools", "vision"}),
+            ("vllm", "meta-models/Muse-Glimmer-30B", {"chat", "reasoning", "tools", "vision"}),
         ]
 
         for provider, model_id, recommended in expected:
@@ -159,6 +189,118 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         self.assertEqual(default_model_catalog.find("qwen", "qwen3-tts-instruct-flash-2026-01-26").model_id, "qwen3-tts-instruct-flash")  # type: ignore[union-attr]
         self.assertIsNone(default_model_catalog.find("deepseek", "deepseek-chat"))
         self.assertIsNone(default_model_catalog.find("deepseek", "deepseek-reasoner"))
+
+    async def test_meta_muse_catalog_separates_direct_and_hosted_support(self) -> None:
+        direct_model_ids = ("muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1")
+
+        for model_id in direct_model_ids:
+            entry = default_model_catalog.find("meta", model_id)
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry.availability, "preview")  # type: ignore[union-attr]
+            self.assertTrue(entry.source_urls)  # type: ignore[union-attr]
+            self.assertTrue(entry.parallel_tool_calls)  # type: ignore[union-attr]
+            self.assertTrue(entry.structured_output)  # type: ignore[union-attr]
+
+        self.assertEqual(  # exact-model offline fixture; the other direct IDs remain catalog-only
+            default_model_catalog.find("meta", "muse-spark-1.2").support_evidence,  # type: ignore[union-attr]
+            "offline-contract",
+        )
+        self.assertEqual(  # type: ignore[union-attr]
+            default_model_catalog.find("meta", "muse-spark-1.2-contributor").support_evidence,
+            "catalog-only",
+        )
+        self.assertEqual(  # type: ignore[union-attr]
+            default_model_catalog.find("meta", "muse-spark-1.1").support_evidence,
+            "catalog-only",
+        )
+
+        openrouter_spark = default_model_catalog.find("openrouter", "meta/muse-spark-1.2")
+        self.assertIsNotNone(openrouter_spark)
+        self.assertEqual(openrouter_spark.support_evidence, "catalog-only")  # type: ignore[union-attr]
+        self.assertEqual(openrouter_spark.availability, "preview")  # type: ignore[union-attr]
+        self.assertIsNone(openrouter_spark.structured_output)  # type: ignore[union-attr]
+
+    async def test_muse_glimmer_host_routes_keep_tool_and_schema_claims_conservative(self) -> None:
+        hosted_routes = (
+            ("openrouter", "meta/muse-glimmer-30b"),
+            ("ollama", "muse-glimmer:30b"),
+            ("ollama", "muse-glimmer:30b-mlx"),
+            ("vllm", "meta-models/Muse-Glimmer-30B"),
+        )
+
+        for provider, model_id in hosted_routes:
+            entry = default_model_catalog.find(provider, model_id)
+            self.assertIsNotNone(entry, f"{provider}/{model_id} missing from default catalog")
+            self.assertEqual(entry.support_evidence, "catalog-only")  # type: ignore[union-attr]
+            self.assertEqual(entry.max_tool_calls_per_turn, 1)  # type: ignore[union-attr]
+            self.assertFalse(entry.parallel_tool_calls)  # type: ignore[union-attr]
+            self.assertIsNone(entry.structured_output)  # type: ignore[union-attr]
+            self.assertTrue(entry.source_urls)  # type: ignore[union-attr]
+
+    async def test_llama_4_is_cataloged_as_vllm_host_route_not_direct_meta_api(self) -> None:
+        model_ids = (
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        )
+
+        for model_id in model_ids:
+            hosted = default_model_catalog.find("vllm", model_id)
+            self.assertIsNotNone(hosted)
+            self.assertEqual(hosted.support_evidence, "catalog-only")  # type: ignore[union-attr]
+            self.assertTrue(hosted.source_urls)  # type: ignore[union-attr]
+            self.assertIsNone(default_model_catalog.find("meta", model_id))
+
+    async def test_default_model_catalog_tracks_surface_and_availability_metadata(self) -> None:
+        expected_surfaces = {
+            ("openai", "gpt-image-2"): "image",
+            ("openai", "gpt-realtime-2.1"): "realtime",
+            ("openai", "gpt-realtime-whisper"): "transcription",
+            ("azure-openai", "text-embedding-3-large"): "embedding",
+            ("gemini", "gemini-omni-flash-preview"): "interactions",
+            ("gemini", "gemini-3.1-flash-tts-preview"): "speech",
+            ("gemini", "gemini-3.1-flash-image"): "image",
+            ("gemini", "veo-3.1-generate-preview"): "video",
+            ("gemini", "lyria-3-pro-preview"): "media",
+            ("qwen", "text-embedding-v4"): "embedding",
+            ("qwen", "qwen3-rerank"): "rerank",
+            ("qwen", "qwen3-asr-flash"): "transcription",
+            ("qwen", "qwen3-tts-flash"): "speech",
+            ("vertex", "gemini-3.1-flash-live-preview"): "realtime",
+        }
+
+        for key, api_surface in expected_surfaces.items():
+            entry = default_model_catalog.find(*key)
+            self.assertIsNotNone(entry, f"{key[0]}/{key[1]} missing from default catalog")
+            self.assertEqual(entry.api_surface, api_surface)  # type: ignore[union-attr]
+
+        preview_entries = [entry for entry in default_model_catalog.list() if "preview" in entry.model_id]
+        self.assertTrue(preview_entries)
+        for entry in preview_entries:
+            self.assertEqual(entry.availability, "preview", f"{entry.provider}/{entry.model_id}")
+
+        qwen_current = default_model_catalog.find("qwen", "qwen3.8-max")
+        self.assertIsNotNone(qwen_current)
+        self.assertEqual(qwen_current.api_surface, "language")  # type: ignore[union-attr]
+        self.assertEqual(qwen_current.availability, "stable")  # type: ignore[union-attr]
+        self.assertEqual(qwen_current.regions, ["cn", "intl", "us"])  # type: ignore[union-attr]
+        self.assertEqual(qwen_current.support_evidence, "offline-contract")  # type: ignore[union-attr]
+        self.assertTrue(qwen_current.source_urls)  # type: ignore[union-attr]
+
+    async def test_latest_gemini_catalog_entries_include_region_and_evidence_metadata(self) -> None:
+        gemini_flash = default_model_catalog.find("gemini", "gemini-3.6-flash")
+        gemini_flash_lite = default_model_catalog.find("gemini", "gemini-3.5-flash-lite")
+        vertex_flash = default_model_catalog.find("vertex", "gemini-3.6-flash")
+        vertex_flash_lite = default_model_catalog.find("vertex", "gemini-3.5-flash-lite")
+
+        for entry in (gemini_flash, gemini_flash_lite, vertex_flash, vertex_flash_lite):
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry.api_surface, "language")  # type: ignore[union-attr]
+            self.assertEqual(entry.availability, "stable")  # type: ignore[union-attr]
+            self.assertEqual(entry.support_evidence, "offline-contract")  # type: ignore[union-attr]
+            self.assertTrue(entry.source_urls)  # type: ignore[union-attr]
+
+        self.assertEqual(vertex_flash.regions, ["global"])  # type: ignore[union-attr]
+        self.assertEqual(vertex_flash_lite.regions, ["global", "us", "eu"])  # type: ignore[union-attr]
 
     async def test_cached_middleware_avoids_duplicate_generate_calls(self) -> None:
         model = CountingModel()

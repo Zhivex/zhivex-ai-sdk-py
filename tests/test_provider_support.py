@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -17,6 +17,7 @@ from zhivex_ai import (
     create_deepseek,
     create_gemini,
     create_kimi,
+    create_meta,
     create_ollama,
     create_openai,
     create_openrouter,
@@ -30,6 +31,7 @@ from zhivex_ai.provider_support import (
     get_tier_1_provider_rows,
     render_provider_support_markdown,
 )
+from zhivex_ai.types import ModelGenerateInput, StructuredOutputConfig
 
 
 class _FakeBedrockClient:
@@ -51,6 +53,7 @@ class ProviderSupportTests(TestCase):
                 create_openrouter(api_key="test"),
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
+                create_meta(api_key="test"),
                 create_ollama(),
                 create_vllm(api_key="test"),
             ]
@@ -69,6 +72,7 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["openrouter"], ("native-only", False))
         self.assertEqual(tiers["qwen"], ("portable", True))
         self.assertEqual(tiers["kimi"], ("portable", True))
+        self.assertEqual(tiers["meta"], ("portable", True))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
         self.assertEqual(tiers["vllm"], ("portable", True))
         self.assertFalse(rows[[row.provider for row in rows].index("kimi")].portable_support.embeddings)
@@ -118,11 +122,23 @@ class ProviderSupportTests(TestCase):
         self.assertTrue(native["qwen"].files)
         self.assertTrue(native["qwen"].batches)
         self.assertTrue(native["qwen"].responses)
+        self.assertTrue(native["qwen"].embeddings)
+        self.assertTrue(native["qwen"].transcription)
+        self.assertTrue(native["qwen"].speech)
         self.assertFalse(native["qwen"].file_search)
         self.assertEqual(agent["kimi"].support_tier, "tier-b")
         self.assertTrue(agent["kimi"].toolsets)
+        self.assertTrue(native["kimi"].count_tokens)
+        self.assertTrue(native["kimi"].formulas)
+        self.assertTrue(native["meta"].files)
+        self.assertTrue(native["meta"].responses)
+        self.assertFalse(native["meta"].embeddings)
         self.assertEqual(agent["deepseek"].support_tier, "tier-b")
         self.assertTrue(agent["deepseek"].tool_choice_none)
+        self.assertEqual(agent["meta"].support_tier, "tier-c")
+        self.assertFalse(agent["meta"].tool_choice_none)
+        self.assertTrue(agent["meta"].hosted_web_search)
+        self.assertTrue(agent["meta"].toolsets)
         self.assertTrue(native["bedrock"].tools)
         self.assertEqual(agent["bedrock"].support_tier, "tier-b")
         self.assertTrue(agent["bedrock"].tool_choice_none)
@@ -138,12 +154,17 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| vllm | portable | Yes |", markdown)
         self.assertIn("| deepseek | portable | Yes |", markdown)
         self.assertIn("| anthropic | portable | Yes |", markdown)
+        self.assertIn("| meta | portable | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No |", markdown)
+        self.assertIn("| bedrock | native-only | No | N/A | N/A |", markdown)
+        self.assertIn("| ollama | compatibility | No | N/A | N/A |", markdown)
+        self.assertIn("| openrouter | native-only | No | N/A | N/A |", markdown)
         self.assertIn("### Native Extras", markdown)
         self.assertIn(
-            "| Provider | Text | Streaming | Structured Output | Tools | Files | File Search | Images |",
+            "| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files |",
             markdown,
         )
-        self.assertIn("| bedrock | Yes | Yes | No | Yes | No | No | No |", markdown)
+        self.assertIn("| bedrock | Yes | Yes | No | Yes | No | No | No | No | No |", markdown)
+        self.assertIn("| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |", markdown)
         self.assertIn("### Agent Capabilities", markdown)
         self.assertIn("| openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |", markdown)
         self.assertIn("| anthropic | tier-b | Yes | No | Yes | No | No | No | Yes | Yes |", markdown)
@@ -151,6 +172,7 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |", markdown)
         self.assertIn("| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |", markdown)
         self.assertIn("| deepseek | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
+        self.assertIn("| meta | tier-c | No | No | Yes | No | No | No | No | Yes |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(
@@ -164,6 +186,7 @@ class ProviderSupportTests(TestCase):
                 create_qwen(api_key="test"),
                 create_kimi(api_key="test"),
                 create_vllm(api_key="test"),
+                create_meta(api_key="test"),
             ]
         )
 
@@ -184,6 +207,8 @@ class ProviderSupportTests(TestCase):
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))
+        self.assertNotIn("meta", TIER_1_PROVIDERS)
+        self.assertNotIn("meta", [row.provider for row in tier_1_rows])
         self.assertTrue(all(row.tier == "portable" for row in tier_1_rows))
         self.assertTrue(all(row.portable_badge for row in tier_1_rows))
 
@@ -195,3 +220,68 @@ class ProviderSupportTests(TestCase):
 
         native_model = provider.native.language_model("anthropic.claude-sonnet-4")
         self.assertEqual(native_model.provider, "bedrock")
+
+    def test_qwen_rejects_native_only_operations_through_portable_namespace(self) -> None:
+        provider = create_qwen(api_key="test")
+
+        for operation in (
+            provider.grounded_language_model,
+            provider.transcription_model,
+            provider.speech_model,
+        ):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaises(UnsupportedFeatureError):
+                    operation("test-model")
+
+        self.assertEqual(provider.native.grounded_language_model("test-model").provider, "qwen")
+        self.assertEqual(provider.native.transcription_model("test-model").provider, "qwen")
+        self.assertEqual(provider.native.speech_model("test-model").provider, "qwen")
+
+    def test_portable_model_factories_match_operation_metadata(self) -> None:
+        providers = [
+            create_openai(api_key="test"),
+            create_azure_openai(api_key="test", endpoint="https://example.openai.azure.com"),
+            create_anthropic(api_key="test"),
+            create_gemini(api_key="test"),
+            create_vertex(access_token="test", project_id="project"),
+            create_deepseek(api_key="test"),
+            create_qwen(api_key="test"),
+            create_kimi(api_key="test"),
+            create_vllm(api_key="test"),
+            create_meta(api_key="test"),
+        ]
+        operations = {
+            "embeddings": ("embeddings", "embedding_model"),
+            "grounding": ("grounding", "grounded_language_model"),
+            "transcription": ("transcription", "transcription_model"),
+            "speech": ("speech", "speech_model"),
+        }
+
+        for provider in providers:
+            for label, (flag_name, method_name) in operations.items():
+                supported = getattr(provider.portable_support, flag_name)
+                method = getattr(provider.portable, method_name)
+                with self.subTest(provider=provider.name, operation=label, supported=supported):
+                    if supported:
+                        self.assertEqual(method("test-model").provider, provider.name)
+                    else:
+                        with self.assertRaises(UnsupportedFeatureError):
+                            method("test-model")
+
+
+class PortableModelOperationGuardTests(IsolatedAsyncioTestCase):
+    async def test_generate_and_stream_enforce_operation_level_portable_metadata(self) -> None:
+        provider = create_deepseek(api_key="test")
+        provider.portable_support.structured_output = False
+        model = provider("deepseek-v4-pro")
+        request = ModelGenerateInput(
+            structured_output=StructuredOutputConfig(
+                schema={"type": "object"},
+                mode="native",
+            )
+        )
+
+        with self.assertRaisesRegex(UnsupportedFeatureError, "structured output"):
+            await model.generate(request)
+        with self.assertRaisesRegex(UnsupportedFeatureError, "structured output"):
+            await model.stream(request)

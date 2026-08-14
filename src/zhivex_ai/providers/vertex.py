@@ -11,7 +11,7 @@ from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
 from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, HostedToolDefinition, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
-from .base import ProviderAdapter, create_provider_bundle
+from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
     GEMINI_CAPABILITIES,
@@ -213,7 +213,7 @@ def create_vertex(
     fetch: Fetcher | None = None,
     realtime_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
-):
+) -> ProviderBundle:
     resolved_token = access_token or os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")
     if not resolved_token:
         raise ConfigurationError("Missing Vertex access token.")

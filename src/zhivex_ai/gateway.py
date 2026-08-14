@@ -23,6 +23,8 @@ GatewayProviderId = Literal[
     "ollama",
     "azure-openai",
     "openrouter",
+    "vllm",
+    "meta",
 ]
 GatewayRoutingMode = Literal["speed", "balanced", "quality"]
 GatewayTaskIntent = Literal["chat", "reasoning", "tool-heavy"]

@@ -21,6 +21,7 @@ Legend:
 | Grounded text | Yes | Yes | Yes | provider-dependent | stable |
 | Gateway fallback | Yes | Yes | Yes | provider-dependent | stable |
 | Tier-1 provider adapters | Yes | Yes | Yes | optional | stable provider story |
+| Meta Model API adapter | Yes | Yes | Yes | opt-in path; no recorded certification | beta portable, non-tier-1 |
 | Agent core runtime | Yes | Yes | Yes | provider-dependent | stable |
 | Typed agent DX (deps, outputs, hooks, middleware) | Yes | Yes | Yes | provider-dependent | stable |
 | Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
@@ -40,5 +41,7 @@ Legend:
 ## GA Boundary
 
 Python GA should include the stable public API surface, tier-1 provider story, agent core runtime, gateway contracts, production API patterns, and release/install verification. DeepSeek now participates in the tier-1 portable provider contract for text, streaming, structured output, tools, and reasoning. vLLM remains a tier-1 Python provider for SDK primitives exposed by its OpenAI-compatible server.
+
+Meta Model API is implemented and offline-tested as a Beta portable provider, but remains outside the GA/Tier-1 boundary until exact live evidence and the normal promotion criteria are met.
 
 The SDK orchestrates. Applications own business policy, durable vertical storage, approval UI/authorization, compliance systems, and provider selection policy.

@@ -59,6 +59,14 @@
       "stability": "stable provider story"
     },
     {
+      "area": "Meta Model API adapter",
+      "implemented": "yes",
+      "documented": "yes",
+      "offline_tested": "yes",
+      "live_smoked": "opt-in path; no recorded certification",
+      "stability": "beta portable, non-tier-1"
+    },
+    {
       "area": "Agent core runtime",
       "implemented": "yes",
       "documented": "yes",

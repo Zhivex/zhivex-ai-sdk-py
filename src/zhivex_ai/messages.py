@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import asdict, is_dataclass, replace
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
+from functools import wraps
+from typing import TYPE_CHECKING, Any, Callable, Literal, TypeGuard, cast, get_origin, get_type_hints, overload
+
+from pydantic import BaseModel, ConfigDict, create_model
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -28,6 +32,9 @@ from .types import (
     ToolCall,
     ToolCallPart,
     ToolDefinition,
+    ToolExecutionContext,
+    ToolInputGuardrail,
+    ToolOutputGuardrail,
     ToolSource,
     ToolExecutionResult,
     ToolResultPart,
@@ -245,13 +252,208 @@ def is_hosted_tool_class(tool_definition: HostedToolDefinition, tool_class: Host
     return get_hosted_tool_class(tool_definition) == tool_class
 
 
+def _callable_type_hints(execute: Any) -> dict[str, Any]:
+    try:
+        return get_type_hints(execute, include_extras=True)
+    except (NameError, TypeError):
+        return {}
+
+
+def _is_tool_context_parameter(name: str, annotation: Any) -> bool:
+    return name == "context" or annotation is ToolExecutionContext or get_origin(annotation) is ToolExecutionContext
+
+
+def _tool_from_callable(
+    execute: Any,
+    *,
+    name: str | None,
+    description: str | None,
+    schema: Any,
+    output_schema: Any,
+    input_examples: list[Any] | None,
+    strict: bool | None,
+    defer_loading: bool | None,
+    eager_input_streaming: bool | None,
+    allowed_callers: list[str] | None,
+    cache_control: dict[str, Any] | None,
+    tags: list[str] | None,
+    requires_approval: bool | None,
+    permissions: list[str] | None,
+    metadata: dict[str, Any] | None,
+    supports_streaming: bool,
+    input_guardrails: list[ToolInputGuardrail] | None,
+    output_guardrails: list[ToolOutputGuardrail] | None,
+) -> ToolDefinition:
+    if not callable(execute):
+        raise TypeError("@tool can only decorate callables.")
+    try:
+        signature = inspect.signature(execute)
+    except (TypeError, ValueError) as error:
+        raise TypeError("@tool requires a callable with an inspectable signature.") from error
+
+    hints = _callable_type_hints(execute)
+    user_parameters: list[inspect.Parameter] = []
+    context_parameter_names: set[str] = set()
+    fields: dict[str, tuple[Any, Any]] = {}
+    for parameter in signature.parameters.values():
+        annotation = hints.get(parameter.name, parameter.annotation)
+        if _is_tool_context_parameter(parameter.name, annotation):
+            context_parameter_names.add(parameter.name)
+            continue
+        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise TypeError("@tool does not support variadic *args or **kwargs parameters.")
+        user_parameters.append(parameter)
+        if annotation is inspect.Parameter.empty or isinstance(annotation, str):
+            annotation = Any
+        default = ... if parameter.default is inspect.Parameter.empty else parameter.default
+        fields[parameter.name] = (annotation, default)
+
+    resolved_name = name or str(getattr(execute, "__name__", execute.__class__.__name__))
+    if not resolved_name:
+        raise ValueError("Tool callables require a non-empty name.")
+    resolved_description = description
+    if resolved_description is None:
+        resolved_description = inspect.getdoc(execute) or None
+    resolved_schema = schema
+    if resolved_schema is None:
+        model_name = "".join(part.title() for part in resolved_name.replace("-", "_").split("_")) or "Tool"
+        resolved_schema = create_model(
+            f"{model_name}ToolInput",
+            __config__=ConfigDict(extra="forbid"),
+            **cast(dict[str, Any], fields),
+        )
+
+    resolved_output_schema = output_schema
+    if resolved_output_schema is None:
+        return_annotation = hints.get("return", signature.return_annotation)
+        if return_annotation not in (inspect.Signature.empty, None, type(None)) and not isinstance(
+            return_annotation, str
+        ):
+            resolved_output_schema = return_annotation
+
+    def call_arguments(input: Any, context: ToolExecutionContext[Any] | None) -> tuple[list[Any], dict[str, Any]]:
+        if isinstance(input, BaseModel):
+            values = {parameter.name: getattr(input, parameter.name) for parameter in user_parameters}
+        elif isinstance(input, dict):
+            values = input
+        elif len(user_parameters) == 1:
+            values = {user_parameters[0].name: input}
+        else:
+            raise TypeError(f'Tool "{resolved_name}" expected an object input.')
+        args: list[Any] = []
+        kwargs: dict[str, Any] = {}
+        for parameter in signature.parameters.values():
+            value = context if parameter.name in context_parameter_names else values[parameter.name]
+            if parameter.kind == inspect.Parameter.POSITIONAL_ONLY:
+                args.append(value)
+            else:
+                kwargs[parameter.name] = value
+        return args, kwargs
+
+    is_async = inspect.iscoroutinefunction(execute) or inspect.iscoroutinefunction(getattr(execute, "__call__", None))
+    if is_async:
+
+        @wraps(execute)
+        async def decorated_execute(input: Any, context: ToolExecutionContext[Any] | None = None) -> Any:
+            args, kwargs = call_arguments(input, context)
+            return await execute(*args, **kwargs)
+
+    else:
+
+        @wraps(execute)
+        def decorated_execute(input: Any, context: ToolExecutionContext[Any] | None = None) -> Any:
+            args, kwargs = call_arguments(input, context)
+            return execute(*args, **kwargs)
+
+    # Runtime invocation is object-based even when the decorated callable exposes
+    # multiple typed Python parameters. Keep the original metadata via wraps,
+    # while exposing the adapter signature to the tool executor.
+    setattr(
+        decorated_execute,
+        "__signature__",
+        inspect.Signature(
+            parameters=[
+                inspect.Parameter("input", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Any),
+                inspect.Parameter(
+                    "context",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=None,
+                    annotation=ToolExecutionContext[Any] | None,
+                ),
+            ],
+            return_annotation=Any,
+        ),
+    )
+
+    return ToolDefinition(
+        name=resolved_name,
+        description=resolved_description,
+        schema=resolved_schema,
+        execute=decorated_execute,
+        input_examples=[serialize_json_value(item) for item in (input_examples or [])],
+        strict=strict,
+        defer_loading=defer_loading,
+        eager_input_streaming=eager_input_streaming,
+        allowed_callers=list(allowed_callers or []),
+        output_schema=resolved_output_schema,
+        cache_control=serialize_json_value(cache_control) if cache_control is not None else None,
+        tags=list(tags or []),
+        requires_approval=requires_approval,
+        permissions=list(permissions or []),
+        source="local",
+        metadata=dict(metadata or {}),
+        supports_streaming=supports_streaming,
+        input_guardrails=list(input_guardrails or []),
+        output_guardrails=list(output_guardrails or []),
+    )
+
+
+ToolDecorator = Callable[[Callable[..., Any]], ToolDefinition]
+
+
+@overload
+def tool(definition: ToolDefinition, **kwargs: Any) -> ToolDefinition: ...
+
+
+@overload
+def tool(definition: Callable[..., Any], **kwargs: Any) -> ToolDefinition: ...
+
+
+@overload
 def tool(
-    definition: ToolDefinition | None = None,
+    definition: None = None,
+    *,
+    execute: Callable[..., Any],
+    **kwargs: Any,
+) -> ToolDefinition: ...
+
+
+@overload
+def tool(
+    definition: None = None,
+    *,
+    source: Literal["remote", "mcp"],
+    **kwargs: Any,
+) -> ToolDefinition: ...
+
+
+@overload
+def tool(
+    definition: None = None,
+    *,
+    source: Literal["local"] = "local",
+    execute: None = None,
+    **kwargs: Any,
+) -> ToolDecorator: ...
+
+
+def tool(
+    definition: ToolDefinition | Callable[..., Any] | None = None,
     *,
     name: str | None = None,
     description: str | None = None,
     schema: Any = None,
-    execute: Any = None,
+    execute: Callable[..., Any] | None = None,
     input_examples: list[Any] | None = None,
     strict: bool | None = None,
     defer_loading: bool | None = None,
@@ -267,13 +469,64 @@ def tool(
     supports_streaming: bool = False,
     remote_config: RemoteHTTPToolConfig | None = None,
     mcp_config: MCPToolConfig | None = None,
-) -> ToolDefinition:
-    if definition is not None:
+    input_guardrails: list[ToolInputGuardrail] | None = None,
+    output_guardrails: list[ToolOutputGuardrail] | None = None,
+    **kwargs: Any,
+) -> ToolDefinition | ToolDecorator:
+    if kwargs:
+        unexpected = next(iter(kwargs))
+        raise TypeError(f"tool() got an unexpected keyword argument {unexpected!r}")
+    if isinstance(definition, ToolDefinition):
         return definition
+    if definition is not None:
+        if source != "local" or remote_config is not None or mcp_config is not None:
+            raise ValueError("@tool only supports local callable tools.")
+        return _tool_from_callable(
+            definition,
+            name=name,
+            description=description,
+            schema=schema,
+            output_schema=output_schema,
+            input_examples=input_examples,
+            strict=strict,
+            defer_loading=defer_loading,
+            eager_input_streaming=eager_input_streaming,
+            allowed_callers=allowed_callers,
+            cache_control=cache_control,
+            tags=tags,
+            requires_approval=requires_approval,
+            permissions=permissions,
+            metadata=metadata,
+            supports_streaming=supports_streaming,
+            input_guardrails=input_guardrails,
+            output_guardrails=output_guardrails,
+        )
+    if source == "local" and execute is None:
+        def decorate(callable_execute: Callable[..., Any]) -> ToolDefinition:
+            return _tool_from_callable(
+                callable_execute,
+                name=name,
+                description=description,
+                schema=schema,
+                output_schema=output_schema,
+                input_examples=input_examples,
+                strict=strict,
+                defer_loading=defer_loading,
+                eager_input_streaming=eager_input_streaming,
+                allowed_callers=allowed_callers,
+                cache_control=cache_control,
+                tags=tags,
+                requires_approval=requires_approval,
+                permissions=permissions,
+                metadata=metadata,
+                supports_streaming=supports_streaming,
+                input_guardrails=input_guardrails,
+                output_guardrails=output_guardrails,
+            )
+
+        return decorate
     if not name:
         raise ValueError('Pass either an existing ToolDefinition or at least a "name".')
-    if source == "local" and execute is None:
-        raise ValueError('Local tools require an "execute" callable.')
     if source == "remote" and remote_config is None:
         raise ValueError('Remote tools require a "remote_config".')
     if source == "mcp" and mcp_config is None:
@@ -310,6 +563,8 @@ def tool(
         supports_streaming=supports_streaming,
         remote_config=remote_config,
         mcp_config=mcp_config,
+        input_guardrails=list(input_guardrails or []),
+        output_guardrails=list(output_guardrails or []),
     )
 
 
@@ -325,6 +580,8 @@ def remote_tool(
     requires_approval: bool | None = None,
     permissions: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
+    input_guardrails: list[ToolInputGuardrail] | None = None,
+    output_guardrails: list[ToolOutputGuardrail] | None = None,
 ) -> ToolDefinition:
     return tool(
         name=name,
@@ -336,6 +593,8 @@ def remote_tool(
         permissions=permissions,
         source="remote",
         metadata=metadata,
+        input_guardrails=input_guardrails,
+        output_guardrails=output_guardrails,
         remote_config=RemoteHTTPToolConfig(
             url=url,
             headers=dict(headers or {}),

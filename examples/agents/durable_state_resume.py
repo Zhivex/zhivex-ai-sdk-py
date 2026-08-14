@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
+    GenerateResult,
     create_agent_session,
     create_mock_language_model,
     create_sqlite_agent_memory_store,
@@ -20,7 +21,6 @@ from zhivex_ai import (  # noqa: E402
     resume_agent,
     run_agent,
 )
-from zhivex_ai.types import GenerateResult  # noqa: E402
 
 
 async def main() -> None:

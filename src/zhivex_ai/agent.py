@@ -27,7 +27,14 @@ from ._serde import (
     serialize_tool_definition,
     serialize_tool_execution_context,
 )
-from .errors import AgentEventDeliveryError, AgentRunCancelled, ProviderHTTPError, ToolExecutionSuspended, ValidationError
+from .errors import (
+    AgentEventDeliveryError,
+    AgentRunCancelled,
+    ProviderHTTPError,
+    ToolExecutionOutcomeUnknown,
+    ToolExecutionSuspended,
+    ValidationError,
+)
 from .generate_object import _parse_object, _resolve_object_mode
 from .agent_state import (
     AgentChildRun,
@@ -79,6 +86,10 @@ from .types import (
     ToolExecutionError,
     ToolExecutionOptions,
     ToolExecutionResult,
+    ToolGuardrailResult,
+    ToolGuardrailTripwireTriggered,
+    ToolInputGuardrailRequest,
+    ToolOutputGuardrailRequest,
     ToolSet,
     TokenUsage,
     ToolCall,
@@ -121,6 +132,58 @@ async def _persist_agent_run_state(store: AgentRunStore, state: AgentRunState) -
             ) from error
         raise
     return persisted if isinstance(persisted, AgentRunState) else state
+
+
+async def _raise_if_agent_run_cancelled(
+    *,
+    run_store: AgentRunStore | None,
+    run_id: str,
+    cancellation_token: AgentCancellationToken | None,
+) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled(run_id)
+    if run_store is None:
+        return
+    current = await run_store.load(run_id)
+    if current is not None and current.status == "cancelled":
+        if cancellation_token is not None:
+            cancellation_token.cancel(current.cancellation_reason)
+        raise AgentRunCancelled(run_id, reason=current.cancellation_reason)
+
+
+async def _await_with_agent_cancellation(
+    awaitable: Awaitable[Any],
+    *,
+    cancellation_token: AgentCancellationToken | None,
+    run_id: str,
+) -> Any:
+    if cancellation_token is None:
+        return await awaitable
+    operation_task = asyncio.ensure_future(awaitable)
+    try:
+        cancellation_token.raise_if_cancelled(run_id)
+    except BaseException:
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        raise
+    cancellation_task = asyncio.create_task(cancellation_token.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {operation_task, cancellation_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if cancellation_task in done:
+            operation_task.cancel()
+            await asyncio.gather(operation_task, return_exceptions=True)
+            cancellation_token.raise_if_cancelled(run_id)
+        return await operation_task
+    finally:
+        if not operation_task.done():
+            operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        if not cancellation_task.done():
+            cancellation_task.cancel()
+        await asyncio.gather(cancellation_task, return_exceptions=True)
 
 
 def _text_from_message(message: ModelMessage) -> str:
@@ -363,6 +426,12 @@ def _callable_fingerprint(execute: Any) -> dict[str, Any] | None:
 def _tool_definition_fingerprint(definition: ToolDefinition) -> str:
     payload = serialize_tool_definition(definition, redact_credentials=True)
     payload["executor"] = _callable_fingerprint(definition.execute)
+    payload["input_guardrails"] = [
+        _callable_fingerprint(guardrail) for guardrail in definition.input_guardrails
+    ]
+    payload["output_guardrails"] = [
+        _callable_fingerprint(guardrail) for guardrail in definition.output_guardrails
+    ]
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -405,6 +474,31 @@ class AgentHandoff:
 
 
 @dataclass(slots=True)
+class AgentCancellationToken:
+    """In-process cooperative cancellation signal for one agent run tree."""
+
+    reason: str | None = None
+    _event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False, compare=False)
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def cancel(self, reason: str | None = None) -> None:
+        if self._event.is_set():
+            return
+        self.reason = reason
+        self._event.set()
+
+    async def wait(self) -> None:
+        await self._event.wait()
+
+    def raise_if_cancelled(self, run_id: str = "") -> None:
+        if self.cancelled:
+            raise AgentRunCancelled(run_id, reason=self.reason)
+
+
+@dataclass(slots=True)
 class AgentContext(Generic[AgentDepsT]):
     run_id: str
     session_id: str
@@ -414,6 +508,7 @@ class AgentContext(Generic[AgentDepsT]):
     handoff_path: list[str] = field(default_factory=list)
     deps: AgentDepsT | None = field(default=None, repr=False, compare=False)
     session: AgentSession | None = field(default=None, repr=False, compare=False)
+    cancellation_token: AgentCancellationToken | None = field(default=None, repr=False, compare=False)
 
 
 DynamicInstructions: TypeAlias = Callable[..., str | None | Awaitable[str | None]]
@@ -517,6 +612,7 @@ class AgentRunRequest(Generic[AgentDepsT, AgentOutputT]):
     prompt: str | None = None
     messages: list[ModelMessage] | None = None
     deps: AgentDepsT | None = field(default=None, repr=False, compare=False)
+    cancellation_token: AgentCancellationToken | None = field(default=None, repr=False, compare=False)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1329,9 +1425,19 @@ class _LifecycleLanguageModel:
         self.model_id = model.model_id
         self.capabilities = model.capabilities
 
+    def _raise_if_cancelled(self) -> None:
+        if self._context.cancellation_token is not None:
+            self._context.cancellation_token.raise_if_cancelled(self._context.run_id)
+
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self._raise_if_cancelled()
         await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
-        result = await self._model.generate(input)
+        result = await _await_with_agent_cancellation(
+            self._model.generate(input),
+            cancellation_token=self._context.cancellation_token,
+            run_id=self._context.run_id,
+        )
+        self._raise_if_cancelled()
         await _call_agent_hooks(
             self._hooks,
             "on_model_end",
@@ -1343,12 +1449,28 @@ class _LifecycleLanguageModel:
         return result
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[Any]:
+        self._raise_if_cancelled()
         await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
-        events = await self._model.stream(input)
+        events = await _await_with_agent_cancellation(
+            self._model.stream(input),
+            cancellation_token=self._context.cancellation_token,
+            run_id=self._context.run_id,
+        )
 
         async def generator() -> AsyncIterable[Any]:
-            async for event in events:
+            iterator = events.__aiter__()
+            while True:
+                try:
+                    event = await _await_with_agent_cancellation(
+                        iterator.__anext__(),
+                        cancellation_token=self._context.cancellation_token,
+                        run_id=self._context.run_id,
+                    )
+                except StopAsyncIteration:
+                    break
+                self._raise_if_cancelled()
                 yield event
+            self._raise_if_cancelled()
             await _call_agent_hooks(
                 self._hooks,
                 "on_model_end",
@@ -3225,6 +3347,7 @@ class AgentRuntime:
         live_stream: bool = False,
         parent_run_id: str | None = None,
         idempotency_key: str | None = None,
+        cancellation_token: AgentCancellationToken | None = None,
         hooks: Iterable[AgentHooks] | None = None,
         middleware: Iterable[AgentMiddleware] | None = None,
     ) -> AgentRunResult[AgentOutputT]:
@@ -3234,6 +3357,7 @@ class AgentRuntime:
             prompt=prompt,
             messages=messages,
             deps=deps,
+            cancellation_token=cancellation_token,
             metadata={"parent_run_id": parent_run_id, "idempotency_key": idempotency_key},
         )
         resolved_middleware = [*self._middleware, *list(middleware or []), *agent.middleware]
@@ -3267,6 +3391,7 @@ class AgentRuntime:
                     live_stream=live_stream,
                     parent_run_id=parent_run_id,
                     idempotency_key=idempotency_key,
+                    cancellation_token=current.cancellation_token,
                     hooks=hooks,
                 )
 
@@ -3296,7 +3421,11 @@ class AgentRuntime:
         except BaseException as error:
             error_attributes = {
                 "zhivex.duration_ms": max(0, _now_ms() - started_at_ms),
-                "zhivex.run.status": "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                "zhivex.run.status": (
+                    "cancelled"
+                    if isinstance(error, (AgentRunCancelled, asyncio.CancelledError))
+                    else "failed"
+                ),
             }
             if isinstance(error, Exception):
                 self._finish_span(root_span, attributes=error_attributes, error=error)
@@ -3350,6 +3479,7 @@ class AgentRuntime:
         live_stream: bool = False,
         parent_run_id: str | None = None,
         idempotency_key: str | None = None,
+        cancellation_token: AgentCancellationToken | None = None,
         hooks: Iterable[AgentHooks] | None = None,
     ) -> AgentRunResult[Any]:
         resolved_session = session or create_agent_session()
@@ -3426,8 +3556,18 @@ class AgentRuntime:
             else None
         )
         try:
+            await _raise_if_agent_run_cancelled(
+                run_store=agent.run_store,
+                run_id=run_id,
+                cancellation_token=cancellation_token,
+            )
             await publish(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
             while True:
+                await _raise_if_agent_run_cancelled(
+                    run_store=agent.run_store,
+                    run_id=run_id,
+                    cancellation_token=cancellation_token,
+                )
                 effective_hooks = [*run_hooks, *current_agent.hooks]
                 trace.segments.append(AgentTraceSegment(agent_name=current_agent.name, started_at_ms=_now_ms()))
                 await publish(AgentDelegationStartEvent(agent_name=current_agent.name, handoff_depth=handoff_depth))
@@ -3456,6 +3596,7 @@ class AgentRuntime:
                         emit=publish,
                         live_stream=live_stream,
                         deps=deps,
+                        cancellation_token=cancellation_token,
                         hooks=effective_hooks,
                         child_hooks=call_hooks,
                     )
@@ -3471,6 +3612,11 @@ class AgentRuntime:
                             segment_result = await run_segment()
                     except TimeoutError as error:
                         raise RuntimeError("Agent run exceeded max wall time.") from error
+                await _raise_if_agent_run_cancelled(
+                    run_store=agent.run_store,
+                    run_id=run_id,
+                    cancellation_token=cancellation_token,
+                )
                 accumulated_steps.extend(segment_result.steps)
                 accumulated_tool_results.extend(segment_result.tool_results)
                 accumulated_artifacts.extend(segment_result.artifacts)
@@ -3493,6 +3639,7 @@ class AgentRuntime:
                         handoff_path=list(trace.orchestration_path),
                         deps=deps,
                         session=resolved_session,
+                        cancellation_token=cancellation_token,
                     )
                     await _call_agent_hooks(
                         effective_hooks,
@@ -3599,6 +3746,7 @@ class AgentRuntime:
                     handoff_path=list(trace.orchestration_path),
                     deps=deps,
                     session=resolved_session,
+                    cancellation_token=cancellation_token,
                 )
                 await _call_agent_hooks(
                     effective_hooks,
@@ -3664,6 +3812,7 @@ class AgentRuntime:
                 handoff_path=list(trace.orchestration_path),
                 deps=deps,
                 session=resolved_session,
+                cancellation_token=cancellation_token,
             )
             await _call_agent_hooks(
                 [*run_hooks, *current_agent.hooks],
@@ -3692,6 +3841,16 @@ class AgentRuntime:
             return suspended_result
         except AgentRunCancelled as error:
             trace.finished_at_ms = _now_ms()
+            if agent.run_store is not None:
+                current_state = await agent.run_store.load(run_id)
+                if current_state is not None and current_state.status != "cancelled":
+                    cancel_run = getattr(agent.run_store, "cancel_run", None)
+                    if callable(cancel_run):
+                        await cancel_run(
+                            run_id,
+                            reason=error.reason,
+                            cancelled_at_ms=trace.finished_at_ms,
+                        )
             cancelled_context = AgentContext(
                 run_id=run_id,
                 session_id=resolved_session.id,
@@ -3701,6 +3860,7 @@ class AgentRuntime:
                 handoff_path=list(trace.orchestration_path),
                 deps=deps,
                 session=resolved_session,
+                cancellation_token=cancellation_token,
             )
             await _call_error_hooks_preserving(
                 [*run_hooks, *current_agent.hooks],
@@ -3755,6 +3915,7 @@ class AgentRuntime:
                 handoff_path=list(trace.orchestration_path),
                 deps=deps,
                 session=resolved_session,
+                cancellation_token=cancellation_token,
             )
             await _call_error_hooks_preserving(
                 [*run_hooks, *current_agent.hooks],
@@ -3917,6 +4078,7 @@ class AgentRuntime:
         emit: Callable[[AgentEvent], Awaitable[None]],
         live_stream: bool,
         deps: Any,
+        cancellation_token: AgentCancellationToken | None,
         hooks: list[AgentHooks],
         child_hooks: list[AgentHooks],
     ) -> AgentRunResult:
@@ -3940,6 +4102,7 @@ class AgentRuntime:
             handoff_path=list(trace.orchestration_path),
             deps=deps,
             session=session,
+            cancellation_token=cancellation_token,
         )
         await _call_agent_hooks(hooks, "on_agent_start", context, agent)
         resolved_instructions = await _resolve_agent_instructions(agent, context)
@@ -4340,6 +4503,90 @@ class AgentRuntime:
         wrapped: ToolSet = {}
         tool_limit = agent.run_limits.max_tool_calls
 
+        async def run_tool_guardrails(
+            *,
+            stage: Literal["input", "output"],
+            definition: ToolDefinition,
+            tool_name: str,
+            tool_input: Any,
+            value: Any,
+            tool_context: ToolExecutionContext,
+        ) -> Any:
+            guardrails = definition.input_guardrails if stage == "input" else definition.output_guardrails
+            guarded_value = value
+            for guardrail in guardrails:
+                guardrail_name = _guardrail_name(guardrail)
+                if stage == "input":
+                    request: Any = ToolInputGuardrailRequest(
+                        tool_name=tool_name,
+                        input=guarded_value,
+                        context=tool_context,
+                    )
+                else:
+                    request = ToolOutputGuardrailRequest(
+                        tool_name=tool_name,
+                        input=tool_input,
+                        output=guarded_value,
+                        context=tool_context,
+                    )
+                try:
+                    raw_outcome = await _maybe_await(guardrail(request))
+                    if isinstance(raw_outcome, ToolGuardrailResult):
+                        outcome = raw_outcome
+                    elif isinstance(raw_outcome, bool):
+                        outcome = ToolGuardrailResult(tripwire_triggered=raw_outcome)
+                    elif raw_outcome is None:
+                        outcome = ToolGuardrailResult()
+                    else:
+                        raise TypeError("Tool guardrails must return ToolGuardrailResult, bool, or None.")
+                except Exception as error:
+                    reason = "Guardrail evaluation failed."
+                    trace.guardrail_trigger_count += 1
+                    await emit(
+                        AgentGuardrailEvent(
+                            stage=stage,
+                            guardrail_name=guardrail_name,
+                            triggered=True,
+                            reason=reason,
+                            metadata={"scope": "tool", "tool_name": tool_name, "tool_stage": stage},
+                        )
+                    )
+                    raise ToolGuardrailTripwireTriggered(
+                        stage=stage,
+                        tool_name=tool_name,
+                        guardrail_name=guardrail_name,
+                        reason=reason,
+                    ) from error
+
+                event_metadata = {
+                    **dict(outcome.metadata),
+                    "scope": "tool",
+                    "tool_name": tool_name,
+                    "tool_stage": stage,
+                    "transformed": outcome.replace,
+                }
+                await emit(
+                    AgentGuardrailEvent(
+                        stage=stage,
+                        guardrail_name=guardrail_name,
+                        triggered=outcome.tripwire_triggered,
+                        reason=outcome.reason,
+                        metadata=event_metadata,
+                    )
+                )
+                if outcome.tripwire_triggered:
+                    trace.guardrail_trigger_count += 1
+                    raise ToolGuardrailTripwireTriggered(
+                        stage=stage,
+                        tool_name=tool_name,
+                        guardrail_name=guardrail_name,
+                        reason=outcome.reason,
+                        metadata=outcome.metadata,
+                    )
+                if outcome.replace:
+                    guarded_value = outcome.replacement
+            return guarded_value
+
         for tool_name, definition in registry.items():
             if not is_callable_tool_definition(definition):
                 continue
@@ -4352,6 +4599,11 @@ class AgentRuntime:
                 _tool_name: str = tool_name,
                 _definition: ToolDefinition = callable_definition,
             ) -> Any:
+                await _raise_if_agent_run_cancelled(
+                    run_store=agent.run_store,
+                    run_id=run_id,
+                    cancellation_token=context.cancellation_token,
+                )
                 if agent.run_limits.max_wall_time_ms is not None and _now_ms() - started_at_ms > agent.run_limits.max_wall_time_ms:
                     raise RuntimeError("Agent run exceeded max wall time.")
 
@@ -4359,12 +4611,46 @@ class AgentRuntime:
                 if tool_limit is not None and trace.tool_call_count > tool_limit:
                     raise RuntimeError(f'Agent exceeded max tool calls ({tool_limit}).')
 
+                tool_context = ToolExecutionContext(
+                    tool_name=_tool_name,
+                    tool_call_id=call_context.tool_call_id if call_context is not None else "",
+                    idempotency_key=(
+                        call_context.idempotency_key
+                        if call_context is not None and call_context.idempotency_key
+                        else f"{run_id}:{call_context.tool_call_id if call_context is not None else _tool_name}"
+                    ),
+                    deadline_ms=call_context.deadline_ms if call_context is not None else None,
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_name=agent.name,
+                    memory_summary=context.memory_summary,
+                    permissions=list(_definition.permissions),
+                    source=_definition.source,
+                    metadata={**context.metadata, **_definition.metadata},
+                    handoff_path=list(trace.orchestration_path),
+                    deps=context.deps,
+                    cancellation_token=context.cancellation_token,
+                )
+                tool_context.raise_if_cancelled()
+                guarded_input = await run_tool_guardrails(
+                    stage="input",
+                    definition=_definition,
+                    tool_name=_tool_name,
+                    tool_input=input,
+                    value=input,
+                    tool_context=tool_context,
+                )
+                try:
+                    guarded_input = create_schema_adapter(_definition.schema).validate_python(guarded_input)
+                except Exception as error:
+                    raise ValidationError(f'Invalid guarded input for tool "{_tool_name}": {error}') from error
+
                 request = ToolApprovalRequest(
                     run_id=run_id,
                     session_id=session_id,
                     agent_name=agent.name,
                     tool_name=_tool_name,
-                    tool_input=input,
+                    tool_input=guarded_input,
                     tool_permissions=list(_definition.permissions),
                     tool_source=_definition.source,
                     tool_metadata=dict(_definition.metadata),
@@ -4399,7 +4685,7 @@ class AgentRuntime:
                     await emit(
                         AgentToolApprovalEvent(
                             tool_name=_tool_name,
-                            tool_input=input,
+                            tool_input=guarded_input,
                             approved=decision.approved,
                             reason=decision.reason,
                             approval_request_id=pending_approval.id if pending_approval is not None else decision.approval_id,
@@ -4425,25 +4711,6 @@ class AgentRuntime:
                 if not decision.approved:
                     raise RuntimeError(decision.reason or f'Tool "{_tool_name}" denied by approval policy.')
 
-                tool_context = ToolExecutionContext(
-                    tool_name=_tool_name,
-                    tool_call_id=call_context.tool_call_id if call_context is not None else "",
-                    idempotency_key=(
-                        call_context.idempotency_key
-                        if call_context is not None and call_context.idempotency_key
-                        else f"{run_id}:{call_context.tool_call_id if call_context is not None else _tool_name}"
-                    ),
-                    deadline_ms=call_context.deadline_ms if call_context is not None else None,
-                    run_id=run_id,
-                    session_id=session_id,
-                    agent_name=agent.name,
-                    memory_summary=context.memory_summary,
-                    permissions=list(_definition.permissions),
-                    source=_definition.source,
-                    metadata={**context.metadata, **_definition.metadata},
-                    handoff_path=list(trace.orchestration_path),
-                    deps=context.deps,
-                )
                 span = self._start_span(
                     "zhivex.agent.tool",
                     {
@@ -4467,10 +4734,25 @@ class AgentRuntime:
                         context,
                         agent,
                         _definition,
-                        input,
+                        guarded_input,
                         tool_context,
                     )
-                    result = await registry.execute(_definition, input, tool_context)
+                    tool_context.raise_if_cancelled()
+                    result = await registry.execute(_definition, guarded_input, tool_context)
+                    tool_context.raise_if_cancelled()
+                    await _raise_if_agent_run_cancelled(
+                        run_store=agent.run_store,
+                        run_id=run_id,
+                        cancellation_token=context.cancellation_token,
+                    )
+                    result = await run_tool_guardrails(
+                        stage="output",
+                        definition=_definition,
+                        tool_name=_tool_name,
+                        tool_input=guarded_input,
+                        value=result,
+                        tool_context=tool_context,
+                    )
                 except Exception as error:
                     if skill_name and skill_entrypoint:
                         await emit(AgentSkillExecutionFinishEvent(skill_name=skill_name, entrypoint=skill_entrypoint, ok=False))
@@ -4482,7 +4764,7 @@ class AgentRuntime:
                             context,
                             agent,
                             _definition,
-                            input,
+                            guarded_input,
                             tool_context,
                             error,
                             reverse=True,
@@ -4521,7 +4803,7 @@ class AgentRuntime:
                     context,
                     agent,
                     _definition,
-                    input,
+                    guarded_input,
                     tool_context,
                     result,
                     reverse=True,
@@ -4558,6 +4840,8 @@ class AgentRuntime:
                 supports_streaming=definition.supports_streaming,
                 remote_config=definition.remote_config,
                 mcp_config=definition.mcp_config,
+                input_guardrails=list(definition.input_guardrails),
+                output_guardrails=list(definition.output_guardrails),
             )
 
         return wrapped
@@ -4703,6 +4987,7 @@ def create_subagent_tool(
             agent=agent,
             prompt=str(prompt or ""),
             deps=context.deps if context is not None else None,
+            cancellation_token=getattr(context, "cancellation_token", None) if context is not None else None,
             parent_run_id=parent_run_id or (context.run_id if context is not None else None),
             runtime=runtime,
             hooks=hooks,
@@ -4750,6 +5035,8 @@ class AgentGroupMember:
     name: str
     agent: Agent
     prompt: str | None = None
+    session: AgentSession | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(slots=True)
@@ -4770,20 +5057,89 @@ async def run_agent_group(
     *,
     prompt: str | None = None,
     parent_run_id: str | None = None,
+    deps: Any = None,
+    runtime: AgentRuntime | None = None,
+    hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
+    max_concurrency: int | None = None,
+    timeout_ms: int | None = None,
+    fail_fast: bool = False,
+    idempotency_key: str | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
 ) -> AgentGroupRunResult:
+    if max_concurrency is not None and (isinstance(max_concurrency, bool) or max_concurrency <= 0):
+        raise ValidationError("Agent group max_concurrency must be a positive integer or None.")
+    if timeout_ms is not None and (isinstance(timeout_ms, bool) or timeout_ms <= 0):
+        raise ValidationError("Agent group timeout_ms must be a positive integer or None.")
+    if not members:
+        return AgentGroupRunResult(parent_run_id=parent_run_id, outputs=[])
+
+    semaphore = asyncio.Semaphore(max_concurrency or len(members))
+    resolved_runtime = runtime or AgentRuntime()
+
     async def run_member(member: AgentGroupMember) -> AgentGroupMemberResult:
         try:
-            output = await run_agent(
-                agent=member.agent,
-                prompt=member.prompt if member.prompt is not None else prompt,
-                parent_run_id=parent_run_id,
-            )
+            async with semaphore:
+                async def execute() -> AgentRunResult:
+                    return await run_agent(
+                        agent=member.agent,
+                        session=member.session,
+                        prompt=member.prompt if member.prompt is not None else prompt,
+                        deps=deps,
+                        parent_run_id=parent_run_id,
+                        runtime=resolved_runtime,
+                        hooks=hooks,
+                        middleware=middleware,
+                        cancellation_token=cancellation_token,
+                        idempotency_key=(
+                            member.idempotency_key
+                            or (f"{idempotency_key}:{member.name}" if idempotency_key is not None else None)
+                        ),
+                    )
+
+                if timeout_ms is None:
+                    output = await execute()
+                else:
+                    async with asyncio.timeout(timeout_ms / 1000):
+                        output = await execute()
             return AgentGroupMemberResult(name=member.name, output=output)
         except Exception as error:
             return AgentGroupMemberResult(name=member.name, error=error)
 
-    outputs = await asyncio.gather(*(run_member(member) for member in members))
-    return AgentGroupRunResult(parent_run_id=parent_run_id, outputs=list(outputs))
+    tasks = [asyncio.create_task(run_member(member)) for member in members]
+    if not fail_fast:
+        group_outputs = await asyncio.gather(*tasks)
+        return AgentGroupRunResult(parent_run_id=parent_run_id, outputs=list(group_outputs))
+
+    indexed_tasks = {task: index for index, task in enumerate(tasks)}
+    pending: set[asyncio.Task[AgentGroupMemberResult]] = set(tasks)
+    outputs: list[AgentGroupMemberResult | None] = [None] * len(members)
+    failed_member: str | None = None
+    while pending and failed_member is None:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            index = indexed_tasks[task]
+            result = await task
+            outputs[index] = result
+            if result.error is not None and failed_member is None:
+                failed_member = result.name
+
+    if failed_member is not None and pending:
+        cancelled_tasks = list(pending)
+        for task in cancelled_tasks:
+            task.cancel()
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+        for task in cancelled_tasks:
+            index = indexed_tasks[task]
+            outputs[index] = AgentGroupMemberResult(
+                name=members[index].name,
+                error=RuntimeError(f'Cancelled because agent group member "{failed_member}" failed fast.'),
+            )
+
+    return AgentGroupRunResult(
+        parent_run_id=parent_run_id,
+        outputs=[cast(AgentGroupMemberResult, item) for item in outputs],
+    )
 
 
 def run_agent(
@@ -4811,6 +5167,7 @@ def run_agent(
     observer: AgentObserver | None = None,
     parent_run_id: str | None = None,
     idempotency_key: str | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
     middleware: Iterable[AgentMiddleware] | None = None,
 ) -> Awaitable[AgentRunResult[AgentOutputT]]:
@@ -4836,6 +5193,7 @@ def run_agent(
         stop_on_handoff=stop_on_handoff,
         parent_run_id=parent_run_id,
         idempotency_key=idempotency_key,
+        cancellation_token=cancellation_token,
         hooks=hooks,
         middleware=middleware,
     )
@@ -4864,6 +5222,7 @@ def resume_agent(
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
     middleware: Iterable[AgentMiddleware] | None = None,
 ) -> Awaitable[AgentRunResult[AgentOutputT]]:
@@ -4903,6 +5262,7 @@ def resume_agent(
             retry_backoff_ms=retry_backoff_ms,
             stop_on_handoff=stop_on_handoff,
             resumed_from_checkpoint=latest_checkpoint,
+            cancellation_token=cancellation_token,
             hooks=hooks,
             middleware=middleware,
         )
@@ -4927,9 +5287,13 @@ async def _execute_resolved_approval_tool(
     approved: bool,
     reason: str | None,
     tools: ToolSet | ToolRegistry | None,
+    tool_execution: ToolExecutionOptions | None = None,
     deps: Any = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
 ) -> ToolExecutionResult:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled(state.run_id)
     agent_context = AgentContext(
         run_id=state.run_id,
         session_id=state.session_id or "",
@@ -4937,6 +5301,7 @@ async def _execute_resolved_approval_tool(
         metadata=dict(state.metadata),
         handoff_path=list(pending.handoff_path),
         deps=deps,
+        cancellation_token=cancellation_token,
     )
     effective_hooks = list(hooks or [])
     request = ToolApprovalRequest(
@@ -4996,6 +5361,7 @@ async def _execute_resolved_approval_tool(
         metadata=dict(pending.metadata),
         handoff_path=list(pending.handoff_path),
         deps=deps,
+        cancellation_token=cancellation_token,
     )
     await _call_agent_hooks(
         effective_hooks,
@@ -5007,7 +5373,67 @@ async def _execute_resolved_approval_tool(
         context,
     )
     try:
-        output = await registry.execute(definition, pending.arguments, context)
+        context.raise_if_cancelled()
+        timeout_ms = tool_execution.timeout_ms if tool_execution is not None else None
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValidationError('The "tool_execution.timeout_ms" field must be greater than zero.')
+        context.deadline_ms = _now_ms() + timeout_ms if timeout_ms is not None else None
+        execution = _await_with_agent_cancellation(
+            registry.execute(definition, pending.arguments, context),
+            cancellation_token=cancellation_token,
+            run_id=state.run_id,
+        )
+        try:
+            output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
+        except TimeoutError as error:
+            raise ToolExecutionOutcomeUnknown(
+                f'Tool "{pending.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
+                f'Reconcile the side effect with idempotency key "{context.idempotency_key}" before retrying.',
+                tool_name=pending.name,
+                tool_call_id=pending.tool_call_id or pending.id,
+                timeout_ms=cast(int, timeout_ms),
+                idempotency_key=context.idempotency_key or f"{state.run_id}:{pending.name}",
+            ) from error
+        context.raise_if_cancelled()
+        guarded_output = output
+        for guardrail in definition.output_guardrails:
+            guardrail_name = _guardrail_name(guardrail)
+            guardrail_request = ToolOutputGuardrailRequest(
+                tool_name=pending.name,
+                input=pending.arguments,
+                output=guarded_output,
+                context=context,
+            )
+            try:
+                raw_outcome = await _maybe_await(guardrail(guardrail_request))
+                if isinstance(raw_outcome, ToolGuardrailResult):
+                    outcome = raw_outcome
+                elif isinstance(raw_outcome, bool):
+                    outcome = ToolGuardrailResult(tripwire_triggered=raw_outcome)
+                elif raw_outcome is None:
+                    outcome = ToolGuardrailResult()
+                else:
+                    raise TypeError("Tool guardrails must return ToolGuardrailResult, bool, or None.")
+            except Exception as error:
+                raise ToolGuardrailTripwireTriggered(
+                    stage="output",
+                    tool_name=pending.name,
+                    guardrail_name=guardrail_name,
+                    reason="Guardrail evaluation failed.",
+                ) from error
+            if outcome.tripwire_triggered:
+                raise ToolGuardrailTripwireTriggered(
+                    stage="output",
+                    tool_name=pending.name,
+                    guardrail_name=guardrail_name,
+                    reason=outcome.reason,
+                    metadata=outcome.metadata,
+                )
+            if outcome.replace:
+                guarded_output = outcome.replacement
+        output = guarded_output
+    except (AgentRunCancelled, ToolExecutionOutcomeUnknown):
+        raise
     except Exception as error:
         await _call_agent_hooks(
             effective_hooks,
@@ -5113,6 +5539,7 @@ def resume_agent_run(
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
     idempotency_key: str | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
     middleware: Iterable[AgentMiddleware] | None = None,
 ) -> Awaitable[AgentRunResult[AgentOutputT]]:
@@ -5200,9 +5627,16 @@ def resume_agent_run(
                 approved=approved,
                 reason=reason,
                 tools=tools,
+                tool_execution=tool_execution,
                 deps=deps,
+                cancellation_token=cancellation_token,
                 hooks=approval_hooks,
             )
+            if tool_execution is not None and tool_execution.stop_on_error and approval_result.is_error:
+                raise RuntimeError(
+                    f'Tool "{approval_result.tool_name}" failed: '
+                    f'{approval_result.error.message if approval_result.error else "Unknown tool error."}'
+                )
             resume_messages = _resume_messages_from_state(suspended_state)
             resume_messages.append(ModelMessage(role="tool", parts=[tool_result_part(approval_result)]))
             session = create_agent_session(
@@ -5234,6 +5668,7 @@ def resume_agent_run(
                 stop_on_handoff=stop_on_handoff,
                 parent_run_id=run_id,
                 idempotency_key=idempotency_key or f"{run_id}:{pending.id}:resume",
+                cancellation_token=cancellation_token,
                 hooks=hooks,
                 middleware=middleware,
             )
@@ -5314,6 +5749,7 @@ def stream_agent(
     registry: AgentRegistry | None = None,
     observer: AgentObserver | None = None,
     idempotency_key: str | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
     middleware: Iterable[AgentMiddleware] | None = None,
 ) -> AgentStreamResult[AgentOutputT]:
@@ -5347,6 +5783,7 @@ def stream_agent(
                 emit=emit,
                 live_stream=True,
                 idempotency_key=idempotency_key,
+                cancellation_token=cancellation_token,
                 hooks=hooks,
                 middleware=middleware,
             )
@@ -5364,6 +5801,7 @@ def stream_live_agent(
     tools: ToolSet | ToolRegistry | None = None,
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
+    tool_execution: ToolExecutionOptions | None = None,
     connect_options: RealtimeConnectOptions | None = None,
     realtime_config: RealtimeSessionConfig | None = None,
     provider_options: dict[str, Any] | None = None,
@@ -5372,7 +5810,11 @@ def stream_live_agent(
     observer: AgentObserver | None = None,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
+    parent_run_id: str | None = None,
+    idempotency_key: str | None = None,
+    cancellation_token: AgentCancellationToken | None = None,
     hooks: Iterable[AgentHooks] | None = None,
+    middleware: Iterable[AgentMiddleware] | None = None,
 ) -> LiveAgentStreamResult[AgentOutputT]:
     if not hasattr(agent.model, "connect"):
         raise ValidationError("stream_live_agent() requires an agent.model that supports realtime sessions.")
@@ -5387,137 +5829,273 @@ def stream_live_agent(
     async def emit_live(event: RealtimeEvent) -> None:
         await broadcast.publish(event)
 
-    async def runner() -> AgentRunResult[AgentOutputT]:
-        resolved_session = session or create_agent_session()
-        if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
-            state = await agent.memory.load(resolved_session.id)
+    if tool_execution is not None and tool_execution.timeout_ms is not None:
+        if tool_execution.timeout_ms <= 0:
+            raise ValidationError('The "tool_execution.timeout_ms" field must be greater than zero.')
+
+    async def run_live_impl(request: AgentRunRequest[Any, Any]) -> AgentRunResult[AgentOutputT]:
+        live_agent = cast(Agent[AgentDepsT, AgentOutputT], request.agent)
+        resolved_session = request.session or create_agent_session()
+        live_prompt = request.prompt
+        live_messages = request.messages
+        live_deps = cast(AgentDepsT | None, request.deps)
+        live_cancellation_token = request.cancellation_token
+        live_tool_execution = tool_execution if tool_execution is not None else live_agent.tool_execution
+        if live_tool_execution is not None and live_tool_execution.timeout_ms is not None:
+            if live_tool_execution.timeout_ms <= 0:
+                raise ValidationError('The "tool_execution.timeout_ms" field must be greater than zero.')
+        if live_agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
+            state = await live_agent.memory.load(resolved_session.id)
             resolved_session.messages = list(state.messages)
             resolved_session.summary = state.summary
             resolved_session.metadata = {**state.metadata, **resolved_session.metadata}
 
         run_id = _new_id("run")
+        started_at_ms = _now_ms()
         trace = AgentTrace(
             run_id=run_id,
             session_id=resolved_session.id,
-            agent_name=agent.name,
-            started_at_ms=_now_ms(),
-            orchestration_path=[agent.name],
+            agent_name=live_agent.name,
+            started_at_ms=started_at_ms,
+            orchestration_path=[live_agent.name],
         )
-        await emit_agent(AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=agent.name))
-        active_skill_activations, skipped_skills, skill_tools = await _select_active_skills(
-            _resolve_skill_registry(agent, skills),
-            agent=agent,
-            session=resolved_session,
-            prompt=prompt,
-            messages=messages,
-        )
-        await _emit_skill_events(active_skills=active_skill_activations, skipped_skills=skipped_skills, emit=emit_agent)
-        registry_instance = _resolve_tool_registry(agent, tools)
-        if skill_tools:
-            registry_instance = registry_instance.merge(skill_tools)
-        context: AgentContext[AgentDepsT] = AgentContext(
+        initial_state = AgentRunState(
             run_id=run_id,
+            agent_name=live_agent.name,
+            provider=str(getattr(live_agent.model, "provider", "")),
+            model_id=str(getattr(live_agent.model, "model_id", "")),
             session_id=resolved_session.id,
-            agent_name=agent.name,
-            memory_summary=resolved_session.summary,
-            metadata={
-                **dict(agent.metadata),
-                "skills": [item.skill.name for item in active_skill_activations],
-            },
-            handoff_path=list(trace.orchestration_path),
-            deps=deps,
-            session=resolved_session,
+            parent_run_id=parent_run_id,
+            idempotency_key=idempotency_key,
+            started_at_ms=started_at_ms,
+            updated_at_ms=started_at_ms,
+            metadata={"orchestration_path": [live_agent.name], "realtime": True},
         )
-        effective_hooks = [*resolved_runtime._hooks, *list(hooks or []), *agent.hooks]
-        await _call_agent_hooks(effective_hooks, "on_agent_start", context, agent)
-        resolved_instructions = await _resolve_agent_instructions(agent, context)
-        if agent.output_type is not None and agent.output_mode == "native":
-            raise ValidationError("Realtime agents do not support native typed outputs; use output_mode='prompted'.")
-        realtime_output_agent = replace(agent, output_mode="prompted") if agent.output_type is not None else agent
-        _, structured_output_instructions = _resolve_agent_structured_output(realtime_output_agent)
-        input_messages = _build_run_messages(
-            agent=agent,
-            session=resolved_session,
-            prompt=prompt,
-            messages=messages,
-            active_skills=[item.skill for item in active_skill_activations],
-            instructions=resolved_instructions,
-            structured_output_instructions=structured_output_instructions,
-        )
-        _persist_active_skills(resolved_session, active_skill_activations)
-        guarded_input = await resolved_runtime._run_input_guardrails(
-            agent=agent,
-            run_id=run_id,
-            session_id=resolved_session.id,
-            prompt=prompt,
-            messages=input_messages,
-            context=context,
-            trace=trace,
-            emit=emit_agent,
-        )
-        input_messages = guarded_input.messages
-        guarded_new_messages = input_messages[-len(messages) :] if messages else []
-        wrapped_tools = resolved_runtime._wrap_agent_tools(
-            agent=agent,
-            registry=registry_instance,
-            run_id=run_id,
-            session_id=resolved_session.id,
-            trace=trace,
-            started_at_ms=trace.started_at_ms,
-            context=context,
-            emit=emit_agent,
-            hooks=effective_hooks,
-        )
-        instruction_base = (
-            realtime_config.instructions
-            if realtime_config is not None and realtime_config.instructions is not None
-            else resolved_instructions
-        )
-        combined_instructions = instruction_base
-        supplemental_instructions = [
-            *(_skill_system_message(item.skill) for item in active_skill_activations),
-            *([structured_output_instructions] if structured_output_instructions else []),
-        ]
-        if supplemental_instructions:
-            combined_instructions = "\n\n".join(
-                [text for text in [instruction_base, *supplemental_instructions] if text]
-            )
-        live_config = realtime_config or RealtimeSessionConfig(
-            instructions=combined_instructions,
-            tools=wrapped_tools or None,
-            tool_choice=cast(Any, tool_choice),
-            provider_options=provider_options,
-        )
-        if realtime_config is not None and provider_options is not None and realtime_config.provider_options is None:
-            live_config = replace(realtime_config, provider_options=provider_options)
-        if realtime_config is not None and supplemental_instructions:
-            live_config = replace(live_config, instructions=combined_instructions)
-
         transcript = list(resolved_session.messages)
         tool_results: list[ToolExecutionResult] = []
         assistant_buffer: list[str] = []
         last_assistant_text = ""
-        buffer_realtime_output = bool(agent.output_guardrails)
-        live_model = cast(RealtimeModel, agent.model)
-        live_session = await live_model.connect(config=live_config, options=connect_options)
-        live_session_future.set_result(live_session)
-        resolved_session.metadata = {
-            **resolved_session.metadata,
-            "realtime": {
-                "provider": getattr(agent.model, "provider", ""),
-                "model_id": getattr(agent.model, "model_id", ""),
-            },
-        }
+        input_messages: list[ModelMessage] = []
+        context: AgentContext[AgentDepsT] | None = None
+        effective_hooks = [*resolved_runtime._hooks, *list(hooks or []), *live_agent.hooks]
+        resolved_instructions: str | None = None
+        live_session: Any = None
+
+        async def check_cancelled() -> None:
+            await _raise_if_agent_run_cancelled(
+                run_store=live_agent.run_store,
+                run_id=run_id,
+                cancellation_token=live_cancellation_token,
+            )
+
+        def remaining_wall_seconds() -> float | None:
+            max_wall_time_ms = live_agent.run_limits.max_wall_time_ms
+            if max_wall_time_ms is None:
+                return None
+            return (started_at_ms + max_wall_time_ms - _now_ms()) / 1000
+
+        async def await_boundary(awaitable: Awaitable[Any]) -> Any:
+            task = asyncio.ensure_future(
+                _await_with_agent_cancellation(
+                    awaitable,
+                    cancellation_token=live_cancellation_token,
+                    run_id=run_id,
+                )
+            )
+            try:
+                while not task.done():
+                    await check_cancelled()
+                    remaining = remaining_wall_seconds()
+                    if remaining is not None and remaining <= 0:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                        raise RuntimeError("Agent run exceeded max wall time.")
+                    await asyncio.wait({task}, timeout=min(0.25, remaining) if remaining is not None else 0.25)
+                return task.result()
+            except BaseException:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                raise
+
+        async def persist_cancelled(reason: str | None) -> AgentRunState | None:
+            if live_agent.run_store is None:
+                return None
+            current = await live_agent.run_store.load(run_id)
+            if current is None or current.status == "cancelled":
+                return current
+            cancelled = replace(
+                current,
+                status="cancelled",
+                cancellation_reason=reason,
+                updated_at_ms=_now_ms(),
+                finished_at_ms=_now_ms(),
+            )
+            try:
+                return await _persist_agent_run_state(live_agent.run_store, cancelled)
+            except AgentRunCancelled:
+                return await live_agent.run_store.load(run_id)
+
         try:
-            if messages is not None:
+            if live_agent.run_store is not None:
+                if idempotency_key:
+                    claim_idempotency_key = getattr(live_agent.run_store, "claim_idempotency_key", None)
+                    if not callable(claim_idempotency_key):
+                        raise ValidationError(
+                            "Idempotent realtime agent runs require an AgentRunStore with atomic "
+                            "claim_idempotency_key(...)."
+                        )
+                    claimed_state = await claim_idempotency_key(initial_state)
+                    if claimed_state.run_id != run_id:
+                        if not live_session_future.done():
+                            live_session_future.cancel()
+                        return cast(
+                            AgentRunResult[AgentOutputT],
+                            _agent_run_result_from_state(claimed_state, resolved_session, agent=live_agent),
+                        )
+                else:
+                    await live_agent.run_store.save(initial_state)
+
+            await check_cancelled()
+            if live_agent.run_limits.max_steps is not None and live_agent.run_limits.max_steps < 1:
+                raise RuntimeError(f'Agent exceeded max steps ({live_agent.run_limits.max_steps}).')
+            await emit_agent(
+                AgentRunStartEvent(run_id=run_id, session_id=resolved_session.id, agent_name=live_agent.name)
+            )
+            active_skill_activations, skipped_skills, skill_tools = await _select_active_skills(
+                _resolve_skill_registry(live_agent, skills),
+                agent=live_agent,
+                session=resolved_session,
+                prompt=live_prompt,
+                messages=live_messages,
+            )
+            await _emit_skill_events(
+                active_skills=active_skill_activations,
+                skipped_skills=skipped_skills,
+                emit=emit_agent,
+            )
+            registry_instance = _resolve_tool_registry(live_agent, tools)
+            if skill_tools:
+                registry_instance = registry_instance.merge(skill_tools)
+            context = AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=live_agent.name,
+                memory_summary=resolved_session.summary,
+                metadata={
+                    **dict(live_agent.metadata),
+                    "skills": [item.skill.name for item in active_skill_activations],
+                },
+                handoff_path=list(trace.orchestration_path),
+                deps=live_deps,
+                session=resolved_session,
+                cancellation_token=live_cancellation_token,
+            )
+            await _call_agent_hooks(effective_hooks, "on_agent_start", context, live_agent)
+            resolved_instructions = await _resolve_agent_instructions(live_agent, context)
+            if live_agent.output_type is not None and live_agent.output_mode == "native":
+                raise ValidationError("Realtime agents do not support native typed outputs; use output_mode='prompted'.")
+            realtime_output_agent = (
+                replace(live_agent, output_mode="prompted") if live_agent.output_type is not None else live_agent
+            )
+            _, structured_output_instructions = _resolve_agent_structured_output(realtime_output_agent)
+            input_messages = _build_run_messages(
+                agent=live_agent,
+                session=resolved_session,
+                prompt=live_prompt,
+                messages=live_messages,
+                active_skills=[item.skill for item in active_skill_activations],
+                instructions=resolved_instructions,
+                structured_output_instructions=structured_output_instructions,
+            )
+            _persist_active_skills(resolved_session, active_skill_activations)
+            guarded_input = await resolved_runtime._run_input_guardrails(
+                agent=live_agent,
+                run_id=run_id,
+                session_id=resolved_session.id,
+                prompt=live_prompt,
+                messages=input_messages,
+                context=context,
+                trace=trace,
+                emit=emit_agent,
+            )
+            input_messages = guarded_input.messages
+            guarded_new_messages = input_messages[-len(live_messages) :] if live_messages else []
+            wrapped_tools = resolved_runtime._wrap_agent_tools(
+                agent=live_agent,
+                registry=registry_instance,
+                run_id=run_id,
+                session_id=resolved_session.id,
+                trace=trace,
+                started_at_ms=trace.started_at_ms,
+                context=context,
+                emit=emit_agent,
+                hooks=effective_hooks,
+            )
+            instruction_base = (
+                realtime_config.instructions
+                if realtime_config is not None and realtime_config.instructions is not None
+                else resolved_instructions
+            )
+            combined_instructions = instruction_base
+            supplemental_instructions = [
+                *(_skill_system_message(item.skill) for item in active_skill_activations),
+                *([structured_output_instructions] if structured_output_instructions else []),
+            ]
+            if supplemental_instructions:
+                combined_instructions = "\n\n".join(
+                    [text for text in [instruction_base, *supplemental_instructions] if text]
+                )
+            live_config = realtime_config or RealtimeSessionConfig(
+                instructions=combined_instructions,
+                tools=wrapped_tools or None,
+                tool_choice=cast(Any, tool_choice),
+                provider_options=provider_options,
+            )
+            if realtime_config is not None:
+                live_config = replace(
+                    live_config,
+                    instructions=combined_instructions,
+                    tools=live_config.tools if live_config.tools is not None else (wrapped_tools or None),
+                    tool_choice=(
+                        live_config.tool_choice
+                        if live_config.tool_choice is not None
+                        else cast(Any, tool_choice)
+                    ),
+                    provider_options=(
+                        live_config.provider_options
+                        if live_config.provider_options is not None
+                        else provider_options
+                    ),
+                )
+
+            live_model = cast(RealtimeModel, live_agent.model)
+            live_session = await await_boundary(live_model.connect(config=live_config, options=connect_options))
+            live_session_future.set_result(live_session)
+            resolved_session.metadata = {
+                **resolved_session.metadata,
+                "realtime": {
+                    "provider": getattr(live_agent.model, "provider", ""),
+                    "model_id": getattr(live_agent.model, "model_id", ""),
+                },
+            }
+            await check_cancelled()
+            if live_messages is not None:
                 for message in guarded_new_messages:
                     text = _text_from_message(message)
                     if message.role == "user" and text:
-                        await live_session.send_text(text)
+                        await await_boundary(live_session.send_text(text))
             elif guarded_input.prompt is not None:
-                await live_session.send_text(guarded_input.prompt)
+                await await_boundary(live_session.send_text(guarded_input.prompt))
 
-            async for event in live_session.event_stream():
+            event_iterator = live_session.event_stream().__aiter__()
+            buffer_realtime_output = bool(live_agent.output_guardrails)
+            while True:
+                try:
+                    event = await await_boundary(event_iterator.__anext__())
+                except StopAsyncIteration:
+                    break
+                await check_cancelled()
                 contains_unredacted_assistant_text = buffer_realtime_output and (
                     isinstance(event, RealtimeTextDeltaEvent)
                     or (isinstance(event, RealtimeTranscriptEvent) and event.role == "assistant")
@@ -5550,49 +6128,60 @@ def stream_live_agent(
                             is_error=True,
                         )
                     else:
-                        call_context: ToolExecutionContext[AgentDepsT] = ToolExecutionContext(
-                            tool_name=event.tool_call.name,
-                            tool_call_id=event.tool_call.id,
-                            run_id=run_id,
-                            session_id=resolved_session.id,
-                            agent_name=agent.name,
-                            memory_summary=resolved_session.summary,
-                            permissions=list(definition.permissions),
-                            source=definition.source,
-                            metadata={**context.metadata, **definition.metadata},
-                            handoff_path=list(trace.orchestration_path),
-                            deps=deps,
-                        )
-                        try:
-                            output = _invoke_tool_callable(definition.execute, event.tool_call.input, call_context)
-                            output = await _maybe_await(output)
-                            tool_result = ToolExecutionResult(
-                                tool_call_id=event.tool_call.id,
-                                tool_name=event.tool_call.name,
-                                output=output,
-                                is_error=False,
+                        from .generate_text import _execute_tool
+
+                        await check_cancelled()
+                        tool_timeout_ms = live_tool_execution.timeout_ms if live_tool_execution is not None else None
+                        remaining = remaining_wall_seconds()
+                        if remaining is not None:
+                            if remaining <= 0:
+                                raise RuntimeError("Agent run exceeded max wall time.")
+                            remaining_ms = max(1, int(remaining * 1000))
+                            tool_timeout_ms = (
+                                remaining_ms
+                                if tool_timeout_ms is None
+                                else min(tool_timeout_ms, remaining_ms)
                             )
-                        except Exception as error:
-                            tool_result = ToolExecutionResult(
-                                tool_call_id=event.tool_call.id,
-                                tool_name=event.tool_call.name,
-                                error=ToolExecutionError(message=str(error)),
-                                is_error=True,
+                        try:
+                            tool_result = await _execute_tool(
+                                event.tool_call,
+                                wrapped_tools,
+                                timeout_ms=tool_timeout_ms,
+                            )
+                        except ToolExecutionSuspended as suspended:
+                            resume_messages = _strip_runtime_system_messages(input_messages, resolved_instructions)
+                            transcript_offset = len(resolved_session.messages)
+                            resume_messages.extend(transcript[transcript_offset:])
+                            resume_messages.append(
+                                ModelMessage(role="assistant", parts=[ToolCallPart(tool_call=event.tool_call)])
+                            )
+                            suspended.messages = resume_messages
+                            suspended.tool_results = [*tool_results, *suspended.tool_results]
+                            raise
+                        await check_cancelled()
+                        if live_tool_execution is not None and live_tool_execution.stop_on_error and tool_result.is_error:
+                            raise RuntimeError(
+                                f'Tool "{tool_result.tool_name}" failed: '
+                                f'{tool_result.error.message if tool_result.error else "Unknown tool error."}'
                             )
                     tool_results.append(tool_result)
                     transcript.append(ModelMessage(role="tool", parts=[tool_result_part(tool_result)]))
-                    await live_session.send_tool_result(tool_result)
+                    await await_boundary(live_session.send_tool_result(tool_result))
                     await emit_agent(AgentToolResultEvent(tool_result=tool_result))
                     await emit_live(RealtimeToolResultEvent(tool_result=tool_result))
                     continue
-                if isinstance(event, (RealtimeResponseCompletedEvent, RealtimeSessionEndedEvent)):
+                if isinstance(event, RealtimeSessionEndedEvent):
+                    if event.reason == "error":
+                        raise RuntimeError("Realtime session ended with an error.")
+                    break
+                if isinstance(event, RealtimeResponseCompletedEvent):
                     break
             if assistant_buffer and not last_assistant_text:
                 last_assistant_text = "".join(assistant_buffer)
                 if last_assistant_text:
                     transcript.append(create_text_message("assistant", last_assistant_text))
             guarded_output = await resolved_runtime._run_output_guardrails(
-                agent=agent,
+                agent=live_agent,
                 run_id=run_id,
                 session_id=resolved_session.id,
                 result=None,
@@ -5606,74 +6195,219 @@ def stream_live_agent(
             transcript = _replace_assistant_messages(transcript, guarded_output.messages)
             if buffer_realtime_output and last_assistant_text:
                 await emit_agent(AgentTextDeltaEvent(text_delta=last_assistant_text))
-        except Exception as error:
-            if not live_session_future.done():
-                live_session_future.set_exception(error)
-            await emit_agent(AgentErrorEvent(error=error))
-            await _call_error_hooks_preserving(
-                effective_hooks,
-                context,
-                agent,
-                error,
-            )
-            raise
-        finally:
-            await live_session.aclose()
+            await check_cancelled()
+            parsed_output = _parse_agent_output(live_agent, last_assistant_text)
+            resolved_session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
+            if live_agent.memory is not None and _should_refresh_summary(live_agent.memory, resolved_session):
+                resolved_session.summary = await live_agent.memory.summarize(
+                    session_id=resolved_session.id,
+                    state=AgentMemoryState(
+                        messages=list(resolved_session.messages),
+                        summary=resolved_session.summary,
+                        metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
+                    ),
+                    agent=live_agent,
+                )
+                await emit_agent(AgentSummaryUpdateEvent(summary=resolved_session.summary))
+            if live_agent.memory is not None:
+                await live_agent.memory.save(
+                    resolved_session.id,
+                    AgentMemoryState(
+                        messages=list(resolved_session.messages),
+                        summary=resolved_session.summary,
+                        metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
+                    ),
+                )
 
-        parsed_output = _parse_agent_output(agent, last_assistant_text)
-        resolved_session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
-        if agent.memory is not None and _should_refresh_summary(agent.memory, resolved_session):
-            resolved_session.summary = await agent.memory.summarize(
-                session_id=resolved_session.id,
-                state=AgentMemoryState(
-                    messages=list(resolved_session.messages),
-                    summary=resolved_session.summary,
-                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
-                ),
-                agent=agent,
-            )
-            await emit_agent(AgentSummaryUpdateEvent(summary=resolved_session.summary))
-        if agent.memory is not None:
-            await agent.memory.save(
-                resolved_session.id,
-                AgentMemoryState(
-                    messages=list(resolved_session.messages),
-                    summary=resolved_session.summary,
-                    metadata={**dict(resolved_session.metadata), "state": dict(resolved_session.state)},
-                ),
-            )
-
-        await emit_agent(
-            AgentFinishEvent(
+            trace.finished_at_ms = _now_ms()
+            result: AgentRunResult[AgentOutputT] = AgentRunResult(
                 run_id=run_id,
-                session_id=resolved_session.id,
+                agent_name=live_agent.name,
+                session=resolved_session,
                 text=last_assistant_text,
                 finish_reason="stop",
+                steps=[],
+                messages=list(resolved_session.messages),
+                tool_results=tool_results,
+                trace=trace,
+                orchestration_path=list(trace.orchestration_path),
+                output=cast(AgentOutputT, parsed_output),
             )
-        )
-        trace.finished_at_ms = _now_ms()
-        result: AgentRunResult[AgentOutputT] = AgentRunResult(
-            run_id=run_id,
-            agent_name=agent.name,
-            session=resolved_session,
-            text=last_assistant_text,
-            finish_reason="stop",
-            steps=[],
-            messages=list(resolved_session.messages),
-            tool_results=tool_results,
-            trace=trace,
-            orchestration_path=list(trace.orchestration_path),
-            output=cast(AgentOutputT, parsed_output),
-        )
-        await _call_agent_hooks(
-            effective_hooks,
-            "on_agent_end",
-            context,
-            agent,
-            result,
-            reverse=True,
-        )
-        await broadcast.close()
+            await _call_agent_hooks(
+                effective_hooks,
+                "on_agent_end",
+                context,
+                live_agent,
+                result,
+                reverse=True,
+            )
+            run_state = _agent_run_state_from_result(
+                result=result,
+                agent=live_agent,
+                parent_run_id=parent_run_id,
+                idempotency_key=idempotency_key,
+                started_at_ms=started_at_ms,
+                finished_at_ms=trace.finished_at_ms,
+            )
+            if live_agent.run_store is not None:
+                run_state = await _persist_agent_run_state(live_agent.run_store, run_state)
+            result.state = run_state
+            await emit_agent(
+                AgentFinishEvent(
+                    run_id=run_id,
+                    session_id=resolved_session.id,
+                    text=last_assistant_text,
+                    finish_reason="stop",
+                )
+            )
+            return result
+        except ToolExecutionSuspended as suspended:
+            suspended_at_ms = _now_ms()
+            trace.finished_at_ms = suspended_at_ms
+            pending = cast(PendingApproval, suspended.pending_approval)
+            run_state = _agent_run_state_from_suspension(
+                run_id=run_id,
+                agent_name=live_agent.name,
+                session_id=resolved_session.id,
+                agent=live_agent,
+                parent_run_id=parent_run_id,
+                idempotency_key=idempotency_key,
+                started_at_ms=started_at_ms,
+                suspended_at_ms=suspended_at_ms,
+                suspended=suspended,
+                orchestration_path=list(trace.orchestration_path),
+            )
+            suspended_result: AgentRunResult[AgentOutputT] = AgentRunResult(
+                run_id=run_id,
+                agent_name=live_agent.name,
+                session=resolved_session,
+                text="",
+                finish_reason="tool-calls",
+                steps=list(cast(list[GenerateTextStep], suspended.steps)),
+                messages=list(cast(list[ModelMessage], suspended.messages)),
+                tool_results=list(cast(list[ToolExecutionResult], suspended.tool_results)),
+                trace=trace,
+                orchestration_path=list(trace.orchestration_path),
+                state=run_state,
+                provider_finish_reason=pending.reason,
+            )
+            if context is not None:
+                await _call_agent_hooks(
+                    effective_hooks,
+                    "on_agent_end",
+                    context,
+                    live_agent,
+                    suspended_result,
+                    reverse=True,
+                )
+            if live_agent.run_store is not None:
+                run_state = await _persist_agent_run_state(live_agent.run_store, run_state)
+                suspended_result.state = run_state
+            await emit_agent(
+                AgentFinishEvent(
+                    run_id=run_id,
+                    session_id=resolved_session.id,
+                    text="",
+                    finish_reason="tool-calls",
+                )
+            )
+            return suspended_result
+        except AgentRunCancelled as error:
+            trace.finished_at_ms = _now_ms()
+            await persist_cancelled(error.reason)
+            error_context = context or AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=live_agent.name,
+                deps=live_deps,
+                session=resolved_session,
+                cancellation_token=live_cancellation_token,
+            )
+            await _call_error_hooks_preserving(effective_hooks, error_context, live_agent, error)
+            await emit_agent(AgentErrorEvent(error=error))
+            raise
+        except asyncio.CancelledError:
+            trace.finished_at_ms = _now_ms()
+            await persist_cancelled("Realtime agent task cancelled.")
+            raise
+        except Exception as error:
+            trace.finished_at_ms = _now_ms()
+            resolved_session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
+            if live_agent.run_store is not None:
+                failed_result: AgentRunResult[Any] = AgentRunResult(
+                    run_id=run_id,
+                    agent_name=live_agent.name,
+                    session=resolved_session,
+                    text=last_assistant_text,
+                    finish_reason="error",
+                    steps=[],
+                    messages=list(resolved_session.messages),
+                    tool_results=list(tool_results),
+                    trace=trace,
+                    orchestration_path=list(trace.orchestration_path),
+                )
+                try:
+                    await _persist_agent_run_state(
+                        live_agent.run_store,
+                        _agent_run_state_from_result(
+                            result=failed_result,
+                            agent=live_agent,
+                            parent_run_id=parent_run_id,
+                            idempotency_key=idempotency_key,
+                            started_at_ms=started_at_ms,
+                            finished_at_ms=trace.finished_at_ms,
+                            error=str(error),
+                        ),
+                    )
+                except AgentRunCancelled as cancelled:
+                    await emit_agent(AgentErrorEvent(error=cancelled))
+                    raise cancelled from error
+            if not live_session_future.done():
+                live_session_future.set_exception(error)
+            error_context = context or AgentContext(
+                run_id=run_id,
+                session_id=resolved_session.id,
+                agent_name=live_agent.name,
+                deps=live_deps,
+                session=resolved_session,
+                cancellation_token=live_cancellation_token,
+            )
+            await _call_error_hooks_preserving(effective_hooks, error_context, live_agent, error)
+            await emit_agent(AgentErrorEvent(error=error))
+            raise
+        finally:
+            if live_session is not None:
+                await live_session.aclose()
+
+    request = AgentRunRequest(
+        agent=agent,
+        session=session,
+        prompt=prompt,
+        messages=messages,
+        deps=deps,
+        cancellation_token=cancellation_token,
+        metadata={"parent_run_id": parent_run_id, "idempotency_key": idempotency_key},
+    )
+    resolved_middleware = [*resolved_runtime._middleware, *list(middleware or []), *agent.middleware]
+
+    async def call_at(index: int, current: AgentRunRequest[Any, Any]) -> AgentRunResult[Any]:
+        if index >= len(resolved_middleware):
+            return await run_live_impl(current)
+
+        async def call_next(next_request: AgentRunRequest[Any, Any]) -> AgentRunResult[Any]:
+            return await call_at(index + 1, next_request)
+
+        result = await _maybe_await(resolved_middleware[index](current, call_next))
+        if not isinstance(result, AgentRunResult):
+            raise TypeError("Agent middleware must return AgentRunResult.")
+        return result
+
+    async def runner() -> AgentRunResult[AgentOutputT]:
+        try:
+            result = cast(AgentRunResult[AgentOutputT], await call_at(0, request))
+        finally:
+            if not live_session_future.done():
+                live_session_future.cancel()
         return result
 
     async def managed_runner() -> AgentRunResult[AgentOutputT]:

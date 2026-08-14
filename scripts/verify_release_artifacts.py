@@ -156,15 +156,19 @@ def _smoke_code(expected_version: str) -> str:
             AgentEvaluationCase,
             AgentEvaluationGate,
             A2AAgentExecutor,
+            GenerateResult,
             InMemoryResponsesEventStore,
+            ModelMessage,
             ProtocolLimits,
             ResponsesAgentHost,
             SequentialAgent,
+            ToolCall,
             WorkflowBuilder,
             WorkflowStep,
             create_in_memory_workflow_checkpoint_store,
             create_in_memory_workflow_lease_manager,
             create_deepseek,
+            create_meta,
             create_a2a_agent_card,
             create_mock_language_model,
             create_text_message,
@@ -173,7 +177,7 @@ def _smoke_code(expected_version: str) -> str:
             run_agent_evaluation_experiment,
             tool,
         )
-        from zhivex_ai.types import GenerateResult, ModelMessage, ToolCall, ToolCallPart
+        from zhivex_ai.types import ToolCallPart
 
         assert metadata.version("zhivex-ai-sdk") == {expected_version!r}
         assert "Agent" in zhivex_ai.__all__
@@ -181,6 +185,7 @@ def _smoke_code(expected_version: str) -> str:
         assert "AgentMiddleware" in zhivex_ai.__all__
         assert "AgentRunRequest" in zhivex_ai.__all__
         assert "create_deepseek" in zhivex_ai.__all__
+        assert "create_meta" in zhivex_ai.__all__
         assert "generate_text" in zhivex_ai.__all__
         assert "WorkflowGraph" in zhivex_ai.__all__
         assert "resume_workflow" in zhivex_ai.__all__
@@ -193,8 +198,11 @@ def _smoke_code(expected_version: str) -> str:
         assert "create_a2a_app" in zhivex_ai.__all__
         assert "create_responses_app" in zhivex_ai.__all__
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
+        assert resources.files("zhivex_ai").joinpath("__init__.pyi").is_file()
         deepseek = create_deepseek(api_key="artifact-smoke-key")
         assert deepseek("deepseek-v4-flash").provider == "deepseek"
+        meta = create_meta(api_key="artifact-smoke-key")
+        assert meta("muse-spark-1.2").provider == "meta"
 
         async def main():
             model = create_mock_language_model(responses=[GenerateResult(text="hello", finish_reason="stop")])
@@ -418,7 +426,7 @@ def _run_extra_smoke(python: Path, extra: str) -> None:
             [
                 "from fastapi.testclient import TestClient",
                 "from zhivex_ai import Agent, A2AAgentExecutor, create_a2a_agent_card, create_a2a_app, create_mock_language_model",
-                "from zhivex_ai.types import GenerateResult",
+                "from zhivex_ai import GenerateResult",
                 'agent = Agent(name="artifact-a2a", model=create_mock_language_model(responses=[GenerateResult(text="ok", finish_reason="stop")]))',
                 'card = create_a2a_agent_card(agent, url="http://testserver/a2a", version="1.0.0")',
                 "app = create_a2a_app(executor=A2AAgentExecutor(agent), card=card)",
@@ -433,7 +441,7 @@ def _run_extra_smoke(python: Path, extra: str) -> None:
             [
                 "import asyncio",
                 "from zhivex_ai import Agent, create_mock_language_model, stream_agent_ag_ui, to_ag_ui_sse_response",
-                "from zhivex_ai.types import GenerateResult",
+                "from zhivex_ai import GenerateResult",
                 "async def smoke_ag_ui():",
                 '    agent = Agent(name="artifact-ag-ui", model=create_mock_language_model(responses=[GenerateResult(text="ok", finish_reason="stop")]))',
                 '    response = to_ag_ui_sse_response(stream_agent_ag_ui(agent=agent, prompt="go", thread_id="thread", run_id="run"))',

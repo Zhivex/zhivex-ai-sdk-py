@@ -1344,6 +1344,7 @@ async def cancel_agent_run(
     *,
     reason: str | None = None,
     now_ms: int | None = None,
+    cancellation_token: Any = None,
 ) -> AgentRunState | None:
     cancel_run = getattr(store, "cancel_run", None)
     if not callable(cancel_run):
@@ -1351,7 +1352,13 @@ async def cancel_agent_run(
             "Atomic cancellation requires an AgentRunStore with cancel_run(...). "
             "Use a built-in run store or implement the atomic cancellation contract."
         )
-    return await cancel_run(run_id, reason=reason, cancelled_at_ms=now_ms)
+    cancelled = await cancel_run(run_id, reason=reason, cancelled_at_ms=now_ms)
+    if cancelled is not None and cancelled.status == "cancelled" and cancellation_token is not None:
+        cancel = getattr(cancellation_token, "cancel", None)
+        if not callable(cancel):
+            raise ValidationError("cancellation_token must expose cancel(reason).")
+        cancel(reason)
+    return cancelled
 
 
 async def cancel_agent_run_tree(
@@ -1360,8 +1367,15 @@ async def cancel_agent_run_tree(
     *,
     reason: str | None = None,
     now_ms: int | None = None,
+    cancellation_token: Any = None,
 ) -> AgentRunTreeCancellationResult:
-    root = await cancel_agent_run(store, run_id, reason=reason, now_ms=now_ms)
+    root = await cancel_agent_run(
+        store,
+        run_id,
+        reason=reason,
+        now_ms=now_ms,
+        cancellation_token=cancellation_token,
+    )
     if root is None:
         return AgentRunTreeCancellationResult(root=None)
     cancelled = [root] if root.status == "cancelled" else []
