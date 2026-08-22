@@ -32,11 +32,11 @@ The current tier-1 set for production API work is:
 
 Tier-1 setup details, env vars, and smoke commands live in [providers/tier-1.md](./providers/tier-1.md).
 
-DeepSeek is tier-1 for current V4 text generation, streaming, JSON structured output, callable tools, and reasoning through its official Chat Completions API. Meta Model API is tier-1 for Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, and agent tool loops. Ollama, Bedrock, and OpenRouter remain available according to their support-matrix tier, but they are not part of the current tier-1 portable production promise.
+DeepSeek is tier-1 for current V4 text generation, streaming, JSON structured output, callable tools, and reasoning through its official Chat Completions API. Meta Model API is tier-1 for Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`. Ollama, Bedrock, and OpenRouter remain available according to their support-matrix tier, but they are not part of the current tier-1 portable production promise.
 
 ## Meta Model API Boundary
 
-`create_meta()` is Stable for the Standard `muse-spark-1.2` tier-1 scope above. Contributor models, hosted-tool helpers, Files, raw Responses/continuation, hosted tools, and multimodal/native extras remain Beta. Embeddings, speech output, transcription, grounding, Realtime, image generation, and video generation are not claimed. Setup, privacy, and evidence boundaries are documented in [providers/meta.md](./providers/meta.md).
+`create_meta()` is Stable for the Standard `muse-spark-1.2` tier-1 scope above. Application-supplied portable retrieval only injects bounded `PortableDocument` text through Chat Completions; it does not use provider-native retrieval. Contributor models, hosted-tool helpers, Files, raw Responses/continuation, hosted tools, and multimodal/native extras remain Beta. Embeddings, speech output, transcription, grounding, Realtime, image generation, and video generation are not claimed. Setup, privacy, and evidence boundaries are documented in [providers/meta.md](./providers/meta.md).
 
 Direct Anthropic Messages support includes the fixed `claude-opus-5` ID. This does not imply Opus 5 support through the current Bedrock Converse adapter; model-specific thinking, tool, and service-tier limits are documented in the tier-1 guide.
 

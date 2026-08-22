@@ -25,7 +25,7 @@ Related documents:
 - Added `docs/SCOPE.md` as the normative agent-first product boundary, including extension ownership, application responsibilities, provider-evidence definitions, and core non-goals.
 - Added fail-closed provider evidence metadata through `ProviderSupportRow.evidence_status`. Portable providers default to `contract-supported`; only separately validated release evidence can mark an exact provider as `release-certified`.
 - Added a minimal `examples/agents/quickstart_agent.py` journey for one portable agent with one application-owned typed tool.
-- Promoted Meta Model API to the Tier-1 shared provider contract for Standard `muse-spark-1.2`, covering portable text generation, streaming, structured output, callable tools, and real agent tool loops.
+- Promoted Meta Model API to the Tier-1 shared provider contract for Standard `muse-spark-1.2`, covering portable text generation, streaming, structured output, callable tools, real agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`.
 
 ### Changed
 
@@ -37,7 +37,7 @@ Related documents:
 
 ### Fixed
 
-- None.
+- Clarified that Meta's Stable portable retrieval injects bounded application-owned `PortableDocument` text through Chat Completions and does not promote Meta Files, hosted search, or raw Responses beyond Beta.
 
 ### Deprecated
 

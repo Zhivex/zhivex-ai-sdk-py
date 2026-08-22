@@ -101,6 +101,15 @@ class DocsOnboardingTests(TestCase):
         for heading in ["## Core Product", "## Extension Areas", "## Non-Goals For The Core"]:
             self.assertIn(heading, scope)
 
+    def test_meta_docs_separate_portable_retrieval_from_beta_native_retrieval(self) -> None:
+        for relative in ["README.md", "STABILITY.md", "SUPPORT.md", "docs/providers/meta.md"]:
+            source = (ROOT / relative).read_text("utf-8")
+            with self.subTest(relative=relative):
+                self.assertIn("PortableRetrievalConfig", source)
+                self.assertIn("PortableDocument", source)
+                self.assertIn("Meta Files", source)
+                self.assertIn("raw Responses", source)
+
     def test_agent_guide_links_detailed_guides_and_has_minimal_tool_flow(self) -> None:
         guide = (ROOT / "docs/AGENTS.md").read_text("utf-8")
 

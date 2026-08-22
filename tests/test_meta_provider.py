@@ -21,6 +21,8 @@ from zhivex_ai import (  # noqa: E402
     ConfigurationError,
     FilePart,
     ImagePart,
+    PortableDocument,
+    PortableRetrievalConfig,
     ProviderHTTPError,
     ReasoningConfig,
     ToolChoiceName,
@@ -146,6 +148,7 @@ class MetaProviderConfigTests(TestCase):
         self.assertTrue(provider.portable_support.streaming)
         self.assertTrue(provider.portable_support.structured_output)
         self.assertTrue(provider.portable_support.tools)
+        self.assertTrue(provider.portable_support.retrieval)
         self.assertFalse(provider.portable_support.embeddings)
         self.assertTrue(provider.native_support.files)
         self.assertTrue(provider.native_support.responses)
@@ -210,6 +213,36 @@ class MetaProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["json_body"]["reasoning_effort"], "low")
         self.assertEqual(requests[0]["timeout_ms"], 321)
         self.assertFalse(requests[0]["stream"])
+
+    async def test_meta_portable_retrieval_injects_application_context_into_chat(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(url: str, **kwargs: Any) -> FakeResponse:
+            requests.append({"url": url, **kwargs})
+            return chat_text("Retrieved context used")
+
+        provider = create_meta(api_key="test-key", fetch=as_fetcher(fetch))
+        result = await generate_text(
+            model=provider("muse-spark-1.2"),
+            prompt="Which policy applies?",
+            retrieval=PortableRetrievalConfig(
+                documents=[
+                    PortableDocument(
+                        document_id="policy-1",
+                        title="Refund policy",
+                        text="Refunds are available for 30 days.",
+                    )
+                ]
+            ),
+        )
+
+        self.assertEqual(result.text, "Retrieved context used")
+        self.assertEqual(requests[0]["url"], "https://api.meta.ai/v1/chat/completions")
+        messages = requests[0]["json_body"]["messages"]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("id=policy-1 title=Refund policy", messages[0]["content"])
+        self.assertIn("Refunds are available for 30 days.", messages[0]["content"])
+        self.assertEqual(messages[1], {"role": "user", "content": "Which policy applies?"})
 
     async def test_meta_routes_hosted_tools_and_previous_response_id_to_responses(self) -> None:
         requests: list[dict[str, Any]] = []

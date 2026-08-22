@@ -78,7 +78,7 @@ When using the installed package outside this checkout, save the same code as `a
 
 `provider("model-id")` selects the strict portable language-model contract. The tool and status data stay in application code. To change providers, construct another portable provider and change the model ID; `Agent`, `tool()`, and `run_agent()` stay the same. Use `provider.native.*` only when the application intentionally depends on provider-specific behavior.
 
-Meta Model API follows the same agent path with `create_meta()` and Standard `muse-spark-1.2`. That Tier-1 Stable scope covers portable text, streaming, structured output, callable tools, and agent tool loops with `tool_choice="auto"`. Contributor models and Meta native/hosted extensions remain Beta.
+Meta Model API follows the same agent path with `create_meta()` and Standard `muse-spark-1.2`. That Tier-1 Stable scope covers portable text, streaming, structured output, callable tools, agent tool loops with `tool_choice="auto"`, and application-supplied retrieval through `PortableRetrievalConfig`. Portable retrieval adds bounded `PortableDocument` text to Chat Completions; it is separate from the Meta Files and hosted-search extensions that remain Beta with Contributor models and other native behavior.
 
 See [PROVIDERS.md](./PROVIDERS.md) for credentials, model IDs, and provider-specific setup.
 

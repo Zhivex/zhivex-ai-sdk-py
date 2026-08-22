@@ -1,6 +1,6 @@
 # Meta Model API
 
-Meta Model API is upstream GA. In Zhivex AI SDK `0.19.0`, `create_meta()` joins the Tier-1 contract-supported roster with a narrow Stable boundary: Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, and the resulting agent tool loop. Tier-1 does not imply release certification; exact-artifact evidence remains a separate gate.
+Meta Model API is upstream GA. In Zhivex AI SDK `0.19.0`, `create_meta()` joins the Tier-1 contract-supported roster with a narrow Stable boundary: Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, the resulting agent tool loop, and application-supplied retrieval through `PortableRetrievalConfig`. Tier-1 does not imply release certification; exact-artifact evidence remains a separate gate.
 
 ## Setup
 
@@ -33,7 +33,10 @@ Use `base_url=` only for an explicitly trusted proxy. Portable calls reject `pro
 - portable text generation and streaming
 - portable JSON Schema structured output
 - portable callable tools and complete `run_agent(...)` tool loops
+- portable retrieval over application-supplied `PortableDocument` values through `PortableRetrievalConfig`
 - `tool_choice="auto"`; forced, disabled, and named tool choice are not part of the Meta contract
+
+Portable retrieval is an SDK-owned prompt-context operation: it injects bounded document text before the user request and uses the normal Chat Completions route. It does not upload files or invoke Meta Files, hosted `web_search`, `tool_search`, or raw Responses. Those provider-native retrieval surfaces remain Beta.
 
 ## Beta native and model extensions
 

@@ -144,7 +144,7 @@ Portable construction fails fast for providers that do not satisfy the portable 
 
 For production API work, the current ten-provider tier-1 story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, Meta Model API, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
-Meta Model API is tier-1 only for the Stable `create_meta()` factory and Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, and agent tool loop. Contributor models, hosted-tool helpers, Files, raw Responses, hosted tools, and multimodal/native extras remain Beta. Tier-1 means contract-supported, not release-certified. See [docs/providers/meta.md](./docs/providers/meta.md).
+Meta Model API is tier-1 only for the Stable `create_meta()` factory and Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`. Portable retrieval injects bounded `PortableDocument` text into the request; it does not call Meta Files, hosted search, or raw Responses. Contributor models, hosted-tool helpers, Files, raw Responses, hosted tools, and multimodal/native extras remain Beta. Tier-1 means contract-supported, not release-certified. See [docs/providers/meta.md](./docs/providers/meta.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
@@ -1252,7 +1252,7 @@ Portable model construction fails fast when the provider does not hold the porta
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot and DeepSeek use dedicated Chat Completions adapters so their reasoning, tool replay, streaming, and error semantics remain faithful to their official APIs.
 
-Meta uses a dedicated Model API adapter rather than the generic OpenAI-compatible helper. `create_meta()` with Standard `muse-spark-1.2` is Stable and tier-1 for portable text, streaming, structured output, callable tools, and agent tool loops; `tool_choice` is `auto` only. Responses routing for hosted tools, file inputs, native `previous_response_id` continuation, Contributor models, and other native extras remains Beta.
+Meta uses a dedicated Model API adapter rather than the generic OpenAI-compatible helper. `create_meta()` with Standard `muse-spark-1.2` is Stable and tier-1 for portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`; `tool_choice` is `auto` only. Portable retrieval is SDK-owned prompt context, not Meta Files or hosted search. Responses routing for hosted tools, file inputs, native `previous_response_id` continuation, Contributor models, and other native extras remains Beta.
 
 Azure OpenAI supports API key authentication and Microsoft Entra ID authentication through the versionless `/openai/v1` route. API key usage reads `AZURE_OPENAI_API_KEY` plus `AZURE_OPENAI_ENDPOINT`; Entra ID usage passes a token or token provider explicitly and is mutually exclusive with API keys.
 
@@ -1320,7 +1320,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Use `meta("muse-spark-1.2")` for the portable text/tool/structured-output path. Hosted `web_search` and `tool_search`, raw Responses continuation, and Files are Beta native features. The Contributor variant has different data-use terms and is never selected implicitly. Muse Glimmer and Llama 4 are open-weight/host routes rather than direct Meta Model API IDs; their exact structured-output and tool behavior depends on the runtime. See [docs/providers/meta.md](./docs/providers/meta.md) and [meta_text.py](./examples/text/meta_text.py).
+Use `meta("muse-spark-1.2")` for the portable text/tool/structured-output path and `PortableRetrievalConfig` when the application already owns the retrieved document text. That retrieval path only adds bounded context to the portable request. Hosted `web_search` and `tool_search`, raw Responses continuation, and Files are Beta native features. The Contributor variant has different data-use terms and is never selected implicitly. Muse Glimmer and Llama 4 are open-weight/host routes rather than direct Meta Model API IDs; their exact structured-output and tool behavior depends on the runtime. See [docs/providers/meta.md](./docs/providers/meta.md) and [meta_text.py](./examples/text/meta_text.py).
 
 vLLM usage targets its OpenAI-compatible server:
 
@@ -1491,7 +1491,7 @@ Notes:
 
 - `provider("model-id")` is shorthand for the portable namespace.
 - `provider.native.*` is the only place where provider-specific request shapes belong.
-- Meta Model API is Stable and tier-1 only for `create_meta()` with Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, and agent tool loops. `meta_hosted_tool()`, `meta_web_search_tool()`, and `meta_tool_search_tool()` remain Beta; forced, disabled, and named tool choice are rejected because the current API accepts only `auto`.
+- Meta Model API is Stable and tier-1 only for `create_meta()` with Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`. This retrieval capability injects bounded `PortableDocument` text and does not use Meta Files, hosted search, or raw Responses. `meta_hosted_tool()`, `meta_web_search_tool()`, and `meta_tool_search_tool()` remain Beta; forced, disabled, and named tool choice are rejected because the current API accepts only `auto`.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `create_anthropic().tokens()` exposes Anthropic message token counting.
