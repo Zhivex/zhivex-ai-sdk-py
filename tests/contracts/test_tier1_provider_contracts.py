@@ -22,6 +22,7 @@ from zhivex_ai import (  # noqa: E402
     create_deepseek,
     create_gemini,
     create_kimi,
+    create_meta,
     create_openai,
     create_qwen,
     create_vertex,
@@ -74,6 +75,7 @@ class ProviderContractCase:
     create_provider: Callable[[Callable[..., Any]], Any]
     response_family: str
     expected_request_marker: str
+    supports_named_tool_choice: bool = True
 
 
 def _openai_compatible_response(stream: bool) -> FakeResponse:
@@ -242,6 +244,14 @@ def _contract_cases() -> list[ProviderContractCase]:
             expected_request_marker="/chat/completions",
         ),
         ProviderContractCase(
+            provider_name="meta",
+            model_id="muse-spark-1.2",
+            create_provider=lambda fetch: create_meta(api_key="test", fetch=fetch),
+            response_family="chat",
+            expected_request_marker="/chat/completions",
+            supports_named_tool_choice=False,
+        ),
+        ProviderContractCase(
             provider_name="vllm",
             model_id="meta-llama/Llama-3.1-8B-Instruct",
             create_provider=lambda fetch: create_vllm(api_key="test", fetch=fetch),
@@ -336,7 +346,11 @@ async def test_tier_1_tool_choice_contract_is_mapped(case: ProviderContractCase)
         model=provider(case.model_id),
         prompt="weather",
         tools={"weather": tool(name="weather", schema=WeatherToolInput, execute=lambda input: {"forecast": f"sunny in {input.city}"})},
-        tool_choice=ToolChoiceName(tool_name="weather"),
+        tool_choice=(
+            ToolChoiceName(tool_name="weather")
+            if case.supports_named_tool_choice
+            else "auto"
+        ),
     )
 
     request = requests[0]["json"]
@@ -347,6 +361,9 @@ async def test_tier_1_tool_choice_contract_is_mapped(case: ProviderContractCase)
     elif case.response_family == "anthropic":
         assert request["tool_choice"] == {"type": "tool", "name": "weather"}
         assert request["tools"][0]["name"] == "weather"
+    elif case.provider_name == "meta":
+        assert request["tool_choice"] == "auto"
+        assert request["tools"][0]["function"]["name"] == "weather"
     elif case.response_family == "chat":
         assert request["tool_choice"] == {"type": "function", "function": {"name": "weather"}}
         assert request["tools"][0]["function"]["name"] == "weather"

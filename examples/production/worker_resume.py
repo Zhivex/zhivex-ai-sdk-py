@@ -13,9 +13,7 @@ if str(SRC) not in sys.path:
 
 from zhivex_ai import (  # noqa: E402
     Agent,
-    GenerateResult,
     create_agent_session,
-    create_mock_language_model,
     create_sqlite_agent_run_store,
     create_sqlite_checkpoint_store,
     create_text_message,
@@ -23,6 +21,7 @@ from zhivex_ai import (  # noqa: E402
     resume_agent,
     run_agent,
 )
+from zhivex_ai.evals import GenerateResult, create_mock_language_model  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)

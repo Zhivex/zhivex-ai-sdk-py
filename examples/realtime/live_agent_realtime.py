@@ -1,6 +1,7 @@
 import asyncio
 
-from zhivex_ai import Agent, RealtimeSessionConfig, create_openai, stream_live_agent, tool
+from zhivex_ai import Agent, create_openai, tool
+from zhivex_ai.experimental import RealtimeSessionConfig, stream_live_agent
 
 
 async def main() -> None:

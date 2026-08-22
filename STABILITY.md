@@ -2,7 +2,7 @@
 
 Zhivex AI SDK uses three stability levels so production integrators can understand which surfaces are intended to remain predictable over time.
 
-Supported public imports should come from `zhivex_ai`. Deep imports from internal modules are not part of the stable contract unless this document names an explicit exception.
+The `zhivex_ai` package root remains the compatibility entrypoint for the existing public surface. New application code should use the root for the Stable agent-first core and the focused namespaces documented below for extension areas. Deep imports from implementation modules are not part of the public contract unless this document names an explicit exception.
 
 The machine-readable stability contract lives in `src/zhivex_ai/api_stability.py`. That manifest classifies every symbol exported through `zhivex_ai.__all__` as `stable`, `beta`, or `experimental`; tests fail when the public export list changes without a matching manifest and documentation update.
 
@@ -16,12 +16,25 @@ Related documents:
 - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
 - [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
 - [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
+- [docs/SCOPE.md](./docs/SCOPE.md)
+
+## Import Boundaries
+
+The recommended public import paths are:
+
+- `zhivex_ai` for the Stable portable foundation, agent runtime, provider factories, gateway, and backend transport contracts
+- `zhivex_ai.evals` for Beta evaluation APIs
+- `zhivex_ai.workflows` for Beta declarative and durable workflow APIs
+- `zhivex_ai.integrations.protocols` for Beta A2A, AG-UI, and Responses-compatible hosting
+- `zhivex_ai.experimental` for Experimental realtime/live-agent and non-portable provider surfaces
+
+Existing top-level Beta and Experimental imports remain available for compatibility in the current Beta release line. A focused namespace changes the recommended ownership boundary; it does not promote the symbols inside it. New Beta or Experimental features should land in a focused namespace and should not expand the package root by default.
 
 ## Stable
 
 These APIs are the supported public contract for application code and production integrations:
 
-- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_deepseek`, `create_vllm`
+- Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_deepseek`, `create_meta`, `create_vllm`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
@@ -42,13 +55,13 @@ These APIs are the supported public contract for application code and production
 - Core errors: `AgentEventDeliveryError`, `AgentRunCancelled`, `ProviderHTTPError`, `ToolExecutionOutcomeUnknown`, `ConfigurationError`, `ValidationError`, `UnsupportedFeatureError`
 - HTTP and SSE helpers: `HTTPResponse`, `stream_sse`, `to_sse_response`, `to_sse_stream`, `to_text_stream`, `to_text_stream_response`, `to_ui_message_stream_response`
 
-The stable surface is intentionally narrow. It reflects the most defendable cross-provider experience and the main API-building primitives in this SDK today.
+The Stable surface is the agent-first core contract. It reflects the most defendable cross-provider experience and the main backend primitives in this SDK today; extension namespaces do not expand the core product promise.
 
 ## Beta
 
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
-- Meta Model API: `create_meta`, `meta_hosted_tool`, `meta_web_search_tool`, and `meta_tool_search_tool`. The factory exposes a portable namespace for the capabilities in the generated matrix, but remains Beta, non-Tier-1, preview-upstream, and not live-certified by offline tests alone.
+- Meta Model API native extensions: `meta_hosted_tool`, `meta_web_search_tool`, `meta_tool_search_tool`, Files, raw Responses, hosted tools, Contributor models, and multimodal/native extras. These remain Beta even though `create_meta` and the Standard `muse-spark-1.2` portable text/tool contract are Stable.
 - Middleware helpers
 - Model catalog helpers
 - Provider agent capability metadata: `AgentCapabilities`, `AgentSupportTier`, `get_agent_capabilities`, `get_agent_support_tier`
@@ -78,7 +91,7 @@ These APIs are supported and documented, but they may still change between minor
 
 Workflow semantics and operational boundaries are documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md). SQLite and Postgres workflow checkpoint stores are durable storage implementations, but their workflow APIs remain beta and are not promoted by the stable Postgres agent-store guarantee.
 
-Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the stable surface.
+Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the Stable surface. Prefer their focused namespaces in new code so the compatibility risk is visible at the import site.
 
 The README support matrix is generated from runtime metadata. Its `Agent Capabilities` section is useful product guidance for hosted tools and provider-managed events, but it should be read with the same beta expectations as the APIs listed above.
 
@@ -110,6 +123,7 @@ The current tier-1 provider story for the stable surface is:
 - Qwen
 - Kimi/Moonshot
 - DeepSeek
+- Meta Model API
 - vLLM
 
 In this repository, tier-1 means the provider is part of the stable surface story, production API guidance, support-matrix contract checks, shared offline provider contract tests, and documented optional live smoke setup. It is a contract-level support classification, not evidence that every tier-1 provider was live-smoked for the current release SHA. Live certification is provider-, model-, operation-, and SHA-specific and should be claimed only when matching smoke evidence was recorded.
@@ -123,6 +137,8 @@ Qwen is tier-1 for portable text generation, streaming, structured output, calla
 Kimi/Moonshot is tier-1 for portable text generation, streaming, structured output, and callable tools through Chat Completions. K3 `reasoning_effort`, K2 thinking controls, Files, Batch, token estimation, and Formulas remain beta provider-specific paths, and this SDK does not claim Kimi embeddings, speech, or transcription.
 
 DeepSeek is tier-1 for portable text generation, streaming, JSON structured output, callable tools, and reasoning through its Chat Completions API. The stable factory targets the current `deepseek-v4-flash` and `deepseek-v4-pro` model contract, preserves reasoning state across tool loops, and rejects retired model IDs or incompatible thinking options before dispatch. Strict-tool and prefix beta routing plus raw `provider_options` remain provider-specific beta/experimental behavior; vision, files, embeddings, audio, moderation, and hosted tools are not claimed.
+
+Meta Model API is tier-1 for the Stable `create_meta(...)` factory and Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, and the resulting agent tool loop. Meta accepts only `tool_choice="auto"` in this contract. Contributor models, hosted-tool helpers, Files, raw Responses/continuation, hosted tools, and multimodal/native extras remain Beta. Embeddings, speech output, transcription, grounding, Realtime, image generation, and video generation are not claimed. Tier-1 is contract support; release certification still requires matching evidence for the exact model, operations, artifact, and source revision.
 
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 

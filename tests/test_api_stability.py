@@ -68,12 +68,15 @@ class ApiStabilityTests(TestCase):
         self.assertTrue(factories.issubset(EXPERIMENTAL_EXPORTS))
         self.assertFalse(factories & BETA_EXPORTS)
 
-    def test_meta_is_beta_portable_but_not_stable_or_experimental(self) -> None:
-        self.assertIn("create_meta", BETA_EXPORTS)
-        self.assertNotIn("create_meta", STABLE_EXPORTS)
+    def test_meta_factory_is_stable_tier_1_while_native_helpers_remain_beta(self) -> None:
+        self.assertNotIn("create_meta", BETA_EXPORTS)
+        self.assertIn("create_meta", STABLE_EXPORTS)
         self.assertNotIn("create_meta", EXPERIMENTAL_EXPORTS)
         self.assertEqual(API_STABILITY["create_meta"].category, "provider")
-        self.assertIn("not tier-1", API_STABILITY["create_meta"].notes)
+        self.assertIn("tier-1 provider", API_STABILITY["create_meta"].notes)
+        for helper in ("meta_hosted_tool", "meta_tool_search_tool", "meta_web_search_tool"):
+            self.assertIn(helper, BETA_EXPORTS)
+            self.assertNotIn(helper, STABLE_EXPORTS)
 
     def test_inevitable_transitive_contracts_are_stable(self) -> None:
         self.assertTrue(TRANSITIVE_STABLE_EXPORTS.issubset(STABLE_EXPORTS))

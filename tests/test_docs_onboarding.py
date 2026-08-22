@@ -11,18 +11,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DocsOnboardingTests(TestCase):
-    def test_examples_use_only_the_top_level_public_package(self) -> None:
+    def test_examples_use_only_documented_public_namespaces(self) -> None:
+        focused_namespaces = {
+            "zhivex_ai.evals",
+            "zhivex_ai.experimental",
+            "zhivex_ai.experimental.providers",
+            "zhivex_ai.experimental.realtime",
+            "zhivex_ai.integrations",
+            "zhivex_ai.integrations.protocols",
+            "zhivex_ai.integrations.responses",
+            "zhivex_ai.workflows",
+        }
         deep_imports: list[str] = []
         for path in sorted((ROOT / "examples").rglob("*.py")):
             tree = ast.parse(path.read_text("utf-8"), filename=str(path))
             for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("zhivex_ai."):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.startswith("zhivex_ai.")
+                    and node.module not in focused_namespaces
+                ):
                     deep_imports.append(
                         f"{path.relative_to(ROOT)}:{node.lineno} imports {node.module}"
                     )
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        if alias.name.startswith("zhivex_ai."):
+                        if alias.name.startswith("zhivex_ai.") and alias.name not in focused_namespaces:
                             deep_imports.append(
                                 f"{path.relative_to(ROOT)}:{node.lineno} imports {alias.name}"
                             )
@@ -39,6 +54,7 @@ class DocsOnboardingTests(TestCase):
             "docs/OBSERVABILITY.md",
             "docs/TROUBLESHOOTING.md",
             "docs/PARITY_MATRIX.md",
+            "docs/SCOPE.md",
             "PRODUCTION_APIS.md",
             "CONTRIBUTING.md",
             ".env.example",
@@ -46,7 +62,7 @@ class DocsOnboardingTests(TestCase):
         readme = (ROOT / "README.md").read_text("utf-8")
         for relative in expected:
             self.assertTrue((ROOT / relative).exists(), relative)
-        for relative in expected[:9]:
+        for relative in expected[:10]:
             self.assertIn(relative, readme)
 
     def test_env_example_covers_live_smoke_environment_variables(self) -> None:
@@ -60,6 +76,7 @@ class DocsOnboardingTests(TestCase):
     def test_examples_readme_has_verification_index_for_key_examples(self) -> None:
         examples = (ROOT / "examples/README.md").read_text("utf-8")
         for command in [
+            ".venv/bin/python examples/agents/quickstart_agent.py",
             ".venv/bin/python examples/agents/structured_workflow_outputs.py",
             ".venv/bin/python examples/agents/workflow_resume.py",
             ".venv/bin/python examples/agents/artifact_document_workflow.py",
@@ -70,6 +87,19 @@ class DocsOnboardingTests(TestCase):
         ]:
             self.assertIn(command, examples)
         self.assertIn("## Verification Index", examples)
+
+    def test_primary_onboarding_is_agent_first_and_extensions_are_explicit(self) -> None:
+        readme = (ROOT / "README.md").read_text("utf-8")
+        quickstart = (ROOT / "docs/QUICKSTART.md").read_text("utf-8")
+        scope = (ROOT / "docs/SCOPE.md").read_text("utf-8")
+
+        for source in (readme, quickstart):
+            self.assertIn("examples/agents/quickstart_agent.py", source)
+            self.assertIn("zhivex_ai.workflows", source)
+            self.assertIn("zhivex_ai.evals", source)
+            self.assertIn("zhivex_ai.experimental", source)
+        for heading in ["## Core Product", "## Extension Areas", "## Non-Goals For The Core"]:
+            self.assertIn(heading, scope)
 
     def test_agent_guide_links_detailed_guides_and_has_minimal_tool_flow(self) -> None:
         guide = (ROOT / "docs/AGENTS.md").read_text("utf-8")

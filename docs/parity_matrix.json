@@ -60,11 +60,11 @@
     },
     {
       "area": "Meta Model API adapter",
-      "implemented": "yes",
+      "implemented": "yes: Stable create_meta + Standard muse-spark-1.2 portable text/tools; native extras remain Beta",
       "documented": "yes",
       "offline_tested": "yes",
-      "live_smoked": "opt-in path; no recorded certification",
-      "stability": "beta portable, non-tier-1"
+      "live_smoked": "opt-in path; release certification pending exact artifact evidence",
+      "stability": "stable tier-1 scope with beta native extras"
     },
     {
       "area": "Agent core runtime",

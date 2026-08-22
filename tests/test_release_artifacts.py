@@ -77,6 +77,20 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("WorkflowLeaseManager", source)
         self.assertIn("ResponsesEventStore", source)
 
+    def test_installed_artifact_smoke_uses_the_focused_namespaces(self) -> None:
+        smoke = verify_release_artifacts._smoke_code("0.19.0")
+
+        for namespace in [
+            "zhivex_ai.evals",
+            "zhivex_ai.experimental",
+            "zhivex_ai.integrations.protocols",
+            "zhivex_ai.integrations.responses",
+            "zhivex_ai.workflows",
+        ]:
+            self.assertIn(f"from {namespace} import", smoke)
+        self.assertIn('assert "create_meta" in STABLE_EXPORTS', smoke)
+        self.assertIn('assert "meta_hosted_tool" in BETA_EXPORTS', smoke)
+
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             dist = Path(temporary_dir)

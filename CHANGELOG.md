@@ -21,11 +21,19 @@ Related documents:
 
 ### Added
 
-- None.
+- Added focused public namespaces for optional and incubating capabilities: `zhivex_ai.evals`, `zhivex_ai.workflows`, `zhivex_ai.integrations` / `zhivex_ai.integrations.protocols`, and `zhivex_ai.experimental`. Existing top-level imports remain available for compatibility.
+- Added `docs/SCOPE.md` as the normative agent-first product boundary, including extension ownership, application responsibilities, provider-evidence definitions, and core non-goals.
+- Added fail-closed provider evidence metadata through `ProviderSupportRow.evidence_status`. Portable providers default to `contract-supported`; only separately validated release evidence can mark an exact provider as `release-certified`.
+- Added a minimal `examples/agents/quickstart_agent.py` journey for one portable agent with one application-owned typed tool.
+- Promoted Meta Model API to the Tier-1 shared provider contract for Standard `muse-spark-1.2`, covering portable text generation, streaming, structured output, callable tools, and real agent tool loops.
 
 ### Changed
 
-- None.
+- Recentered the README, quickstart, examples index, parity matrix, production guidance, support policy, and versioning guidance on the portable agent runtime. Workflows, evaluations, protocol hosting, packaged skills, the general CLI/playground, provider-native resource clients, and realtime are now presented as focused extensions rather than prerequisites.
+- Updated package metadata to describe the project as a provider-portable Python runtime for reliable AI agents.
+- The generated provider matrix now separates contract coverage from release certification and never infers live evidence from Tier-1 membership.
+- Froze accidental expansion of the compatibility package root with a public-contract snapshot; new Beta and Experimental APIs should use focused namespaces by default.
+- Bumped the package version to `0.19.0` because promoting `create_meta()` from Beta to the Stable Tier-1 provider surface is an additive compatibility commitment. Meta Files, raw Responses, hosted-tool helpers, Contributor, and multimodal native behavior remain Beta.
 
 ### Fixed
 

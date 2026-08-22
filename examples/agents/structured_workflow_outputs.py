@@ -13,7 +13,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import Agent, GenerateResult, SequentialAgent, WorkflowStep, create_mock_language_model
+from zhivex_ai import Agent
+from zhivex_ai.evals import GenerateResult, create_mock_language_model
+from zhivex_ai.workflows import SequentialAgent, WorkflowStep
 
 
 class LoanIntake(BaseModel):

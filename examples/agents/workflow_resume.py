@@ -14,14 +14,12 @@ from zhivex_ai import (
     Agent,
     AgentRunStore,
     AgentSession,
-    GenerateResult,
     JsonValue,
-    SequentialAgent,
-    WorkflowStep,
     create_agent_session,
     create_in_memory_agent_run_store,
-    create_mock_language_model,
 )
+from zhivex_ai.evals import GenerateResult, create_mock_language_model
+from zhivex_ai.workflows import SequentialAgent, WorkflowStep
 
 
 @dataclass(slots=True)

@@ -14,11 +14,11 @@ from zhivex_ai import (  # noqa: E402
     create_agent_run_snapshot,
     create_agent_trace_artifact,
     create_in_memory_agent_run_store,
-    create_mock_language_model,
     replay_agent_run,
     run_agent,
     summarize_agent_trace,
 )
+from zhivex_ai.evals import create_mock_language_model  # noqa: E402
 
 
 async def main() -> None:

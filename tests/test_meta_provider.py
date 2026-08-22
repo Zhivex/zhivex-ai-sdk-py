@@ -135,7 +135,7 @@ class MetaProviderConfigTests(TestCase):
         self.assertEqual(explicit_model.api_key, "explicit-key")
         self.assertEqual(explicit_model.base_url, "https://proxy.example/meta/v1")
 
-    def test_meta_bundle_is_portable_beta_surface_with_tier_c_agent_capabilities(self) -> None:
+    def test_meta_bundle_is_portable_tier_1_surface_with_tier_b_agent_capabilities(self) -> None:
         provider = create_meta(api_key="test")
         model = provider("muse-spark-1.2")
 
@@ -149,7 +149,7 @@ class MetaProviderConfigTests(TestCase):
         self.assertFalse(provider.portable_support.embeddings)
         self.assertTrue(provider.native_support.files)
         self.assertTrue(provider.native_support.responses)
-        self.assertEqual(provider.agent_capabilities.support_tier, "tier-c")
+        self.assertEqual(provider.agent_capabilities.support_tier, "tier-b")
         self.assertTrue(provider.agent_capabilities.hosted_web_search)
         self.assertTrue(provider.agent_capabilities.toolsets)
         self.assertTrue(model.capabilities.vision)

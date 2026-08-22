@@ -8,6 +8,23 @@ Related documents:
 - [STABILITY.md](./STABILITY.md)
 - [VERSIONING.md](./VERSIONING.md)
 - [CHANGELOG.md](./CHANGELOG.md)
+- [docs/SCOPE.md](./docs/SCOPE.md)
+
+## Product boundary
+
+The supported core product is the portable foundation plus the agent runtime, durable agent execution, provider adapters, gateway, and backend transport contracts. Workflows, evaluations, protocol hosting, the general CLI/playground, packaged-skill distribution, realtime, and broad provider-native resource lifecycles are focused extension areas. Their presence in this repository does not make them part of the core adoption or GA promise.
+
+Existing top-level imports remain supported according to their current stability level. New Beta or Experimental APIs should use a focused namespace instead of enlarging the `zhivex_ai` root.
+
+## Provider evidence levels
+
+Provider capability and live certification are deliberately separate:
+
+- **Contract-supported**: the provider participates in runtime metadata, deterministic shared contracts, provider-specific tests, documentation, and live-smoke configuration.
+- **Release-certified**: a recorded live run passed for an exact provider, model, operation set, built artifact, and source revision.
+- **Experimental/native-only**: the provider or feature does not carry the portable compatibility promise.
+
+The current Tier-1 roster is a contract-supported classification. It must not be described as release-certified unless matching evidence exists for the exact release being discussed.
 
 ## Support expectations
 
@@ -32,8 +49,8 @@ Related documents:
 - Beta Kimi/Moonshot native support covers Chat Completions, Files, Batch, token estimation, and official Formulas tools according to the current Kimi Open Platform docs. Portable Kimi is tier-1 for text, streaming, structured output, and callable tools.
 - DeepSeek is tier-1 for text generation, streaming, JSON structured output, callable tools, and reasoning through its official Chat Completions API. Provider-specific strict-tool/prefix beta routing is supported, while vision, files, embeddings, audio, moderation, and hosted tools are outside the current contract.
 - vLLM is supported as a tier-1 provider for SDK primitives exposed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR support depends on the model/task served by vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the SDK support contract.
-- Meta Model API is available as a Beta portable, non-Tier-1 provider through `create_meta()`. Offline contracts cover Muse Spark text, streaming, JSON Schema output, functions, Responses continuation, hosted web/tool search, files, errors, and retries. `tool_choice` is limited to `auto`; embeddings, speech output, transcription, grounding, Realtime, image generation, and video generation are not claimed. On 2026-08-14, authenticated local-source and locally built `0.18.0` wheel smokes passed generation plus a real agent tool loop with Standard `muse-spark-1.2`; the release changes were still uncommitted, so this is artifact integration evidence rather than exact-SHA release certification.
-- Tier-1 provider claims are backed by generated support metadata, shared offline contract tests, provider-specific tests, and optional live smoke documentation in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Tier-1 does not by itself assert current live certification across the complete set; live evidence is provider-, model-, operation-, artifact-, and SHA-specific.
+- Meta Model API is tier-1 for the Stable `create_meta()` factory and Standard `muse-spark-1.2` portable text, streaming, JSON Schema structured output, callable tools, and agent tool loops. `tool_choice` is limited to `auto`. Contributor models, Responses continuation, hosted web/tool search, Files, raw Responses, hosted tools, and multimodal/native extras remain Beta. Embeddings, speech output, transcription, grounding, Realtime, image generation, and video generation are not claimed. Worktree or locally built wheel smokes are integration evidence only until a clean release candidate records the exact artifact and source revision.
+- Tier-1 provider claims are contract-supported through generated support metadata, shared offline contract tests, provider-specific tests, and optional live smoke documentation in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Tier-1 does not by itself assert current release certification across the complete set; live evidence is provider-, model-, operation-, artifact-, and SHA-specific.
 - The README support matrix is generated from runtime metadata and reflects the current provider capability story, but its `Agent Capabilities` section should still be read as beta guidance rather than a stable behavioral guarantee.
 - Experimental APIs are available for evaluation and feedback, but they do not carry support or compatibility guarantees.
 
@@ -60,9 +77,10 @@ The current tier-1 providers for the stable production API story are:
 - Qwen
 - Kimi/Moonshot
 - DeepSeek
+- Meta Model API
 - vLLM
 
-Meta is intentionally outside this list. Its Beta portable badge means the SDK-owned namespace is available for the capabilities marked in the generated matrix; it does not make the factory Stable, Tier-1, complete across Meta model families, or live-certified. See [docs/providers/meta.md](./docs/providers/meta.md).
+Meta Model API is tier-1 only for `create_meta()` with Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, and agent tool loops. That contract does not promote Contributor models, `meta_hosted_tool()`, `meta_web_search_tool()`, `meta_tool_search_tool()`, Files, raw Responses, hosted tools, or multimodal/native extras. Tier-1 contract support is not release certification. See [docs/providers/meta.md](./docs/providers/meta.md).
 
 Anthropic is tier-1 for the portable text-generation surface in this repository. The catalog tracks Claude Opus 5, Fable 5, Sonnet 5, restricted-access Mythos 5, and Opus 4.8. Opus 5 uses adaptive thinking by default, supports portable effort through `max`, and can disable thinking only through effort `high`; manual budgets and non-default sampling fail before dispatch. Opus 5, Fable 5, Mythos 5, and Opus 4.8 accept valid intermediate system sections. Opus 5 does not support assistant prefill, server-side Web Fetch, or Priority Tier through this integration. Native hosted helpers otherwise default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. Anthropic refusals preserve provider details and normalize to `finish_reason="refusal"`; embeddings, transcription, and speech remain unavailable.
 

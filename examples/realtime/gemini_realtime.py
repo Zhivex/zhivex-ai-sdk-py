@@ -15,14 +15,14 @@ from _bootstrap import load_dotenv_if_available
 
 load_dotenv_if_available()
 
-from zhivex_ai import (
+from zhivex_ai import create_gemini
+from zhivex_ai.experimental import (
     RealtimeAudioOutputEvent,
     RealtimeResponseCompletedEvent,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
     RealtimeTextDeltaEvent,
     RealtimeTranscriptEvent,
-    create_gemini,
 )
 
 GEMINI_LIVE_OUTPUT_SAMPLE_RATE_HZ = 24_000

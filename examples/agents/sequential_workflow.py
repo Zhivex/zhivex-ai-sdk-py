@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from zhivex_ai import Agent, GenerateResult, SequentialAgent, WorkflowStep, create_mock_language_model
+from zhivex_ai import Agent
+from zhivex_ai.evals import GenerateResult, create_mock_language_model
+from zhivex_ai.workflows import SequentialAgent, WorkflowStep
 
 
 def mock_agent(name: str, text: str) -> Agent:

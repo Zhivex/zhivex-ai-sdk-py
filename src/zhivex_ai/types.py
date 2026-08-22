@@ -14,6 +14,7 @@ FinishReason = Literal["stop", "length", "tool-calls", "content-filter", "refusa
 StructuredOutputMode = Literal["auto", "native", "prompted"]
 ToolChoiceMode = Literal["none", "auto", "required"]
 PortableProviderTier = Literal["portable", "native-only", "compatibility"]
+ProviderEvidenceStatus = Literal["release-certified", "contract-supported", "experimental/native-only"]
 AgentSupportTier = Literal["tier-a", "tier-b", "tier-c"]
 HostedToolClass = Literal["web-search", "file-search", "remote-mcp", "computer-use", "code-execution", "toolset", "custom"]
 

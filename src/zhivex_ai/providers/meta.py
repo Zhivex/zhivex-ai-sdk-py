@@ -50,7 +50,7 @@ META_DEFAULT_BASE_URL = "https://api.meta.ai/v1"
 MetaApiMode = Literal["auto", "chat", "responses"]
 
 META_AGENT_CAPABILITIES = AgentCapabilities(
-    support_tier="tier-c",
+    support_tier="tier-b",
     tool_choice_none=False,
     hosted_web_search=True,
     toolsets=True,

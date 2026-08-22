@@ -37,7 +37,12 @@ class _FakeBedrockClient:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render or sync the provider support matrix from runtime metadata.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Render or sync the fail-closed provider support matrix from runtime metadata. "
+            "The offline generator reports contract support and never infers release certification from Tier-1 membership."
+        )
+    )
     parser.add_argument(
         "--write-readme",
         action="store_true",

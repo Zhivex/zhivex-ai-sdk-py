@@ -1,7 +1,8 @@
 import asyncio
 import os
 
-from zhivex_ai import create_ollama, generate_text
+from zhivex_ai import generate_text
+from zhivex_ai.experimental import create_ollama
 
 
 async def main() -> None:
