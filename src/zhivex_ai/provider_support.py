@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from .providers.base import ProviderBundle
-from .types import AgentCapabilities, NativeSupport, PortableProviderTier, PortableSupport
+from .types import AgentCapabilities, NativeSupport, PortableProviderTier, PortableSupport, ProviderEvidenceStatus
 
 TIER_1_PROVIDERS = (
     "openai",
@@ -15,6 +15,7 @@ TIER_1_PROVIDERS = (
     "qwen",
     "kimi",
     "deepseek",
+    "meta",
     "vllm",
 )
 README_SUPPORT_MATRIX_BEGIN = "<!-- BEGIN GENERATED SUPPORT MATRIX -->"
@@ -29,10 +30,29 @@ class ProviderSupportRow:
     portable_support: PortableSupport
     native_support: NativeSupport
     agent_capabilities: AgentCapabilities
+    evidence_status: ProviderEvidenceStatus = "experimental/native-only"
 
 
-def build_provider_support_rows(providers: Mapping[str, ProviderBundle] | Iterable[ProviderBundle]) -> list[ProviderSupportRow]:
-    bundles = providers.values() if isinstance(providers, Mapping) else providers
+def build_provider_support_rows(
+    providers: Mapping[str, ProviderBundle] | Iterable[ProviderBundle],
+    *,
+    validated_release_certifications: Iterable[str] = (),
+) -> list[ProviderSupportRow]:
+    """Build support rows without inferring live evidence from provider tier.
+
+    ``validated_release_certifications`` is an explicit trust boundary. Callers
+    must populate it only with provider names produced by a separate release
+    evidence validator for the exact artifact being described. An empty value
+    is intentionally fail-closed, including for Tier-1 providers.
+    """
+
+    bundles = list(providers.values() if isinstance(providers, Mapping) else providers)
+    provider_names = {bundle.name for bundle in bundles}
+    certified = set(validated_release_certifications)
+    unknown_certifications = certified - provider_names
+    if unknown_certifications:
+        formatted = ", ".join(sorted(unknown_certifications))
+        raise ValueError(f"Release certification references unknown provider(s): {formatted}.")
     rows = [
         ProviderSupportRow(
             provider=bundle.name,
@@ -41,6 +61,13 @@ def build_provider_support_rows(providers: Mapping[str, ProviderBundle] | Iterab
             portable_support=bundle.portable_support,
             native_support=bundle.native_support,
             agent_capabilities=bundle.agent_capabilities,
+            evidence_status=(
+                "release-certified"
+                if bundle.name in certified
+                else "contract-supported"
+                if bundle.portable_support.portable_badge
+                else "experimental/native-only"
+            ),
         )
         for bundle in bundles
     ]
@@ -109,6 +136,12 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         "Code Execution",
         "Toolsets",
     ]
+    evidence_headers = ["Provider", "Evidence Status"]
+
+    evidence_table = _render_table(
+        evidence_headers,
+        [[row.provider, row.evidence_status] for row in materialized],
+    )
 
     portable_table = _render_table(
         portable_headers,
@@ -186,9 +219,17 @@ def render_provider_support_markdown(rows: Iterable[ProviderSupportRow]) -> str:
         [
             "### Tier-1 Providers",
             "",
-            "These providers back the stable surface for production API work in this SDK today:",
+            "These providers back the stable portable contract for production API work in this SDK today:",
             "",
             *[f"- `{row.provider}`" for row in tier_1_rows],
+            "",
+            "Tier-1 identifies shared contract coverage; it does not establish live release certification.",
+            "Provider evidence is fail-closed: without separately validated evidence for the exact release artifact,",
+            "portable providers remain `contract-supported`. Certification does not change portability, API stability, or Tier-1 membership.",
+            "",
+            "### Provider Evidence",
+            "",
+            evidence_table,
             "",
             "### Portable Support",
             "",

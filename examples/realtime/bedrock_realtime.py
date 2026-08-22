@@ -1,6 +1,6 @@
 import asyncio
 
-from zhivex_ai import (
+from zhivex_ai.experimental import (
     RealtimeAudioOutputEvent,
     RealtimeResponseCompletedEvent,
     RealtimeSessionConfig,

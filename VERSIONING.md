@@ -26,8 +26,21 @@ The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by 
 - Do not rename, remove, or repurpose public stable exports without a deprecation path.
 - Keep top-level imports from `zhivex_ai` as the primary public entrypoint.
 - Update `src/zhivex_ai/api_stability.py` and its drift tests whenever `zhivex_ai.__all__` changes.
-- New stable provider factories are additive public API changes and must land with provider contracts, support metadata, docs, examples, and artifact-install verification. `create_deepseek` follows that policy.
+- New stable provider factories are additive public API changes and must land with provider contracts, support metadata, docs, examples, and artifact-install verification. `create_deepseek` follows that policy; `0.19.0` applies it to `create_meta` with a deliberately narrow Standard `muse-spark-1.2` portable text/tool/application-supplied retrieval contract.
 - Additive fields on `Agent`, `AgentContext`, `AgentRunRequest`, `AgentRunResult`, and `ToolExecutionContext` must preserve existing positional construction and string-only `result.text` behavior. Generic typing and `result.output` are additive in `0.14.0`.
+
+## Namespace policy
+
+The package root is a compatibility aggregator for the current Beta release line, while focused namespaces expose optional product areas:
+
+- `zhivex_ai.evals`
+- `zhivex_ai.workflows`
+- `zhivex_ai.integrations.protocols`
+- `zhivex_ai.experimental`
+
+Existing top-level imports keep their documented stability level. Recommending a focused namespace is not a removal or promotion. New Beta or Experimental symbols should not be added to the package root by default; adding one requires an explicit compatibility rationale, stability-manifest entry, changelog coverage, documentation, and contract tests.
+
+If a legacy top-level Beta or Experimental import is eventually retired, it must first receive a documented replacement and a deprecation period. Stable top-level imports continue to follow the stricter deprecation workflow below.
 
 ## Deprecation workflow
 

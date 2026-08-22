@@ -4,10 +4,12 @@ Zhivex AI SDK `0.16.0` adds beta experiment primitives on top of the existing de
 
 Use them to compare application-owned agent variants, calculate custom metrics, and fail CI when a candidate misses an absolute threshold or regresses against a baseline. They do not replace domain review, production monitoring, or live provider smoke tests.
 
+Import evaluation contracts from the focused public namespace `zhivex_ai.evals`. Existing top-level imports remain available for compatibility, but new code should make the Beta dependency explicit.
+
 ## Single-variant evaluation
 
 ```python
-from zhivex_ai import (
+from zhivex_ai.evals import (
     AgentEvaluationCase,
     AgentEvaluationExpectations,
     run_agent_evaluation,
@@ -54,7 +56,7 @@ memory, tools, and application dependencies are reentrant.
 ## Baseline experiment and CI gates
 
 ```python
-from zhivex_ai import (
+from zhivex_ai.evals import (
     AgentEvaluationGate,
     AgentEvaluationMetric,
     run_agent_evaluation_experiment,

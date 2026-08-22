@@ -147,35 +147,38 @@ def _smoke_code(expected_version: str) -> str:
 
         import zhivex_ai
         from pydantic import BaseModel
+        from zhivex_ai.api_stability import BETA_EXPORTS, STABLE_EXPORTS
         from zhivex_ai import (
             Agent,
             AgentContext,
             AgentHooks,
             AgentMiddleware,
             AgentRunRequest,
+            ModelMessage,
+            ToolCall,
+            create_deepseek,
+            create_meta,
+            create_text_message,
+            generate_text,
+            run_agent,
+            tool,
+        )
+        from zhivex_ai.evals import (
             AgentEvaluationCase,
             AgentEvaluationGate,
-            A2AAgentExecutor,
             GenerateResult,
-            InMemoryResponsesEventStore,
-            ModelMessage,
-            ProtocolLimits,
-            ResponsesAgentHost,
+            create_mock_language_model,
+            run_agent_evaluation_experiment,
+        )
+        from zhivex_ai.experimental import stream_live_agent as experimental_stream_live_agent
+        from zhivex_ai.integrations.protocols import A2AAgentExecutor, ProtocolLimits, create_a2a_agent_card
+        from zhivex_ai.integrations.responses import InMemoryResponsesEventStore, ResponsesAgentHost
+        from zhivex_ai.workflows import (
             SequentialAgent,
-            ToolCall,
             WorkflowBuilder,
             WorkflowStep,
             create_in_memory_workflow_checkpoint_store,
             create_in_memory_workflow_lease_manager,
-            create_deepseek,
-            create_meta,
-            create_a2a_agent_card,
-            create_mock_language_model,
-            create_text_message,
-            generate_text,
-            run_agent,
-            run_agent_evaluation_experiment,
-            tool,
         )
         from zhivex_ai.types import ToolCallPart
 
@@ -186,6 +189,10 @@ def _smoke_code(expected_version: str) -> str:
         assert "AgentRunRequest" in zhivex_ai.__all__
         assert "create_deepseek" in zhivex_ai.__all__
         assert "create_meta" in zhivex_ai.__all__
+        assert "create_meta" in STABLE_EXPORTS
+        assert "meta_hosted_tool" in BETA_EXPORTS
+        assert "meta_tool_search_tool" in BETA_EXPORTS
+        assert "meta_web_search_tool" in BETA_EXPORTS
         assert "generate_text" in zhivex_ai.__all__
         assert "WorkflowGraph" in zhivex_ai.__all__
         assert "resume_workflow" in zhivex_ai.__all__
@@ -197,6 +204,7 @@ def _smoke_code(expected_version: str) -> str:
         assert "cancel_workflow" in zhivex_ai.__all__
         assert "create_a2a_app" in zhivex_ai.__all__
         assert "create_responses_app" in zhivex_ai.__all__
+        assert experimental_stream_live_agent is zhivex_ai.stream_live_agent
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
         assert resources.files("zhivex_ai").joinpath("__init__.pyi").is_file()
         deepseek = create_deepseek(api_key="artifact-smoke-key")

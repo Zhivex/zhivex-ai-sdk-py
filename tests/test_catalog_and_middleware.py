@@ -196,10 +196,13 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
         for model_id in direct_model_ids:
             entry = default_model_catalog.find("meta", model_id)
             self.assertIsNotNone(entry)
-            self.assertEqual(entry.availability, "preview")  # type: ignore[union-attr]
             self.assertTrue(entry.source_urls)  # type: ignore[union-attr]
             self.assertTrue(entry.parallel_tool_calls)  # type: ignore[union-attr]
             self.assertTrue(entry.structured_output)  # type: ignore[union-attr]
+
+        self.assertEqual(default_model_catalog.find("meta", "muse-spark-1.2").availability, "stable")  # type: ignore[union-attr]
+        for model_id in ("muse-spark-1.2-contributor", "muse-spark-1.1"):
+            self.assertEqual(default_model_catalog.find("meta", model_id).availability, "preview")  # type: ignore[union-attr]
 
         self.assertEqual(  # exact-model offline fixture; the other direct IDs remain catalog-only
             default_model_catalog.find("meta", "muse-spark-1.2").support_evidence,  # type: ignore[union-attr]

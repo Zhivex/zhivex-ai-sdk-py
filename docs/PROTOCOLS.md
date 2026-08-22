@@ -12,10 +12,12 @@ pip install "zhivex-ai-sdk[ag-ui]"     # official AG-UI event encoder
 
 The A2A extra is pinned to the supported `a2a-sdk` 1.x line and the AG-UI extra to `ag-ui-protocol` 0.1.x. Both protocol surfaces remain beta and may track upstream minor changes in a future Zhivex minor release.
 
+Import these adapters from `zhivex_ai.integrations.protocols` and `zhivex_ai.integrations.responses`. Existing top-level imports remain available for compatibility, but new code should make the Beta integration boundary explicit.
+
 ## A2A v1
 
 ```python
-from zhivex_ai import (
+from zhivex_ai.integrations.protocols import (
     A2AAgentExecutor,
     create_a2a_agent_card,
     create_a2a_app,
@@ -61,7 +63,7 @@ request bytes are bounded even when `Content-Length` is absent or false.
 ## AG-UI
 
 ```python
-from zhivex_ai import stream_agent_ag_ui, to_ag_ui_sse_response
+from zhivex_ai.integrations.protocols import stream_agent_ag_ui, to_ag_ui_sse_response
 
 events = stream_agent_ag_ui(
     agent=agent,
@@ -95,11 +97,8 @@ public error; the default never returns raw exception details.
 ## Responses-compatible hosting
 
 ```python
-from zhivex_ai import (
-    InMemoryResponsesEventStore,
-    ProtocolLimits,
-    create_responses_app,
-)
+from zhivex_ai.integrations.protocols import ProtocolLimits
+from zhivex_ai.integrations.responses import InMemoryResponsesEventStore, create_responses_app
 
 app = create_responses_app(
     agents={"support": support_agent},

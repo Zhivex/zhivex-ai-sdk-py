@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.18.2"
-description = "Agent-first Python SDK for building orchestrated AI systems across multiple providers"
+version = "0.19.0"
+description = "Provider-portable Python runtime for building reliable AI agents"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-keywords = ["ai", "agent", "agents", "llm", "sdk", "multi-agent", "tools", "orchestration"]
+keywords = ["ai", "agent", "agents", "llm", "sdk", "multi-provider", "tools", "durable-execution"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -138,12 +138,19 @@ files = [
   "src/zhivex_ai/agent_evaluation.py",
   "src/zhivex_ai/agent_state.py",
   "src/zhivex_ai/cli.py",
+  "src/zhivex_ai/evals.py",
   "src/zhivex_ai/errors.py",
+  "src/zhivex_ai/experimental/__init__.py",
+  "src/zhivex_ai/experimental/providers.py",
+  "src/zhivex_ai/experimental/realtime.py",
   "src/zhivex_ai/gateway.py",
   "src/zhivex_ai/generate_object.py",
   "src/zhivex_ai/generate_text.py",
   "src/zhivex_ai/middleware.py",
   "src/zhivex_ai/messages.py",
+  "src/zhivex_ai/integrations/__init__.py",
+  "src/zhivex_ai/integrations/protocols.py",
+  "src/zhivex_ai/integrations/responses.py",
   "src/zhivex_ai/protocols.py",
   "src/zhivex_ai/observability.py",
   "src/zhivex_ai/realtime.py",
@@ -159,6 +166,7 @@ files = [
   "src/zhivex_ai/workflow_adapters.py",
   "src/zhivex_ai/workflow_graph.py",
   "src/zhivex_ai/workflow_state.py",
+  "src/zhivex_ai/workflows.py",
   "src/zhivex_ai/providers/anthropic.py",
   "src/zhivex_ai/providers/azure_openai.py",
   "src/zhivex_ai/providers/base.py",

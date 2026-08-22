@@ -6,14 +6,13 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from zhivex_ai import (
-    Agent,
-    GenerateResult,
+from zhivex_ai import Agent
+from zhivex_ai.evals import GenerateResult, create_mock_language_model
+from zhivex_ai.workflows import (
     WorkflowBuilder,
     WorkflowCheckpointStore,
     WorkflowGraph,
     WorkflowStep,
-    create_mock_language_model,
     create_sqlite_workflow_checkpoint_store,
     fork_workflow,
     resume_workflow,

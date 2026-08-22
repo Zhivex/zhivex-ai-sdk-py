@@ -19,6 +19,7 @@ from zhivex_ai import (
     create_deepseek,
     create_gemini,
     create_kimi,
+    create_meta,
     create_ollama,
     create_openai,
     create_openrouter,
@@ -115,6 +116,7 @@ class AgentCapabilitiesTests(TestCase):
             (create_openrouter(api_key="test"), "tier-c"),
             (create_qwen(api_key="test"), "tier-b"),
             (create_kimi(api_key="test"), "tier-b"),
+            (create_meta(api_key="test"), "tier-b"),
             (create_ollama(), "tier-c"),
             (create_vllm(api_key="test"), "tier-b"),
         ]

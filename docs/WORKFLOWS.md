@@ -6,7 +6,7 @@ The SDK owns orchestration mechanics. The application continues to own business 
 
 ## Stability
 
-The complete workflow surface introduced in `0.15.0` remains beta in `0.18.2`:
+The complete workflow surface introduced in `0.15.0` remains beta in `0.19.0`:
 
 - Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
 - Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, `fork_workflow`, and `cancel_workflow`
@@ -17,7 +17,7 @@ The complete workflow surface introduced in `0.15.0` remains beta in `0.18.2`:
 - Step retries: `WorkflowRetryPolicy`
 - External runtime contracts: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, and the DBOS, Temporal, Prefect, and Restate callback-adapter factories
 
-Use top-level imports from `zhivex_ai`. Avoid deep imports. These APIs may evolve between minor releases and are not part of the stable compatibility contract yet.
+Use the focused public namespace `zhivex_ai.workflows`. Existing top-level imports remain available for compatibility, but new workflow code should make the Beta dependency explicit. Implementation-module deep imports remain unsupported. These APIs may evolve between minor releases and are not part of the Stable compatibility contract yet.
 
 ## Choose The Orchestration Model
 
@@ -33,7 +33,8 @@ Use the smallest model that represents the workflow:
 ## Build A Graph
 
 ```python
-from zhivex_ai import Agent, WorkflowBuilder, WorkflowStep
+from zhivex_ai import Agent
+from zhivex_ai.workflows import WorkflowBuilder, WorkflowStep
 
 workflow = (
     WorkflowBuilder("loan_review", definition_version="2026-07-31")
@@ -86,7 +87,7 @@ Change a revision whenever the hidden behavior changes. A mismatched digest rais
 A graph step can execute an `Agent` or a sync/async Python function. Functional steps are useful for deterministic validation, routing preparation, database reads through injected dependencies, or application-owned activities that do not need a model call:
 
 ```python
-from zhivex_ai import WorkflowFunctionResult, WorkflowStep
+from zhivex_ai.workflows import WorkflowFunctionResult, WorkflowStep
 
 async def calculate_risk(context):
     score = await context.deps.risk_service.score(context.state["application"])
@@ -168,7 +169,7 @@ checkpoint store:
 ```python
 import asyncpg
 
-from zhivex_ai import (
+from zhivex_ai.workflows import (
     WorkflowBuilder,
     create_postgres_workflow_checkpoint_store,
     create_postgres_workflow_lease_manager,
@@ -212,7 +213,7 @@ Operational callers can distinguish concurrency/ownership (`WorkflowConflictErro
 Declare safe interruption boundaries before or after a node:
 
 ```python
-from zhivex_ai import WorkflowBuilder, resume_workflow
+from zhivex_ai.workflows import WorkflowBuilder, resume_workflow
 
 workflow = (
     WorkflowBuilder("publishing", definition_version="1")
@@ -248,7 +249,7 @@ workflow instead of being converted into a generic failure.
 ## Cooperative Cancellation
 
 ```python
-from zhivex_ai import cancel_workflow
+from zhivex_ai.workflows import cancel_workflow
 
 cancelled = await cancel_workflow(workflow, run_id, reason="Operator request")
 ```
@@ -264,7 +265,7 @@ flight.
 Fork creates a new run from a selected immutable checkpoint:
 
 ```python
-from zhivex_ai import fork_workflow
+from zhivex_ai.workflows import fork_workflow
 
 forked = await fork_workflow(
     workflow,
@@ -284,7 +285,7 @@ Fork does not roll back external effects produced before the selected checkpoint
 `WorkflowStep.max_retries` keeps its existing meaning: it configures model/provider retries inside one `run_agent(...)` invocation. Use `WorkflowRetryPolicy` when the complete logical workflow step may be attempted again:
 
 ```python
-from zhivex_ai import WorkflowRetryPolicy, WorkflowStep
+from zhivex_ai.workflows import WorkflowRetryPolicy, WorkflowStep
 
 step = WorkflowStep(
     "risk",

@@ -5,14 +5,16 @@
 [![Python](https://img.shields.io/pypi/pyversions/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)
 [![License](https://img.shields.io/pypi/l/zhivex-ai-sdk)](./LICENSE)
 
-Zhivex AI SDK for Python is an async-first, agent-first SDK for building orchestrated AI systems across multiple providers.
+Zhivex AI SDK for Python is an async-first runtime for building reliable agents across multiple AI providers.
 
-It brings the same design goals as the TypeScript Zhivex AI SDK into Python:
+The core product is deliberately small:
 
-- one agent runtime with executable handoffs, native subagent tools, shared sessions, durable run state, cooperative cancellation, tool guardrails, evaluation helpers, safety policies, tool registries, and traces
-- one normalized foundation layer for text generation, streaming, tools, structured output, embeddings, audio, grounded text, and routing
-- thin provider adapters instead of provider-specific app logic everywhere
-- portable application code across the portable tier, with explicit native escape hatches for provider-specific features
+- define an `Agent` once and run it with `run_agent()` or `stream_agent()`
+- use one portable contract for messages, tools, structured output, embeddings, and model calls
+- add sessions, durable state, human approval, replay, gateway fallback, and observability when the application needs them
+- keep provider-specific behavior behind explicit `provider.native.*` escape hatches
+
+Workflow engines, evaluation pipelines, protocol hosting, packaged skills, the general CLI/playground, and realtime voice are available, but they are optional extensions rather than prerequisites for building an agent.
 
 ## Why Zhivex AI SDK
 
@@ -23,7 +25,60 @@ Modern AI apps usually start simple and then drift into provider lock-in:
 - Gemini and Vertex differ again
 - local and routed setups add yet another layer
 
-Zhivex AI SDK gives you a common agent runtime and model contract so your application code can stay stable while providers change underneath.
+Zhivex AI SDK gives you a common agent runtime and model contract so your application code can stay stable while providers change underneath. Start with one agent and one provider; adopt the rest only when the product requires it.
+
+## Build One Portable Agent
+
+```python
+import asyncio
+
+from pydantic import BaseModel
+
+from zhivex_ai import Agent, create_openai, run_agent, tool
+
+
+class ProjectStatusInput(BaseModel):
+    project: str
+
+
+def lookup_project_status(input: ProjectStatusInput) -> dict[str, str]:
+    return {"project": input.project, "status": "on track"}
+
+
+async def main() -> None:
+    provider = create_openai()
+    agent = Agent(
+        name="project-assistant",
+        instructions="Use the project-status tool, then answer concisely.",
+        model=provider("gpt-5.6-terra"),
+        tools={
+            "lookup_project_status": tool(
+                name="lookup_project_status",
+                description="Returns the current status for a project.",
+                schema=ProjectStatusInput,
+                execute=lookup_project_status,
+            )
+        },
+    )
+
+    result = await run_agent(agent=agent, prompt="What is the status of Apollo?")
+    print(result.text)
+
+
+asyncio.run(main())
+```
+
+The agent code uses the portable model contract while the application owns the tool and its data. Run the complete example with `.venv/bin/python examples/agents/quickstart_agent.py`. Switching to another portable provider changes provider construction and the model ID, not the agent runtime. Follow the [quickstart](./docs/QUICKSTART.md) for installation plus offline and live verification.
+
+## Product Boundary
+
+| Layer | What belongs here | Adoption guidance |
+| --- | --- | --- |
+| Agent core | `Agent`, tools, streaming, handoffs, sessions, approvals, durable run state, replay | Default starting point |
+| Foundation | Text, structured output, embeddings, grounding, normalized messages | Use directly or through agents |
+| Providers and gateway | Portable adapters, native escape hatches, fallback routing | Choose only the providers your app needs |
+| Optional extensions | `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations` | Beta; isolate behind app-owned boundaries |
+| Incubating capabilities | `zhivex_ai.experimental`, including realtime/live agents | Experimental; expect contract changes |
 
 ## Stability And Support
 
@@ -31,55 +86,52 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, checkpoint/lease managers, resume/fork/cancel, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, trace artifacts, safety-policy helpers, and local run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, checkpoint/lease managers, resume/fork/cancel, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, packaged skills, trace artifacts, safety-policy helpers, and local run stores remain beta.
 
-See [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the contract that governs public API expectations, support scope, and release communication.
+See [docs/SCOPE.md](./docs/SCOPE.md), [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the product boundary, public API expectations, support scope, and release communication.
 
 ## Start Here
 
-- New backend setup: [docs/QUICKSTART.md](./docs/QUICKSTART.md)
-- Provider setup and smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
-- Agent runtime: [docs/AGENTS.md](./docs/AGENTS.md)
-- Durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
-- Evaluations and CI gates: [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
-- Agent protocols and hosting: [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
-- CLI and local playground: [docs/CLI.md](./docs/CLI.md)
-- Production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
-- Gateway routing: [docs/GATEWAY.md](./docs/GATEWAY.md)
-- Observability: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
-- Operations runbook: [docs/OPERATIONS.md](./docs/OPERATIONS.md)
-- Security: [SECURITY.md](./SECURITY.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
-- Parity and GA boundary: [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
+Core path:
+
+- Understand the product boundary and non-goals: [docs/SCOPE.md](./docs/SCOPE.md)
+- Install and verify one portable agent: [docs/QUICKSTART.md](./docs/QUICKSTART.md)
+- Configure a provider and run targeted smoke checks: [docs/PROVIDERS.md](./docs/PROVIDERS.md)
+- Add tools, streaming, handoffs, sessions, and approvals: [docs/AGENTS.md](./docs/AGENTS.md)
+- Apply production API patterns: [PRODUCTION_APIS.md](./PRODUCTION_APIS.md)
+- Add gateway fallback: [docs/GATEWAY.md](./docs/GATEWAY.md)
+- Operate safely: [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md), [docs/OPERATIONS.md](./docs/OPERATIONS.md), [SECURITY.md](./SECURITY.md), and [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+
+Optional extensions:
+
+- Beta durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Beta evaluations and CI gates: [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
+- Beta protocols and hosting: [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
+- Beta CLI and local playground: [docs/CLI.md](./docs/CLI.md)
+- Maturity and GA boundary: [docs/PARITY_MATRIX.md](./docs/PARITY_MATRIX.md)
+
+Project setup:
+
 - Contribution workflow: [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Local environment template: [.env.example](./.env.example)
 
-## Highlights
+## Core Capabilities
 
-- Agent runtime with typed dependencies and outputs, dynamic instructions, lifecycle hooks, run middleware, executable handoffs, native subagent tools, agent and per-tool input/output guardrails, cooperative cancellation, registry-based orchestration, durable run state, pending human approvals, approval resume, transcript + summary memory, permission-aware tool execution, and traces
-- Beta durable workflow graphs with validated DAGs, persisted routing/checkpoints, in-memory/SQLite/Postgres execution leases with heartbeat/fencing, resume/fork/cancel, interrupts, step retries, and callback adapters
-- Beta repeated evaluation trials with bounded concurrency, pass-rate confidence intervals, latency dispersion, token/application-cost metrics, redacted trajectories, JSON/JUnit artifacts, variants, and CI regression gates
-- Beta A2A v1, AG-UI, and strict Responses-compatible hosting with trusted run context, safe errors, lifecycle events, finite limits, injectable durability/replay, and a loopback-only local playground
-- `AgentRuntime`, `AgentRegistry`, and `ToolRegistry` as the primary orchestration layer
-- Unified `generate_text()` and `stream_text()` foundation primitives
-- Structured output with `generate_object()` and `stream_object()`
-- Grounded text for providers with web search support
-- Audio transcription and speech generation where the provider supports it
-- Experimental realtime/live voice sessions plus `stream_live_agent()` with durable approval suspension, idempotency, middleware, tool timeouts, and cancellation for voice-first agents
-- Text and multimodal embeddings support where the provider supports it
-- Google native clients for Gemini/Vertex image, video, music, batch, interaction, and Gemini context-cache workflows
-- Provider factories for hosted and local models
-- Beta provider agent capability metadata for support tiers and hosted-agent features
-- Beta first-class hosted tool definitions for provider-native tools in `tools={...}`
-- Beta typed provider-data payloads and approval flows for OpenAI/Azure remote MCP
-- Beta response-reference helpers and provider-data UI chunks for OpenAI/Azure continuation workflows
-- Gateway routing with fallback support
+- `Agent`, `run_agent()`, and `stream_agent()` with typed dependencies and outputs
+- Local tools, executable handoffs, sessions, memory, approval/resume, durable run state, and replay
+- `generate_text()`, `stream_text()`, `generate_object()`, `stream_object()`, embeddings, and grounded text
+- Portable provider factories plus explicit native escape hatches
+- Gateway fallback, transport helpers, middleware, model catalog helpers, and observability hooks
 - Production-style API and worker examples for durable agents, idempotency, gateway attempts, and release evidence
-- HTTP/UI helpers for SSE, plain text streams, and UI message transport
-- Middleware for telemetry, caching, and circuit breaking
-- Model catalog helpers for cost and recommendation metadata
-- Platform helpers for replay, evaluation reports, hierarchical run traces, budget guards, redaction, and run cancellation
-- Offline reference apps for business workflows, including small-business loan and HR candidate selection flows that demonstrate repair/resume, human approval, fairness checks, trace replay, and app-owned storage without requiring provider credentials
+
+## Optional And Incubating Capabilities
+
+- Beta durable workflow graphs under `zhivex_ai.workflows`, with DAG validation, persisted checkpoints, execution leases, resume/fork/cancel, retries, and callback adapters
+- Beta repeated evaluation trials under `zhivex_ai.evals`, with concurrency, confidence intervals, cost/latency metrics, JSON/JUnit artifacts, variants, and CI gates
+- Beta A2A v1, AG-UI, and Responses-compatible hosting under `zhivex_ai.integrations`, plus packaged skills and a loopback-only CLI playground
+- Beta provider-native hosted tools, provider-data payloads, remote MCP approvals, media clients, and lifecycle clients
+- Experimental realtime/live voice sessions plus `stream_live_agent()` under `zhivex_ai.experimental`, with durable approval suspension, idempotency, middleware, tool timeouts, and cancellation for voice-first agents
+- Offline business reference apps that demonstrate repair/resume, human approval, fairness checks, trace replay, and app-owned storage
 
 ## Supported Providers
 
@@ -90,9 +142,9 @@ Provider factories now return a `ProviderBundle` with two explicit namespaces:
 
 Portable construction fails fast for providers that do not satisfy the portable contract. Those providers remain available through `provider.native`.
 
-For production API work, the current tier-1 provider story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
+For production API work, the current ten-provider tier-1 story for the stable surface is OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi/Moonshot, DeepSeek, Meta Model API, and vLLM. Other providers remain available, but their supported feature set should be evaluated against the matrix below and the stability definitions in [STABILITY.md](./STABILITY.md).
 
-Meta Model API is a Beta portable, non-Tier-1 provider. Its portable badge means the SDK-owned namespace is available for the capabilities marked `Yes`; it does not imply Stable API status, complete coverage of every Meta model family, or authenticated live certification. See [docs/providers/meta.md](./docs/providers/meta.md).
+Meta Model API is tier-1 only for the Stable `create_meta()` factory and Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`. Portable retrieval injects bounded `PortableDocument` text into the request; it does not call Meta Files, hosted search, or raw Responses. Contributor models, hosted-tool helpers, Files, raw Responses, hosted tools, and multimodal/native extras remain Beta. Tier-1 means contract-supported, not release-certified. See [docs/providers/meta.md](./docs/providers/meta.md).
 
 This matrix is generated from runtime support metadata via `scripts/generate_support_matrix.py`.
 Regenerate the README block with `python3 scripts/generate_support_matrix.py --write-readme`.
@@ -101,7 +153,7 @@ It includes beta provider agent capability metadata alongside portable support a
 <!-- BEGIN GENERATED SUPPORT MATRIX -->
 ### Tier-1 Providers
 
-These providers back the stable surface for production API work in this SDK today:
+These providers back the stable portable contract for production API work in this SDK today:
 
 - `openai`
 - `anthropic`
@@ -111,7 +163,30 @@ These providers back the stable surface for production API work in this SDK toda
 - `qwen`
 - `kimi`
 - `deepseek`
+- `meta`
 - `vllm`
+
+Tier-1 identifies shared contract coverage; it does not establish live release certification.
+Provider evidence is fail-closed: without separately validated evidence for the exact release artifact,
+portable providers remain `contract-supported`. Certification does not change portability, API stability, or Tier-1 membership.
+
+### Provider Evidence
+
+| Provider | Evidence Status |
+| --- | --- |
+| anthropic | contract-supported |
+| azure-openai | contract-supported |
+| bedrock | experimental/native-only |
+| deepseek | contract-supported |
+| gemini | contract-supported |
+| kimi | contract-supported |
+| meta | contract-supported |
+| ollama | experimental/native-only |
+| openai | contract-supported |
+| openrouter | experimental/native-only |
+| qwen | contract-supported |
+| vertex | contract-supported |
+| vllm | contract-supported |
 
 ### Portable Support
 
@@ -159,7 +234,7 @@ These providers back the stable surface for production API work in this SDK toda
 | deepseek | tier-b | Yes | No | No | No | No | No | No | No |
 | gemini | tier-b | Yes | No | Yes | Yes | No | Yes | Yes | No |
 | kimi | tier-b | Yes | No | No | No | No | No | No | Yes |
-| meta | tier-c | No | No | Yes | No | No | No | No | Yes |
+| meta | tier-b | No | No | Yes | No | No | No | No | Yes |
 | ollama | tier-c | No | No | No | No | No | No | No | No |
 | openai | tier-a | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
 | openrouter | tier-c | Yes | No | Yes | No | No | No | No | No |
@@ -184,7 +259,7 @@ Tool support now follows the same rule everywhere:
 - Claude Opus 5, Fable 5, restricted-access Mythos 5, and Opus 4.8 accept mid-conversation `ModelMessage(role="system", ...)` sections on the Anthropic native path when they follow Anthropic's placement rules. Opus 5 does not support assistant prefill or server-side Web Fetch. Fast mode remains a native escape hatch through `provider_options={"speed": "fast"}` and the adapter adds its required beta header.
 - Anthropic `stop_reason="refusal"` is normalized as `finish_reason="refusal"` while preserving `provider_finish_reason` and `stop_details`; collected partial streaming text is discarded after a refusal. Gateway routes use `fallback_on_refusal=False` by default so a primary refusal is not re-sent to fallbacks unless the route explicitly opts in with `fallback_on_refusal=True`. Anthropic server-side fallback remains a beta raw `provider_options` escape hatch.
 - Anthropic hosted-tool helpers now default to `web_search_20260318`, `web_fetch_20260318`, and GA `code_execution_20260521`. `anthropic_mcp_server()` keeps its compatibility default; opt into current MCP with `version="current"` when the target account/model supports it.
-- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, and vLLM now participate in the tier-1 portable text-generation contract.
+- OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, Meta Model API, and vLLM now participate in the tier-1 portable text-generation contract. Meta's Stable scope is Standard `muse-spark-1.2` text, streaming, structured output, callable tools, and agent tool loops with `tool_choice="auto"`; its native/hosted extensions remain Beta.
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
@@ -1134,7 +1209,7 @@ asyncio.run(main())
 
 ## Provider Factories
 
-The package currently exposes:
+The core package exposes portable and Tier-1 factories from `zhivex_ai`:
 
 - `create_openai()`
 - `create_azure_openai()`
@@ -1142,13 +1217,16 @@ The package currently exposes:
 - `create_gemini()`
 - `create_vertex()`
 - `create_vllm()`
-- `create_bedrock()`
-- `create_openrouter()`
 - `create_qwen()`
 - `create_kimi()`
 - `create_meta()`
 - `create_deepseek()`
-- `create_ollama()`
+
+Native-only or compatibility providers are explicit Experimental imports:
+
+- `from zhivex_ai.experimental import create_bedrock`
+- `from zhivex_ai.experimental import create_openrouter`
+- `from zhivex_ai.experimental import create_ollama`
 
 Every factory now returns a `ProviderBundle`.
 
@@ -1174,7 +1252,7 @@ Portable model construction fails fast when the provider does not hold the porta
 
 OpenAI-compatible providers such as OpenRouter, Qwen, Ollama, and vLLM reuse normalized adapter paths internally. Qwen and vLLM participate in the tier-1 portable story; Ollama and OpenRouter remain outside the tier-1 portable contract. Kimi/Moonshot and DeepSeek use dedicated Chat Completions adapters so their reasoning, tool replay, streaming, and error semantics remain faithful to their official APIs.
 
-Meta uses a dedicated Model API adapter rather than the generic OpenAI-compatible helper. It selects Chat Completions for ordinary portable calls and Responses for hosted tools, file inputs, or native `previous_response_id` continuation. Meta is Beta and non-Tier-1; `tool_choice` is currently `auto` only.
+Meta uses a dedicated Model API adapter rather than the generic OpenAI-compatible helper. `create_meta()` with Standard `muse-spark-1.2` is Stable and tier-1 for portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`; `tool_choice` is `auto` only. Portable retrieval is SDK-owned prompt context, not Meta Files or hosted search. Responses routing for hosted tools, file inputs, native `previous_response_id` continuation, Contributor models, and other native extras remains Beta.
 
 Azure OpenAI supports API key authentication and Microsoft Entra ID authentication through the versionless `/openai/v1` route. API key usage reads `AZURE_OPENAI_API_KEY` plus `AZURE_OPENAI_ENDPOINT`; Entra ID usage passes a token or token provider explicitly and is mutually exclusive with API keys.
 
@@ -1242,7 +1320,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Use `meta("muse-spark-1.2")` for the portable text/tool/structured-output path. Hosted `web_search` and `tool_search`, raw Responses continuation, and Files are Beta native features. The Contributor variant has different data-use terms and is never selected implicitly. Muse Glimmer and Llama 4 are open-weight/host routes rather than direct Meta Model API IDs; their exact structured-output and tool behavior depends on the runtime. See [docs/providers/meta.md](./docs/providers/meta.md) and [meta_text.py](./examples/text/meta_text.py).
+Use `meta("muse-spark-1.2")` for the portable text/tool/structured-output path and `PortableRetrievalConfig` when the application already owns the retrieved document text. That retrieval path only adds bounded context to the portable request. Hosted `web_search` and `tool_search`, raw Responses continuation, and Files are Beta native features. The Contributor variant has different data-use terms and is never selected implicitly. Muse Glimmer and Llama 4 are open-weight/host routes rather than direct Meta Model API IDs; their exact structured-output and tool behavior depends on the runtime. See [docs/providers/meta.md](./docs/providers/meta.md) and [meta_text.py](./examples/text/meta_text.py).
 
 vLLM usage targets its OpenAI-compatible server:
 
@@ -1346,7 +1424,8 @@ Local Ollama usage follows the same native escape hatch:
 ```python
 import asyncio
 
-from zhivex_ai import create_ollama, generate_text
+from zhivex_ai import generate_text
+from zhivex_ai.experimental import create_ollama
 
 
 async def main() -> None:
@@ -1412,7 +1491,7 @@ Notes:
 
 - `provider("model-id")` is shorthand for the portable namespace.
 - `provider.native.*` is the only place where provider-specific request shapes belong.
-- Meta Model API is Beta portable and non-Tier-1; `meta_web_search_tool()` and `meta_tool_search_tool()` use Responses, and forced/disabled/named tool choice is rejected because the current API accepts only `auto`.
+- Meta Model API is Stable and tier-1 only for `create_meta()` with Standard `muse-spark-1.2` portable text, streaming, structured output, callable tools, agent tool loops, and application-supplied retrieval through `PortableRetrievalConfig`. This retrieval capability injects bounded `PortableDocument` text and does not use Meta Files, hosted search, or raw Responses. `meta_hosted_tool()`, `meta_web_search_tool()`, and `meta_tool_search_tool()` remain Beta; forced, disabled, and named tool choice are rejected because the current API accepts only `auto`.
 - Some providers support a capability only for specific model IDs even when the adapter exposes the factory.
 - `create_gemini().files()` exposes the Gemini Files API. `create_vertex()` does not expose a hosted files client; on Vertex, pass `FilePart(file_uri="gs://...")` or inline media instead.
 - `create_anthropic().tokens()` exposes Anthropic message token counting.
@@ -1552,7 +1631,7 @@ For production semantics, persistence, approvals, tool registries, event orderin
 Durable workflow graphs are available when coordination is known ahead of time and execution needs branching, per-transition checkpoints, interruption, resume, or fork:
 
 ```python
-from zhivex_ai import (
+from zhivex_ai.workflows import (
     WorkflowBuilder,
     WorkflowStep,
     create_sqlite_workflow_checkpoint_store,
@@ -1586,7 +1665,7 @@ result = await resume_workflow(
 
 `WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. Use step/edge `definition_revision` values for application configuration that callable source inspection cannot capture. Optional in-memory, SQLite, and Postgres lease managers add TTL, heartbeat, monotonic fencing, and atomic stale-owner rejection when paired with the matching checkpoint backend. Postgres also supports bounded or application-owned pools, namespaces, server-clock lease decisions, and checked schema metadata; validate it against the actual deployment database.
 
-`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.18.2`.
+`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.19.0`.
 
 Re-entering a still-running idempotent workflow fails closed. With a lease manager, `recover_running=True` can take over only after expiry and increments the fence; without one, it remains an operator-reconciled operation. Recovery cannot make unknown external effects safe without destination idempotency or reconciliation.
 
@@ -1632,7 +1711,7 @@ summary = summarize_agent_trace(state)
 The beta evaluation layer also supports repeated, bounded-concurrency trials with strict JSON/JUnit artifacts, finite pass-rate confidence intervals, latency/token/application-cost metrics, redacted trajectories, and baseline-aware CI gates:
 
 ```python
-from zhivex_ai import AgentEvaluationGate, run_agent_evaluation_experiment
+from zhivex_ai.evals import AgentEvaluationGate, run_agent_evaluation_experiment
 
 experiment = await run_agent_evaluation_experiment(
     variants={"baseline": baseline_agent, "candidate": candidate_agent},
@@ -1798,7 +1877,7 @@ See [examples/README.md](./examples/README.md) for the full list. Highlights:
 - Text: [openai_text.py](./examples/text/openai_text.py), [meta_text.py](./examples/text/meta_text.py), [stream_text.py](./examples/text/stream_text.py), [structured_output.py](./examples/text/structured_output.py), [deepseek_native.py](./examples/text/deepseek_native.py)
 - Local Ollama: [ollama_text.py](./examples/text/ollama_text.py)
 - Local vLLM: [vllm_text.py](./examples/text/vllm_text.py)
-- Agents: [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
+- Agents: [quickstart_agent.py](./examples/agents/quickstart_agent.py), [agent_basic.py](./examples/agents/agent_basic.py), [stream_agent.py](./examples/agents/stream_agent.py), [mcp_tools.py](./examples/agents/mcp_tools.py)
 - Agent skills: [skills.py](./examples/agents/skills.py)
 - Realtime: [openai_realtime.py](./examples/realtime/openai_realtime.py), [gemini_realtime.py](./examples/realtime/gemini_realtime.py), [live_agent_realtime.py](./examples/realtime/live_agent_realtime.py)
 - Audio: [transcribe_audio.py](./examples/audio/transcribe_audio.py), [generate_speech.py](./examples/audio/generate_speech.py)

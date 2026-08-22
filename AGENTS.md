@@ -45,7 +45,7 @@ High-value modules:
 
 This repo has a deliberately narrow stable surface.
 
-- Supported production imports should come from `zhivex_ai`, not deep internal paths.
+- Supported production imports should use `zhivex_ai` for the Stable core or a documented focused namespace such as `zhivex_ai.evals`, `zhivex_ai.workflows`, `zhivex_ai.integrations.protocols`, or `zhivex_ai.experimental`; implementation-module deep imports remain unsupported.
 - Treat `src/zhivex_ai/__init__.py` as the public contract boundary.
 - `tests/test_public_contract.py` enforces that the documented stable exports remain available.
 - If you change the stable surface, update `README.md`, `STABILITY.md`, `VERSIONING.md`, `CHANGELOG.md`, and the contract tests in the same change.
@@ -180,7 +180,7 @@ User-visible changes should usually update more than code.
 
 ## Practical Guardrails
 
-- Prefer top-level imports in docs and examples: `from zhivex_ai import ...`
+- Prefer top-level imports for the Stable core in docs and examples. Use documented focused namespaces for Beta and Experimental extensions so their ownership and compatibility level are visible at the import site.
 - Keep async-first patterns intact.
 - Avoid introducing provider-specific branching into shared surfaces unless the contract explicitly allows it.
 - Do not expand stable guarantees casually; this repo documents them on purpose.

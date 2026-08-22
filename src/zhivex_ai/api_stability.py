@@ -103,6 +103,7 @@ STABLE_EXPORTS = frozenset(
         "create_gemini",
         "create_kimi",
         "create_mcp_tool_registry",
+        "create_meta",
         "create_openai",
         "create_postgres_agent_memory_store",
         "create_postgres_agent_run_store",
@@ -179,7 +180,6 @@ EXPERIMENTAL_EXPORTS = frozenset(
 
 BETA_EXPORTS = frozenset(
     (
-        "create_meta",
         "meta_hosted_tool",
         "meta_tool_search_tool",
         "meta_web_search_tool",
@@ -679,7 +679,7 @@ _NOTES_BY_EXPORT = {
     "create_bedrock": "native-only provider",
     "create_deepseek": "tier-1 provider; native provider options remain beta",
     "create_kimi": "tier-1 provider; native extras remain beta",
-    "create_meta": "beta portable Meta Model API provider; not tier-1",
+    "create_meta": "tier-1 provider for the portable Muse Spark contract; native extras remain beta",
     "create_ollama": "compatibility provider",
     "create_openrouter": "native-only provider",
     "create_qwen": "tier-1 provider; native extras remain beta",

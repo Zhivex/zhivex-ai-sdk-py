@@ -1,17 +1,19 @@
 # Examples
 
-This folder contains runnable Python examples for the main public surfaces of the Zhivex AI SDK.
+This folder contains runnable Python examples for the core agent journey and the SDK's optional extensions. If you are new to the SDK, start with one portable agent; workflows, protocols, skills, and realtime are separate adoption choices.
 
 ## Layout
 
-- `text/`: basic text generation, streaming, structured output, embeddings, and grounded responses.
-- `agents/`: agent orchestration, subagents, approvals, durable state, replay, traces, memory, remote tools, and MCP integration.
-- `realtime/`: provider realtime sessions plus a live agent example.
+- `agents/`: the core agent runtime, tools, streaming, handoffs, approvals, durable state, replay, traces, memory, remote tools, and MCP integration; it also contains optional workflow examples.
+- `text/`: foundation text generation, streaming, structured output, embeddings, and grounded responses.
 - `audio/`: transcription and speech generation.
 - `integrations/`: UI message helpers, HTTP responses, middleware, gateway fallback, model catalog helpers, FastAPI reference APIs, and observability patterns.
 - `production/`: production-style API and worker boundaries for durable agents, idempotency, gateway attempts, and release-ready operational defaults.
+- `realtime/`: experimental provider realtime sessions plus a live agent example.
 - `dev/`: provider-specific smoke tests used while iterating locally.
 - Tier-1 providers: `text/tier1_providers.py` runs the portable text path for whichever tier-1 provider credentials and `ZHIVEX_EXAMPLE_*_MODEL` values are configured.
+
+Focused extension APIs are imported from `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations`, and `zhivex_ai.experimental`. Top-level imports remain available for compatibility.
 
 ## Live Smoke
 
@@ -38,7 +40,7 @@ Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
 Qwen uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`; optional checks are enabled by `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
-Meta uses `MODEL_API_KEY` plus an explicit `ZHIVEX_SMOKE_META_MODEL`; `muse-spark-1.2` Standard is the recommended smoke target. Meta is Beta, non-Tier-1, and not certified until an authenticated run is recorded.
+Meta uses `MODEL_API_KEY` plus an explicit `ZHIVEX_SMOKE_META_MODEL`; `muse-spark-1.2` Standard is the recommended Tier-1 smoke target. Its portable core is Stable, while native extras remain Beta and release certification still requires exact artifact evidence.
 
 If a realtime example fails on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, that usually means the local Python install is missing CA roots. You can work around it per-command with:
 
@@ -71,26 +73,31 @@ The FastAPI examples also require:
 pip install "zhivex-ai-sdk[api]"
 ```
 
-Suggested order if you are new to the SDK:
+Suggested core path if you are new to the SDK:
 
 ```bash
-.venv/bin/python examples/text/openai_text.py
-.venv/bin/python examples/text/tier1_providers.py
-.venv/bin/python examples/text/meta_text.py
-.venv/bin/python examples/text/kimi_native.py
-.venv/bin/python examples/text/stream_text.py
-.venv/bin/python examples/text/structured_output.py
-.venv/bin/python examples/text/native_hosted_tools.py
+.venv/bin/python examples/agents/quickstart_agent.py
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/typed_agent.py
 .venv/bin/python examples/agents/stream_agent.py
-.venv/bin/python examples/agents/platform_parity.py
 .venv/bin/python examples/agents/multi_agent_handoff.py
 .venv/bin/python examples/agents/human_approval.py
 .venv/bin/python examples/agents/durable_state_resume.py
 .venv/bin/python examples/agents/replay_and_trace.py
-.venv/bin/python examples/agents/small_business_loan_agent.py
-.venv/bin/python examples/agents/hr_candidate_selection_agent.py
+```
+
+Foundation and provider portability:
+
+```bash
+.venv/bin/python examples/text/openai_text.py
+.venv/bin/python examples/text/tier1_providers.py
+.venv/bin/python examples/text/stream_text.py
+.venv/bin/python examples/text/structured_output.py
+```
+
+Optional Beta workflow and integration examples:
+
+```bash
 .venv/bin/python examples/agents/sequential_workflow.py
 .venv/bin/python examples/agents/parallel_workflow.py
 .venv/bin/python examples/agents/loop_workflow.py
@@ -103,6 +110,11 @@ Suggested order if you are new to the SDK:
 .venv/bin/python examples/agents/kimi_official_tools.py
 .venv/bin/python examples/agents/mcp_tools.py
 .venv/bin/python examples/production/worker_resume.py
+```
+
+Experimental realtime example:
+
+```bash
 .venv/bin/python examples/realtime/openai_realtime.py
 ```
 
@@ -128,6 +140,7 @@ Suggested order if you are new to the SDK:
 ### Agents
 
 ```bash
+.venv/bin/python examples/agents/quickstart_agent.py
 .venv/bin/python examples/agents/agent_basic.py
 .venv/bin/python examples/agents/typed_agent.py
 .venv/bin/python examples/agents/stream_agent.py
@@ -219,6 +232,7 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 
 | Example | Mode | Requirements | Command | Verification |
 | --- | --- | --- | --- | --- |
+| `agents/quickstart_agent.py` | live | `OPENAI_API_KEY` | `.venv/bin/python examples/agents/quickstart_agent.py` | `ZHIVEX_SMOKE_PROVIDERS=openai ZHIVEX_SMOKE_AGENTS=1 make smoke` |
 | `agents/durable_graph_workflow.py` | offline | dev env | `.venv/bin/python examples/agents/durable_graph_workflow.py` | `make test-examples` |
 | `agents/structured_workflow_outputs.py` | offline | dev env | `.venv/bin/python examples/agents/structured_workflow_outputs.py` | `make test-examples` |
 | `agents/workflow_resume.py` | offline | dev env | `.venv/bin/python examples/agents/workflow_resume.py` | `make test-examples` |

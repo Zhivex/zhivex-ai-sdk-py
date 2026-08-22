@@ -227,7 +227,6 @@ default_model_catalog = create_model_catalog(
             "meta",
             "muse-spark-1.2",
             recommended_for=["chat", "reasoning", "tools", "vision"],
-            availability="preview",
             support_evidence="offline-contract",
             source_urls=[
                 "https://dev.meta.ai/docs/models",

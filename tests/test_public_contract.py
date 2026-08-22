@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from unittest import TestCase
@@ -38,6 +39,7 @@ DOCUMENTED_STABLE_EXPORTS = {
     "create_deepseek",
     "create_gemini",
     "create_kimi",
+    "create_meta",
     "create_qwen",
     "create_vertex",
     "create_vllm",
@@ -145,9 +147,21 @@ DOCUMENTED_STABLE_EXPORTS = {
     "to_ui_message_stream_response",
 }
 
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "2ec751f8c57bff050288ba1c7b418be1c11ef8c518b7808e3cd861f7596a166b"
+
 
 class PublicContractTests(TestCase):
-    def test_meta_factory_is_a_lazy_beta_top_level_export(self) -> None:
+    def test_package_root_does_not_expand_without_an_explicit_contract_update(self) -> None:
+        payload = "\n".join(sorted(zhivex_ai.__all__)).encode("utf-8")
+
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            COMPATIBILITY_ROOT_EXPORTS_SHA256,
+            "Keep new Beta and Experimental APIs in focused namespaces. If the root must change, "
+            "review STABILITY.md, VERSIONING.md, CHANGELOG.md, the public stub, and this snapshot together.",
+        )
+
+    def test_meta_factory_is_stable_while_native_helpers_remain_lazy_beta_exports(self) -> None:
         meta_exports = {
             "create_meta",
             "meta_hosted_tool",
@@ -159,7 +173,8 @@ class PublicContractTests(TestCase):
             zhivex_ai.__dict__.pop(name, None)
 
         self.assertTrue(meta_exports.issubset(zhivex_ai.__all__))
-        self.assertTrue(meta_exports.issubset(BETA_EXPORTS))
+        self.assertIn("create_meta", STABLE_EXPORTS)
+        self.assertTrue((meta_exports - {"create_meta"}).issubset(BETA_EXPORTS))
         self.assertNotIn("zhivex_ai.providers.meta", sys.modules)
 
         factory = zhivex_ai.create_meta
@@ -244,7 +259,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.18.2"', pyproject)
+        self.assertIn('version = "0.19.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

@@ -59,6 +59,7 @@ class ProviderSupportTests(TestCase):
             ]
         )
         tiers = {row.provider: (row.tier, row.portable_badge) for row in rows}
+        evidence = {row.provider: row.evidence_status for row in rows}
         native = {row.provider: row.native_support for row in rows}
         agent = {row.provider: row.agent_capabilities for row in rows}
 
@@ -75,6 +76,12 @@ class ProviderSupportTests(TestCase):
         self.assertEqual(tiers["meta"], ("portable", True))
         self.assertEqual(tiers["ollama"], ("compatibility", False))
         self.assertEqual(tiers["vllm"], ("portable", True))
+        self.assertEqual(evidence["openai"], "contract-supported")
+        self.assertEqual(evidence["meta"], "contract-supported")
+        self.assertEqual(evidence["bedrock"], "experimental/native-only")
+        self.assertEqual(evidence["ollama"], "experimental/native-only")
+        self.assertEqual(evidence["openrouter"], "experimental/native-only")
+        self.assertNotIn("release-certified", evidence.values())
         self.assertFalse(rows[[row.provider for row in rows].index("kimi")].portable_support.embeddings)
         self.assertTrue(native["kimi"].files)
         self.assertTrue(native["kimi"].batches)
@@ -135,7 +142,7 @@ class ProviderSupportTests(TestCase):
         self.assertFalse(native["meta"].embeddings)
         self.assertEqual(agent["deepseek"].support_tier, "tier-b")
         self.assertTrue(agent["deepseek"].tool_choice_none)
-        self.assertEqual(agent["meta"].support_tier, "tier-c")
+        self.assertEqual(agent["meta"].support_tier, "tier-b")
         self.assertFalse(agent["meta"].tool_choice_none)
         self.assertTrue(agent["meta"].hosted_web_search)
         self.assertTrue(agent["meta"].toolsets)
@@ -149,6 +156,11 @@ class ProviderSupportTests(TestCase):
         self.assertIn("- `vertex`", markdown)
         self.assertIn("- `vllm`", markdown)
         self.assertIn("- `deepseek`", markdown)
+        self.assertIn("Tier-1 identifies shared contract coverage; it does not establish live release certification.", markdown)
+        self.assertIn("### Provider Evidence", markdown)
+        self.assertIn("| openai | contract-supported |", markdown)
+        self.assertIn("| meta | contract-supported |", markdown)
+        self.assertIn("| bedrock | experimental/native-only |", markdown)
         self.assertIn("### Portable Support", markdown)
         self.assertIn("| openai | portable | Yes |", markdown)
         self.assertIn("| vllm | portable | Yes |", markdown)
@@ -172,7 +184,7 @@ class ProviderSupportTests(TestCase):
         self.assertIn("| qwen | tier-b | Yes | No | Yes | Yes | Yes | No | Yes | No |", markdown)
         self.assertIn("| kimi | tier-b | Yes | No | No | No | No | No | No | Yes |", markdown)
         self.assertIn("| deepseek | tier-b | Yes | No | No | No | No | No | No | No |", markdown)
-        self.assertIn("| meta | tier-c | No | No | Yes | No | No | No | No | Yes |", markdown)
+        self.assertIn("| meta | tier-b | No | No | Yes | No | No | No | No | Yes |", markdown)
 
     def test_tier_1_provider_contract_is_explicit(self) -> None:
         rows = build_provider_support_rows(
@@ -201,16 +213,47 @@ class ProviderSupportTests(TestCase):
                 "qwen",
                 "kimi",
                 "deepseek",
+                "meta",
                 "vllm",
             ),
         )
         tier_1_rows = get_tier_1_provider_rows(rows)
 
         self.assertEqual([row.provider for row in tier_1_rows], list(TIER_1_PROVIDERS))
-        self.assertNotIn("meta", TIER_1_PROVIDERS)
-        self.assertNotIn("meta", [row.provider for row in tier_1_rows])
+        self.assertIn("meta", TIER_1_PROVIDERS)
+        self.assertIn("meta", [row.provider for row in tier_1_rows])
         self.assertTrue(all(row.tier == "portable" for row in tier_1_rows))
         self.assertTrue(all(row.portable_badge for row in tier_1_rows))
+        self.assertTrue(all(row.evidence_status == "contract-supported" for row in tier_1_rows))
+
+    def test_release_certification_requires_explicit_validated_evidence(self) -> None:
+        providers = [
+            create_openai(api_key="test"),
+            create_meta(api_key="test"),
+            create_bedrock(client=_FakeBedrockClient()),
+        ]
+
+        rows = build_provider_support_rows(
+            providers,
+            validated_release_certifications={"openai"},
+        )
+        evidence = {row.provider: row.evidence_status for row in rows}
+
+        self.assertEqual(evidence["openai"], "release-certified")
+        self.assertEqual(evidence["meta"], "contract-supported")
+        self.assertEqual(evidence["bedrock"], "experimental/native-only")
+
+        markdown = render_provider_support_markdown(rows)
+        self.assertIn("| openai | release-certified |", markdown)
+        self.assertIn("| meta | contract-supported |", markdown)
+        self.assertIn("| bedrock | experimental/native-only |", markdown)
+
+    def test_release_certification_rejects_unknown_provider(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown provider.*missing"):
+            build_provider_support_rows(
+                [create_openai(api_key="test")],
+                validated_release_certifications={"missing"},
+            )
 
     def test_non_portable_provider_rejects_portable_model_construction(self) -> None:
         provider = create_bedrock(client=_FakeBedrockClient())
