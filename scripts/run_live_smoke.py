@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import re
+import subprocess
 import sys
+import tomllib
+from datetime import datetime, timezone
+from importlib import metadata
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +26,8 @@ from zhivex_ai import (  # noqa: E402
     Agent,
     AudioInput,
     LanguageModel,
+    PortableDocument,
+    PortableRetrievalConfig,
     ReasoningConfig,
     create_anthropic,
     create_azure_openai,
@@ -32,11 +41,13 @@ from zhivex_ai import (  # noqa: E402
     create_vertex,
     create_vllm,
     embed,
+    generate_object,
     generate_speech,
     generate_text,
     run_agent,
     tool,
     transcribe_audio,
+    stream_text,
 )
 
 
@@ -55,12 +66,203 @@ _SUPPORTED_PROVIDERS = {
     "vllm",
 }
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+_PROVIDER_MODEL_ENV = {
+    "openai": "ZHIVEX_SMOKE_OPENAI_MODEL",
+    "gemini": "ZHIVEX_SMOKE_GEMINI_MODEL",
+    "anthropic": "ZHIVEX_SMOKE_ANTHROPIC_MODEL",
+    "azure-openai": "ZHIVEX_SMOKE_AZURE_OPENAI_MODEL",
+    "vertex": "ZHIVEX_SMOKE_VERTEX_MODEL",
+    "ollama": "ZHIVEX_SMOKE_OLLAMA_MODEL",
+    "qwen": "ZHIVEX_SMOKE_QWEN_MODEL",
+    "kimi": "ZHIVEX_SMOKE_KIMI_MODEL",
+    "deepseek": "ZHIVEX_SMOKE_DEEPSEEK_MODEL",
+    "meta": "ZHIVEX_SMOKE_META_MODEL",
+    "vllm": "ZHIVEX_SMOKE_VLLM_MODEL",
+}
+_RELEASE_SMOKE_OPERATIONS = frozenset(
+    {"generation", "streaming", "structured-output", "portable-retrieval", "agent-tool"}
+)
 
 
 class _AgentSmokeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nonce: str
+
+
+class _MetaStructuredSmokeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nonce: str
+
+
+def _source_package_version() -> str:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))
+    return str(pyproject["project"]["version"])
+
+
+def _observed_package_version() -> str:
+    if _enabled("ZHIVEX_SMOKE_USE_INSTALLED"):
+        return metadata.version("zhivex-ai-sdk")
+    return _source_package_version()
+
+
+def _release_artifact_details() -> dict[str, str] | None:
+    raw_path = os.getenv("ZHIVEX_SMOKE_ARTIFACT_PATH")
+    if not raw_path:
+        return None
+    artifact_path = Path(raw_path)
+    if artifact_path.is_dir():
+        candidates = sorted(artifact_path.glob("zhivex_ai_sdk-*.whl"))
+        if len(candidates) != 1:
+            raise ValueError(
+                "ZHIVEX_SMOKE_ARTIFACT_PATH must contain exactly one zhivex_ai_sdk wheel."
+            )
+        artifact_path = candidates[0]
+    if not artifact_path.is_file():
+        raise ValueError("ZHIVEX_SMOKE_ARTIFACT_PATH must point to a release wheel or its directory.")
+    digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    return {"filename": artifact_path.name, "sha256": digest}
+
+
+def _load_release_smoke_policy() -> dict[str, Any] | None:
+    raw_path = os.getenv("ZHIVEX_RELEASE_SMOKE_POLICY")
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Could not load release smoke policy {path}: {error}") from error
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("Release smoke policy must be a schema_version 1 JSON object.")
+    if not isinstance(payload.get("package_version"), str):
+        raise ValueError("Release smoke policy package_version must be a string.")
+    providers = payload.get("required_providers")
+    if not isinstance(providers, dict) or not providers:
+        raise ValueError("Release smoke policy required_providers must be a non-empty object.")
+    for provider, requirement in providers.items():
+        if provider not in _SUPPORTED_PROVIDERS or not isinstance(requirement, dict):
+            raise ValueError(f'Invalid release smoke provider requirement: "{provider}".')
+        operations = requirement.get("operations")
+        if not isinstance(operations, list) or not operations:
+            raise ValueError(f'Release smoke provider "{provider}" must require operations.')
+        unknown_operations = set(operations) - _RELEASE_SMOKE_OPERATIONS
+        if unknown_operations:
+            raise ValueError(
+                f'Release smoke provider "{provider}" has unknown operations: '
+                f"{', '.join(sorted(unknown_operations))}."
+            )
+        model = requirement.get("model")
+        if model is not None and (not isinstance(model, str) or not model.strip()):
+            raise ValueError(f'Release smoke provider "{provider}" model must be a string.')
+    return payload
+
+
+def _validate_release_smoke_configuration(
+    policy: dict[str, Any],
+    *,
+    selected: set[str] | None,
+) -> None:
+    expected_version = str(policy["package_version"])
+    observed_version = _observed_package_version()
+    if observed_version != expected_version:
+        raise ValueError(
+            f"Release smoke package version mismatch: expected {expected_version}, observed {observed_version}."
+        )
+    required_providers = set(policy["required_providers"])
+    if selected is None or not required_providers.issubset(selected):
+        missing = required_providers - (selected or set())
+        raise ValueError(
+            "Release smoke policy requires explicit provider selection; "
+            f"missing: {', '.join(sorted(missing or required_providers))}."
+        )
+    if not _enabled("ZHIVEX_SMOKE_STRICT"):
+        raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_STRICT=1.")
+    required_operations = {
+        str(operation)
+        for requirement in policy["required_providers"].values()
+        for operation in requirement["operations"]
+    }
+    if "agent-tool" in required_operations and not _enabled("ZHIVEX_SMOKE_AGENTS"):
+        raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_AGENTS=1.")
+    meta_operations = set(
+        policy["required_providers"].get("meta", {}).get("operations", [])
+    )
+    if meta_operations - {"generation", "agent-tool"} and not _enabled(
+        "ZHIVEX_SMOKE_META_CERTIFICATION"
+    ):
+        raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_META_CERTIFICATION=1.")
+    for provider, requirement in policy["required_providers"].items():
+        expected_model = requirement.get("model")
+        if expected_model is None:
+            continue
+        observed_model = os.getenv(_PROVIDER_MODEL_ENV[provider])
+        if observed_model != expected_model:
+            raise ValueError(
+                f'Release smoke provider "{provider}" requires model "{expected_model}", '
+                f'observed "{observed_model or "unset"}".'
+            )
+    if policy.get("require_installed_package") and not _enabled("ZHIVEX_SMOKE_USE_INSTALLED"):
+        raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_USE_INSTALLED=1.")
+    artifact = _release_artifact_details()
+    if policy.get("require_artifact_sha256") and artifact is None:
+        raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_ARTIFACT_PATH.")
+
+
+def _operations_for_outcome(provider: str, *, agent_ran: bool) -> set[str]:
+    operations = {"generation"}
+    if agent_ran:
+        operations.add("agent-tool")
+    if provider == "meta" and _enabled("ZHIVEX_SMOKE_META_CERTIFICATION"):
+        operations.update({"streaming", "structured-output", "portable-retrieval"})
+    return operations
+
+
+def _source_revision() -> str:
+    github_sha = os.getenv("GITHUB_SHA")
+    if github_sha:
+        return github_sha
+    process = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return process.stdout.strip() if process.returncode == 0 else "unavailable"
+
+
+def _write_release_smoke_evidence(
+    *,
+    policy: dict[str, Any] | None,
+    executed_operations: dict[str, set[str]],
+    failures: int,
+) -> None:
+    raw_path = os.getenv("ZHIVEX_SMOKE_EVIDENCE_PATH")
+    if not raw_path:
+        return
+    evidence_path = Path(raw_path)
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact = _release_artifact_details()
+    payload = {
+        "schema_version": 1,
+        "status": "passed" if failures == 0 else "failed",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "package_version": _observed_package_version(),
+        "source_revision": _source_revision(),
+        "artifact": artifact,
+        "policy_package_version": policy.get("package_version") if policy else None,
+        "providers": {
+            provider: {
+                "model": os.getenv(_PROVIDER_MODEL_ENV[provider]),
+                "operations": sorted(operations),
+            }
+            for provider, operations in sorted(executed_operations.items())
+        },
+    }
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", "utf-8")
 
 
 def _load_dotenv_if_available() -> None:
@@ -111,6 +313,12 @@ def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
     if provider == "gemini":
         return {"temperature": None, "max_tokens": 512}
     return {"temperature": 0, "max_tokens": 80}
+
+
+def _openai_smoke_reasoning(model_id: str) -> ReasoningConfig | None:
+    if model_id.startswith("gpt-5.6"):
+        return ReasoningConfig(effort="none")
+    return None
 
 
 def _safe_error_message(error: BaseException) -> str:
@@ -178,6 +386,8 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
         reasoning=(
             ReasoningConfig(effort="none")
             if provider == "qwen"
+            else _openai_smoke_reasoning(model.model_id)
+            if provider == "openai"
             else ReasoningConfig(effort="low")
             if provider == "meta"
             else None
@@ -206,6 +416,7 @@ async def _run_openai() -> tuple[str, bool, str, bool]:
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly OPENAI_SMOKE_OK.",
+        reasoning=_openai_smoke_reasoning(model),
         max_tokens=20,
         max_retries=1,
         retry_backoff_ms=250,
@@ -554,6 +765,59 @@ async def _run_deepseek() -> tuple[str, bool, str, bool]:
     return ("deepseek", True, f"ok: {model}{suffix}", agent_ran)
 
 
+async def _run_meta_portable_certification(*, model: LanguageModel) -> None:
+    streamed = await stream_text(
+        model=model,
+        prompt="Reply with exactly META_STREAM_SMOKE_OK.",
+        reasoning=ReasoningConfig(effort="low"),
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    ).collect()
+    if not _matches_smoke_token(streamed.text, "META_STREAM_SMOKE_OK"):
+        raise RuntimeError(f"Meta streaming smoke returned unexpected text: {streamed.text!r}")
+
+    structured = await generate_object(
+        model=model,
+        prompt='Return only JSON with the exact shape {"nonce":"meta-structured-smoke"}.',
+        schema=_MetaStructuredSmokeOutput,
+        schema_name="meta_release_smoke",
+        reasoning=ReasoningConfig(effort="low"),
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if structured.object.nonce != "meta-structured-smoke":
+        raise RuntimeError(
+            f"Meta structured-output smoke returned unexpected nonce: {structured.object.nonce!r}"
+        )
+
+    retrieval = await generate_text(
+        model=model,
+        prompt="Using only the supplied release document, reply with exactly META_RETRIEVAL_SMOKE_OK.",
+        retrieval=PortableRetrievalConfig(
+            documents=[
+                PortableDocument(
+                    document_id="meta-release-smoke",
+                    title="Release certification marker",
+                    text="The exact required reply is META_RETRIEVAL_SMOKE_OK.",
+                )
+            ],
+            max_documents=1,
+            max_document_chars=256,
+        ),
+        reasoning=ReasoningConfig(effort="low"),
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if not _matches_smoke_token(retrieval.text, "META_RETRIEVAL_SMOKE_OK"):
+        raise RuntimeError(f"Meta retrieval smoke returned unexpected text: {retrieval.text!r}")
+
+
 async def _run_meta() -> tuple[str, bool, str, bool]:
     model = os.getenv("ZHIVEX_SMOKE_META_MODEL")
     api_key = os.getenv("MODEL_API_KEY")
@@ -565,8 +829,6 @@ async def _run_meta() -> tuple[str, bool, str, bool]:
             "skip: set MODEL_API_KEY and ZHIVEX_SMOKE_META_MODEL",
             False,
         )
-    if model == "muse-spark-1.2-contributor":
-        raise ValueError("Meta live smoke requires the Standard muse-spark-1.2 model, not the Contributor tier.")
     provider = create_meta(api_key=api_key, **({"base_url": base_url} if base_url else {}))
     language_model = provider(model)
     result = await generate_text(
@@ -580,10 +842,18 @@ async def _run_meta() -> tuple[str, bool, str, bool]:
     )
     if not _matches_smoke_token(result.text, "META_SMOKE_OK"):
         raise RuntimeError(f"unexpected response: {result.text!r}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_META_CERTIFICATION")
+    if certification_ran:
+        await _run_meta_portable_certification(model=language_model)
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="meta", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("meta", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -616,6 +886,9 @@ async def main() -> int:
     _load_dotenv_if_available()
     try:
         selected = _selected_providers()
+        policy = _load_release_smoke_policy()
+        if policy is not None:
+            _validate_release_smoke_configuration(policy, selected=selected)
     except ValueError as error:
         print(f"[smoke] fail: {error}")
         return 2
@@ -648,6 +921,7 @@ async def main() -> int:
     failures = 0
     executed_providers: set[str] = set()
     agent_executed_providers: set[str] = set()
+    executed_operations: dict[str, set[str]] = {}
     for check in checks:
         provider_name = check.__name__.replace("_run_", "")
         try:
@@ -655,6 +929,10 @@ async def main() -> int:
             print(f"[{provider}] {message}")
             if ran:
                 executed_providers.add(provider)
+                executed_operations[provider] = _operations_for_outcome(
+                    provider,
+                    agent_ran=agent_ran,
+                )
                 if agent_ran:
                     agent_executed_providers.add(provider)
                 continue
@@ -683,6 +961,27 @@ async def main() -> int:
     elif strict and agent_smoke_enabled and not agent_executed_providers:
         failures += 1
         print("[smoke] fail: strict agent mode requires at least one agent tool smoke to execute.")
+    if policy is not None:
+        for provider, requirement in policy["required_providers"].items():
+            missing_operations = set(requirement["operations"]) - executed_operations.get(
+                provider,
+                set(),
+            )
+            if missing_operations:
+                failures += 1
+                print(
+                    f'[smoke] fail: release policy operations missing for "{provider}": '
+                    f"{', '.join(sorted(missing_operations))}."
+                )
+    try:
+        _write_release_smoke_evidence(
+            policy=policy,
+            executed_operations=executed_operations,
+            failures=failures,
+        )
+    except (OSError, ValueError) as error:
+        failures += 1
+        print(f"[smoke] fail: could not write release evidence: {_safe_error_message(error)}")
     return 1 if failures else 0
 
 

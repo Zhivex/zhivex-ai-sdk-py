@@ -1,6 +1,6 @@
 # Meta Model API
 
-Meta Model API is upstream GA. In Zhivex AI SDK `0.19.0`, `create_meta()` joins the Tier-1 contract-supported roster with a narrow Stable boundary: Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, the resulting agent tool loop, and application-supplied retrieval through `PortableRetrievalConfig`. Tier-1 does not imply release certification; exact-artifact evidence remains a separate gate.
+Meta Model API is upstream GA. `create_meta()` joined the Tier-1 contract-supported roster in `0.19.0` with a narrow Stable boundary: Standard `muse-spark-1.2` portable text generation, streaming, structured output, callable tools, the resulting agent tool loop, and application-supplied retrieval through `PortableRetrievalConfig`. Tier-1 does not imply release certification; exact-artifact evidence remains a separate gate.
 
 ## Setup
 
@@ -65,7 +65,7 @@ Check current Meta account, region, retention, zero-data-retention, model availa
 
 Shared provider contracts and Meta-specific tests exercise requests, responses, SSE streaming, tools, structured output, continuation, hosted tools, validation, errors, retries, and URL safety with fake transports. This makes the Stable Standard surface contract-supported; it does not prove authenticated service behavior for a release artifact.
 
-Authenticated source and locally built wheel smokes have exercised deterministic generation and a complete `run_agent(...)` → local tool → tool result → final answer loop with Standard `muse-spark-1.2`. A wheel built from a modified worktree is integration evidence, not formal release certification. The `0.19.0` release candidate remains uncertified until the exact clean artifact and source revision pass the recorded release smoke.
+The `0.19.0` publication workflow installed the exact wheel but selected only OpenAI, so that release did not produce exact-artifact Meta evidence despite Meta's Tier-1 promotion. `0.20.0` makes Meta mandatory in both publication workflows, validates the checked-in model/operation policy, hashes the installed wheel, and uploads sanitized evidence tied to the source revision. To control release cost, that synthetic canary explicitly pins Beta `muse-spark-1.2-contributor`; it must pass generation, streaming, structured output, portable retrieval, and a complete `run_agent(...)` → local tool → tool result → final answer loop. This records exact-artifact evidence for Contributor only: it neither promotes Contributor to Stable nor certifies Standard `muse-spark-1.2`. The policy makes a missing Meta key/model or omitted provider a release failure.
 
 To run an opt-in live generation and agent-tool smoke with the Standard model:
 
@@ -73,6 +73,7 @@ To run an opt-in live generation and agent-tool smoke with the Standard model:
 MODEL_API_KEY=... \
 ZHIVEX_SMOKE_META_MODEL=muse-spark-1.2 \
 ZHIVEX_SMOKE_PROVIDERS=meta \
+ZHIVEX_SMOKE_META_CERTIFICATION=1 \
 make smoke-agents
 ```
 

@@ -52,7 +52,7 @@ jobs:
         run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]"
 
       - name: Run release gates
-        run: make PYTHON=python release-check
+        run: make PYTHON=python RELEASE_ARTIFACT_FLAGS=--require-postgres-workflow-smoke release-check
 
       - name: Upload distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -73,27 +73,14 @@ jobs:
       ZHIVEX_SMOKE_USE_INSTALLED: "1"
       ZHIVEX_SMOKE_STRICT: "1"
       ZHIVEX_SMOKE_AGENTS: "1"
-      ZHIVEX_SMOKE_PROVIDERS: ${{ vars.ZHIVEX_RELEASE_SMOKE_PROVIDERS }}
-      ZHIVEX_SMOKE_OPENAI_MODEL: ${{ vars.ZHIVEX_SMOKE_OPENAI_MODEL }}
-      ZHIVEX_SMOKE_ANTHROPIC_MODEL: ${{ vars.ZHIVEX_SMOKE_ANTHROPIC_MODEL }}
-      ZHIVEX_SMOKE_AZURE_OPENAI_MODEL: ${{ vars.ZHIVEX_SMOKE_AZURE_OPENAI_MODEL }}
-      ZHIVEX_SMOKE_GEMINI_MODEL: ${{ vars.ZHIVEX_SMOKE_GEMINI_MODEL }}
-      ZHIVEX_SMOKE_VERTEX_MODEL: ${{ vars.ZHIVEX_SMOKE_VERTEX_MODEL }}
-      ZHIVEX_SMOKE_QWEN_MODEL: ${{ vars.ZHIVEX_SMOKE_QWEN_MODEL }}
-      ZHIVEX_SMOKE_KIMI_MODEL: ${{ vars.ZHIVEX_SMOKE_KIMI_MODEL }}
-      ZHIVEX_SMOKE_DEEPSEEK_MODEL: ${{ vars.ZHIVEX_SMOKE_DEEPSEEK_MODEL }}
-      ZHIVEX_SMOKE_META_MODEL: ${{ vars.ZHIVEX_SMOKE_META_MODEL }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
-      GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-      VERTEX_LOCATION: ${{ vars.VERTEX_LOCATION }}
+      ZHIVEX_SMOKE_PROVIDERS: openai,meta
+      ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna
+      ZHIVEX_SMOKE_META_MODEL: muse-spark-1.2-contributor
+      ZHIVEX_SMOKE_META_CERTIFICATION: "1"
+      ZHIVEX_RELEASE_SMOKE_POLICY: docs/releases/0.20.0-smoke-policy.json
+      ZHIVEX_SMOKE_ARTIFACT_PATH: dist
+      ZHIVEX_SMOKE_EVIDENCE_PATH: release-smoke-evidence.json
       OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ZHIVEX_RELEASE_ANTHROPIC_API_KEY }}
-      AZURE_OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_AZURE_OPENAI_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_GEMINI_API_KEY }}
-      VERTEX_ACCESS_TOKEN: ${{ secrets.ZHIVEX_RELEASE_VERTEX_ACCESS_TOKEN }}
-      QWEN_API_KEY: ${{ secrets.ZHIVEX_RELEASE_QWEN_API_KEY }}
-      MOONSHOT_API_KEY: ${{ secrets.ZHIVEX_RELEASE_KIMI_API_KEY }}
-      DEEPSEEK_API_KEY: ${{ secrets.ZHIVEX_RELEASE_DEEPSEEK_API_KEY }}
       MODEL_API_KEY: ${{ secrets.ZHIVEX_RELEASE_META_API_KEY }}
 
     steps:
@@ -117,9 +104,15 @@ jobs:
         run: python -m pip install --disable-pip-version-check dist/*.whl
 
       - name: Run protected agent-first provider smoke
-        run: |
-          test -n "$ZHIVEX_SMOKE_PROVIDERS"
-          python scripts/run_live_smoke.py
+        run: python scripts/run_live_smoke.py
+
+      - name: Upload exact-artifact smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-smoke-evidence
+          path: release-smoke-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
   publish:
     needs: [build, live-agent-smoke]

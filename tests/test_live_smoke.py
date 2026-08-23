@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import tempfile
 from contextlib import redirect_stdout
+from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,6 +35,13 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             run_live_smoke._agent_smoke_generation_options("gemini"),
             {"temperature": None, "max_tokens": 512},
         )
+
+    def test_openai_luna_smoke_disables_reasoning_for_cost_and_determinism(self) -> None:
+        luna = run_live_smoke._openai_smoke_reasoning("gpt-5.6-luna")
+
+        self.assertIsNotNone(luna)
+        self.assertEqual(luna.effort, "none")
+        self.assertIsNone(run_live_smoke._openai_smoke_reasoning("gpt-4.1-mini"))
 
     def test_selected_providers_normalizes_azure_alias(self) -> None:
         with patch.dict(os.environ, {"ZHIVEX_SMOKE_PROVIDERS": "openai,azure"}, clear=True):
@@ -326,6 +336,37 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         self.assertEqual(result, ("deepseek", True, "ok: deepseek-v4-flash", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
 
+    async def test_openai_luna_smoke_uses_cost_oriented_reasoning(self) -> None:
+        provider = MagicMock()
+        language_model = MagicMock(model_id="gpt-5.6-luna")
+        provider.return_value = language_model
+        response = GenerateResult(
+            text="OPENAI_SMOKE_OK.",
+            messages=[create_text_message("assistant", "OPENAI_SMOKE_OK.")],
+            finish_reason="stop",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "OPENAI_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_OPENAI_MODEL": "gpt-5.6-luna",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_openai", return_value=provider),
+            patch.object(
+                run_live_smoke,
+                "generate_text",
+                new=AsyncMock(return_value=response),
+            ) as generate,
+        ):
+            result = await run_live_smoke._run_openai()
+
+        self.assertEqual(result, ("openai", True, "ok: gpt-5.6-luna", False))
+        self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
+
     async def test_meta_smoke_uses_standard_opt_in_configuration(self) -> None:
         provider = MagicMock()
         provider.return_value = object()
@@ -354,17 +395,143 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "low")
         self.assertEqual(generate.await_args.kwargs["max_tokens"], 512)
 
-    async def test_meta_smoke_rejects_contributor_privacy_tier(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "MODEL_API_KEY": "test-key",
-                "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2-contributor",
-            },
-            clear=True,
+    async def test_meta_certification_covers_stream_object_retrieval_and_agent_tool(self) -> None:
+        provider = MagicMock()
+        language_model = MagicMock(model_id="muse-spark-1.2-contributor")
+        provider.return_value = language_model
+        generation = GenerateResult(
+            text="META_SMOKE_OK",
+            messages=[create_text_message("assistant", "META_SMOKE_OK")],
+            finish_reason="stop",
+        )
+        retrieval = GenerateResult(
+            text="META_RETRIEVAL_SMOKE_OK",
+            messages=[create_text_message("assistant", "META_RETRIEVAL_SMOKE_OK")],
+            finish_reason="stop",
+        )
+        stream_result = MagicMock()
+        stream_result.collect = AsyncMock(
+            return_value=GenerateResult(
+                text="META_STREAM_SMOKE_OK",
+                messages=[create_text_message("assistant", "META_STREAM_SMOKE_OK")],
+                finish_reason="stop",
+            )
+        )
+        structured_result = MagicMock()
+        structured_result.object.nonce = "meta-structured-smoke"
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "MODEL_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2-contributor",
+                    "ZHIVEX_SMOKE_META_CERTIFICATION": "1",
+                    "ZHIVEX_SMOKE_AGENTS": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_meta", return_value=provider),
+            patch.object(
+                run_live_smoke,
+                "generate_text",
+                new=AsyncMock(side_effect=[generation, retrieval]),
+            ) as generate,
+            patch.object(run_live_smoke, "stream_text", return_value=stream_result) as stream,
+            patch.object(
+                run_live_smoke,
+                "generate_object",
+                new=AsyncMock(return_value=structured_result),
+            ) as generate_structured,
+            patch.object(
+                run_live_smoke,
+                "_run_agent_tool_smoke",
+                new=AsyncMock(),
+            ) as agent_smoke,
         ):
-            with self.assertRaisesRegex(ValueError, "Standard muse-spark-1.2"):
-                await run_live_smoke._run_meta()
+            result = await run_live_smoke._run_meta()
+
+        self.assertEqual(
+            result,
+            (
+                "meta",
+                True,
+                "ok: muse-spark-1.2-contributor, portable-certification=ok, agent-tool=ok",
+                True,
+            ),
+        )
+        self.assertEqual(generate.await_count, 2)
+        self.assertEqual(generate.await_args_list[0].kwargs["reasoning"].effort, "low")
+        self.assertEqual(generate.await_args_list[1].kwargs["reasoning"].effort, "low")
+        self.assertIsNotNone(generate.await_args_list[1].kwargs["retrieval"])
+        generate_structured.assert_awaited_once()
+        self.assertEqual(generate_structured.await_args.kwargs["reasoning"].effort, "low")
+        self.assertEqual(generate_structured.await_args.kwargs["max_tokens"], 512)
+        self.assertEqual(stream.call_args.kwargs["reasoning"].effort, "low")
+        self.assertEqual(stream.call_args.kwargs["max_tokens"], 512)
+        agent_smoke.assert_awaited_once_with(provider="meta", model=language_model)
+
+    async def test_release_policy_rejects_an_omitted_required_provider(self) -> None:
+        policy = {
+            "schema_version": 1,
+            "package_version": run_live_smoke._source_package_version(),
+            "required_providers": {
+                "openai": {"operations": ["generation"]},
+                "meta": {"operations": ["generation"]},
+            },
+        }
+        output = io.StringIO()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_PROVIDERS": "openai",
+                    "ZHIVEX_SMOKE_STRICT": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "_load_dotenv_if_available"),
+            patch.object(run_live_smoke, "_load_release_smoke_policy", return_value=policy),
+            redirect_stdout(output),
+        ):
+            status = await run_live_smoke.main()
+
+        self.assertEqual(status, 2)
+        self.assertIn("missing: meta", output.getvalue())
+
+    def test_release_evidence_records_artifact_hash_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "zhivex_ai_sdk-0.20.0-py3-none-any.whl"
+            artifact.write_bytes(b"exact-wheel")
+            evidence = Path(directory) / "smoke.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "MODEL_API_KEY": "never-record-this-secret",
+                    "ZHIVEX_SMOKE_ARTIFACT_PATH": str(artifact),
+                    "ZHIVEX_SMOKE_EVIDENCE_PATH": str(evidence),
+                    "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2-contributor",
+                    "GITHUB_SHA": "a" * 40,
+                },
+                clear=True,
+            ):
+                run_live_smoke._write_release_smoke_evidence(
+                    policy={"package_version": run_live_smoke._source_package_version()},
+                    executed_operations={"meta": {"generation", "agent-tool"}},
+                    failures=0,
+                )
+            payload = json.loads(evidence.read_text("utf-8"))
+            serialized = evidence.read_text("utf-8")
+
+        self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["source_revision"], "a" * 40)
+        self.assertEqual(payload["artifact"]["filename"], artifact.name)
+        self.assertEqual(len(payload["artifact"]["sha256"]), 64)
+        self.assertEqual(
+            payload["providers"]["meta"]["model"],
+            "muse-spark-1.2-contributor",
+        )
+        self.assertNotIn("never-record-this-secret", serialized)
 
     async def test_agent_tool_smoke_rejects_a_marker_embedded_in_extra_text(self) -> None:
         model = create_mock_language_model(

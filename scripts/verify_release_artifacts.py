@@ -176,9 +176,11 @@ def _smoke_code(expected_version: str) -> str:
         from zhivex_ai.workflows import (
             SequentialAgent,
             WorkflowBuilder,
+            WorkflowCheckpoint,
             WorkflowStep,
             create_in_memory_workflow_checkpoint_store,
             create_in_memory_workflow_lease_manager,
+            migrate_workflow_checkpoint,
         )
         from zhivex_ai.types import ToolCallPart
 
@@ -202,6 +204,10 @@ def _smoke_code(expected_version: str) -> str:
         assert "ResponsesEventStore" in zhivex_ai.__all__
         assert "WorkflowLeaseManager" in zhivex_ai.__all__
         assert "cancel_workflow" in zhivex_ai.__all__
+        assert "WorkflowGraph" in STABLE_EXPORTS
+        assert "WorkflowCheckpoint" in STABLE_EXPORTS
+        assert "migrate_workflow_checkpoint" in STABLE_EXPORTS
+        assert "create_temporal_workflow_adapter" in BETA_EXPORTS
         assert "create_a2a_app" in zhivex_ai.__all__
         assert "create_responses_app" in zhivex_ai.__all__
         assert experimental_stream_live_agent is zhivex_ai.stream_live_agent
@@ -211,6 +217,21 @@ def _smoke_code(expected_version: str) -> str:
         assert deepseek("deepseek-v4-flash").provider == "deepseek"
         meta = create_meta(api_key="artifact-smoke-key")
         assert meta("muse-spark-1.2").provider == "meta"
+        legacy_checkpoint = WorkflowCheckpoint(
+            checkpoint_id="artifact-legacy-checkpoint",
+            run_id="artifact-legacy-run",
+            workflow_name="artifact_legacy",
+            definition_version="1",
+            definition_digest="sha256:artifact",
+            schema_version=1,
+        )
+        migrated_checkpoint = migrate_workflow_checkpoint(
+            legacy_checkpoint,
+            applied_at_ms=1725000000000,
+        )
+        assert legacy_checkpoint.schema_version == 1
+        assert migrated_checkpoint.schema_version == 2
+        assert migrated_checkpoint.migration_history[0].migration_id == "workflow-checkpoint-v1-to-v2"
 
         async def main():
             model = create_mock_language_model(responses=[GenerateResult(text="hello", finish_reason="stop")])
@@ -422,7 +443,138 @@ def _run_base_smoke(python: Path, *, expected_version: str) -> None:
     _run([str(general_cli), "--help"])
 
 
-def _run_extra_smoke(python: Path, extra: str) -> None:
+def _postgres_workflow_smoke_code() -> str:
+    return textwrap.dedent(
+        """
+        import asyncio
+        import os
+        import re
+        import uuid
+
+        import asyncpg
+        from zhivex_ai import (
+            Agent,
+            GenerateResult,
+            WorkflowBuilder,
+            WorkflowCheckpoint,
+            WorkflowGraph,
+            WorkflowStep,
+            create_mock_language_model,
+            create_postgres_workflow_checkpoint_store,
+            create_postgres_workflow_lease_manager,
+            migrate_workflow_run_checkpoint,
+        )
+
+        async def main():
+            dsn = os.environ["ZHIVEX_TEST_POSTGRES_DSN"]
+            table_prefix = f"zhivex_release_{uuid.uuid4().hex[:12]}"
+            assert re.fullmatch(r"zhivex_release_[a-f0-9]{12}", table_prefix)
+            pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=4)
+            checkpoint_store = create_postgres_workflow_checkpoint_store(
+                table_prefix=table_prefix,
+                pool=pool,
+            )
+            lease_manager = create_postgres_workflow_lease_manager(
+                table_prefix=table_prefix,
+                pool=pool,
+            )
+            try:
+                graph = (
+                    WorkflowBuilder("installed_postgres_release_smoke", definition_version="1")
+                    .add_step(
+                        WorkflowStep(
+                            "persist",
+                            Agent(
+                                name="installed-postgres-worker",
+                                model=create_mock_language_model(
+                                    responses=[
+                                        GenerateResult(
+                                            text="postgres-workflow-ok",
+                                            finish_reason="stop",
+                                        )
+                                    ]
+                                ),
+                            ),
+                            output_key="result",
+                        ),
+                        entrypoint=True,
+                    )
+                    .build(
+                        checkpoint_store=checkpoint_store,
+                        lease_manager=lease_manager,
+                    )
+                )
+                assert isinstance(graph, WorkflowGraph)
+                result = await graph.run(idempotency_key=f"{table_prefix}-run")
+                restored = await checkpoint_store.load_latest(result.run_id)
+                history = await checkpoint_store.list_checkpoints(result.run_id)
+                assert result.status == "completed"
+                assert result.state["result"] == "postgres-workflow-ok"
+                assert result.checkpoint.metadata["execution_lease"]["fencing_token"] == 1
+                assert restored is not None
+                assert restored.checkpoint_id == result.checkpoint.checkpoint_id
+                assert restored.status == "completed"
+                assert len(history) >= 3
+
+                legacy_run_id = f"{table_prefix}-legacy"
+                await checkpoint_store.append(
+                    WorkflowCheckpoint(
+                        checkpoint_id=f"{table_prefix}-legacy-cp",
+                        run_id=legacy_run_id,
+                        workflow_name="installed_postgres_migration_smoke",
+                        definition_version="1",
+                        definition_digest="sha256:installed-postgres-migration",
+                        schema_version=1,
+                    )
+                )
+                migrated = await migrate_workflow_run_checkpoint(
+                    checkpoint_store,
+                    legacy_run_id,
+                    applied_at_ms=1725000000000,
+                )
+                migration_history = await checkpoint_store.list_checkpoints(legacy_run_id)
+                assert [item.schema_version for item in migration_history] == [1, 2]
+                assert migrated.transition.type == "workflow-checkpoint-schema-migrated"
+                assert migrated.migration_history[0].migration_id == "workflow-checkpoint-v1-to-v2"
+            finally:
+                await checkpoint_store.close()
+                await lease_manager.close()
+                await pool.close()
+                connection = await asyncpg.connect(dsn)
+                try:
+                    for suffix in (
+                        "workflow_checkpoints",
+                        "workflow_runs",
+                        "workflow_leases",
+                        "workflow_schema",
+                    ):
+                        await connection.execute(f'DROP TABLE IF EXISTS "{table_prefix}_{suffix}"')
+                finally:
+                    await connection.close()
+
+        asyncio.run(main())
+        print("postgres-workflow-ok")
+        """
+    )
+
+
+def _run_postgres_workflow_smoke(python: Path, *, required: bool) -> None:
+    if not os.getenv("ZHIVEX_TEST_POSTGRES_DSN"):
+        if required:
+            raise RuntimeError(
+                "The installed Postgres workflow smoke is required, but ZHIVEX_TEST_POSTGRES_DSN is not set."
+            )
+        print("Skipping installed Postgres workflow smoke: ZHIVEX_TEST_POSTGRES_DSN is not set.")
+        return
+    _run([str(python), "-c", _postgres_workflow_smoke_code()])
+
+
+def _run_extra_smoke(
+    python: Path,
+    extra: str,
+    *,
+    require_postgres_workflow_smoke: bool = False,
+) -> None:
     imports = EXTRAS_IMPORTS[extra]
     lines = [
         "import importlib",
@@ -462,9 +614,20 @@ def _run_extra_smoke(python: Path, extra: str) -> None:
     lines.append('print("ok")')
     code = "\n".join(lines)
     _run([str(python), "-c", code])
+    if extra == "postgres":
+        _run_postgres_workflow_smoke(
+            python,
+            required=require_postgres_workflow_smoke,
+        )
 
 
-def verify_wheel(wheel: Path, *, extras: list[str], expected_version: str) -> None:
+def verify_wheel(
+    wheel: Path,
+    *,
+    extras: list[str],
+    expected_version: str,
+    require_postgres_workflow_smoke: bool = False,
+) -> None:
     _verify_wheel_metadata(wheel, expected_version=expected_version)
     with tempfile.TemporaryDirectory(prefix="zhivex-wheel-smoke-") as temp_dir:
         python = _create_venv(Path(temp_dir) / "venv")
@@ -476,7 +639,11 @@ def verify_wheel(wheel: Path, *, extras: list[str], expected_version: str) -> No
             python = _create_venv(Path(temp_dir) / "venv")
             requirement = f"zhivex-ai-sdk[{extra}] @ {wheel.resolve().as_uri()}"
             _install(python, requirement)
-            _run_extra_smoke(python, extra)
+            _run_extra_smoke(
+                python,
+                extra,
+                require_postgres_workflow_smoke=require_postgres_workflow_smoke,
+            )
 
 
 def verify_sdist(sdist: Path, *, expected_version: str) -> None:
@@ -496,6 +663,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="postgres,mcp,api,a2a,ag-ui,otel,docx",
         help="Comma-separated optional extras to install and import-check.",
     )
+    parser.add_argument(
+        "--require-postgres-workflow-smoke",
+        action="store_true",
+        help="Fail unless the installed wheel runs WorkflowGraph against ZHIVEX_TEST_POSTGRES_DSN.",
+    )
     return parser.parse_args(argv)
 
 
@@ -509,12 +681,23 @@ def main(argv: list[str] | None = None) -> int:
     unknown = sorted(set(extras) - set(EXTRAS_IMPORTS))
     if unknown:
         raise ValueError(f"Unknown extras requested: {', '.join(unknown)}")
+    if args.require_postgres_workflow_smoke and "postgres" not in extras:
+        raise ValueError("The required Postgres workflow smoke needs the postgres extra.")
+    if args.require_postgres_workflow_smoke and not os.getenv("ZHIVEX_TEST_POSTGRES_DSN"):
+        raise RuntimeError(
+            "The required Postgres workflow smoke needs ZHIVEX_TEST_POSTGRES_DSN."
+        )
 
     env_hint = os.getenv("ZHIVEX_RELEASE_VERIFY_NETWORK")
     if env_hint:
         print(f"ZHIVEX_RELEASE_VERIFY_NETWORK={env_hint}")
 
-    verify_wheel(wheel, extras=extras, expected_version=version)
+    verify_wheel(
+        wheel,
+        extras=extras,
+        expected_version=version,
+        require_postgres_workflow_smoke=args.require_postgres_workflow_smoke,
+    )
     if sdist is not None:
         verify_sdist(sdist, expected_version=version)
     print("Release artifacts verified.")

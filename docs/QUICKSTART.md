@@ -159,7 +159,7 @@ Applications should own business policy, authorization, approval UI, durable ver
 
 These capabilities are available but are not part of the minimum agent journey:
 
-- Beta workflow graphs and declarative orchestration: [WORKFLOWS.md](./WORKFLOWS.md)
+- Stable workflow graphs and declarative orchestration: [WORKFLOWS.md](./WORKFLOWS.md)
 - Beta evaluation experiments and CI gates: [EVALUATIONS.md](./EVALUATIONS.md)
 - Beta A2A, AG-UI, and Responses-compatible hosting: [PROTOCOLS.md](./PROTOCOLS.md)
 - Beta general CLI and loopback playground: [CLI.md](./CLI.md)
@@ -167,4 +167,4 @@ These capabilities are available but are not part of the minimum agent journey:
 
 Use the focused imports `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations`, and `zhivex_ai.experimental` for these surfaces. Existing top-level imports remain compatible, but new extension code should make its dependency boundary explicit.
 
-Keep Beta and Experimental dependencies behind an application-owned boundary so the core agent path remains easy to upgrade. The complete boundary and non-goals are documented in [SCOPE.md](./SCOPE.md).
+Keep Beta and Experimental dependencies behind an application-owned boundary so the core agent path remains easy to upgrade. Stable workflows should still sit behind application authorization, storage, and side-effect controls. The complete boundary and non-goals are documented in [SCOPE.md](./SCOPE.md).

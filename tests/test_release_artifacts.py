@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import io
+import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -10,6 +12,7 @@ import tarfile
 import tempfile
 import tomllib
 from unittest import TestCase
+from unittest.mock import patch
 import zipfile
 
 from scripts import audit_dependencies, collect_release_evidence, verify_release_artifacts
@@ -76,9 +79,33 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("AgentEvaluationTrialResult", source)
         self.assertIn("WorkflowLeaseManager", source)
         self.assertIn("ResponsesEventStore", source)
+        self.assertIn("create_postgres_workflow_checkpoint_store", source)
+        self.assertIn("create_postgres_workflow_lease_manager", source)
+
+    def test_installed_postgres_workflow_smoke_uses_real_durable_backends_and_cleanup(self) -> None:
+        smoke = verify_release_artifacts._postgres_workflow_smoke_code()
+
+        self.assertIn("asyncpg.create_pool", smoke)
+        self.assertIn("create_postgres_workflow_checkpoint_store", smoke)
+        self.assertIn("create_postgres_workflow_lease_manager", smoke)
+        self.assertIn('result.status == "completed"', smoke)
+        self.assertIn('metadata["execution_lease"]["fencing_token"] == 1', smoke)
+        self.assertIn("migrate_workflow_run_checkpoint", smoke)
+        self.assertIn("workflow-checkpoint-schema-migrated", smoke)
+        self.assertIn("DROP TABLE IF EXISTS", smoke)
+        self.assertIn('print("postgres-workflow-ok")', smoke)
+        ast.parse(smoke)
+
+    def test_required_postgres_workflow_smoke_fails_without_a_dsn(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "ZHIVEX_TEST_POSTGRES_DSN"):
+                verify_release_artifacts._run_postgres_workflow_smoke(
+                    Path("python"),
+                    required=True,
+                )
 
     def test_installed_artifact_smoke_uses_the_focused_namespaces(self) -> None:
-        smoke = verify_release_artifacts._smoke_code("0.19.0")
+        smoke = verify_release_artifacts._smoke_code("0.20.0")
 
         for namespace in [
             "zhivex_ai.evals",
@@ -90,6 +117,10 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(f"from {namespace} import", smoke)
         self.assertIn('assert "create_meta" in STABLE_EXPORTS', smoke)
         self.assertIn('assert "meta_hosted_tool" in BETA_EXPORTS', smoke)
+        self.assertIn('assert "WorkflowGraph" in STABLE_EXPORTS', smoke)
+        self.assertIn('assert "migrate_workflow_checkpoint" in STABLE_EXPORTS', smoke)
+        self.assertIn('assert "create_temporal_workflow_adapter" in BETA_EXPORTS', smoke)
+        self.assertIn("workflow-checkpoint-v1-to-v2", smoke)
 
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -331,6 +362,7 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("release-install-check:", makefile)
         self.assertIn("release-evidence:", makefile)
         self.assertIn("scripts/verify_release_artifacts.py", makefile)
+        self.assertIn("RELEASE_ARTIFACT_FLAGS", makefile)
         self.assertIn("scripts/collect_release_evidence.py", makefile)
         self.assertIn("tests/test_agent_safety_runtime.py", makefile)
         self.assertIn("tests/test_tool_timeout_safety.py", makefile)
@@ -373,6 +405,7 @@ class ReleaseArtifactToolingTests(TestCase):
         for version in ['"3.11"', '"3.12"', '"3.13"', '"3.14"']:
             self.assertIn(version, ci)
         self.assertIn("scripts/verify_release_artifacts.py", ci)
+        self.assertIn("--require-postgres-workflow-smoke", ci)
         for workflow in [ci, publish, test_publish]:
             action_refs = re.findall(r"uses:\s+[^@\s]+@([^\s#]+)", workflow)
             self.assertTrue(action_refs)
@@ -393,7 +426,17 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertEqual(workflow.count("id-token: write"), 1)
             self.assertIn("environment: release-smoke", workflow)
             self.assertIn("ZHIVEX_SMOKE_USE_INSTALLED: \"1\"", workflow)
-            self.assertIn("ZHIVEX_RELEASE_SMOKE_PROVIDERS", workflow)
+            self.assertIn("ZHIVEX_SMOKE_PROVIDERS: openai,meta", workflow)
+            self.assertIn("ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna", workflow)
+            self.assertIn(
+                "ZHIVEX_SMOKE_META_MODEL: muse-spark-1.2-contributor",
+                workflow,
+            )
+            self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
+            self.assertIn("docs/releases/0.20.0-smoke-policy.json", workflow)
+            self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
+            self.assertIn("release-smoke-evidence.json", workflow)
+            self.assertIn("name: release-smoke-evidence", workflow)
             self.assertIn("python scripts/run_live_smoke.py", workflow)
             self.assertIn("needs: [build, live-agent-smoke]", workflow)
 
@@ -401,5 +444,20 @@ class ReleaseArtifactToolingTests(TestCase):
         for workflow in [publish, test_publish]:
             self.assertIn("fetch-depth: 0", workflow)
             self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main', workflow)
-            self.assertIn("make PYTHON=python release-check", workflow)
+            self.assertIn(
+                "make PYTHON=python RELEASE_ARTIFACT_FLAGS=--require-postgres-workflow-smoke release-check",
+                workflow,
+            )
             self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)
+
+        policy = json.loads(
+            (ROOT / "docs/releases/0.20.0-smoke-policy.json").read_text("utf-8")
+        )
+        self.assertEqual(
+            policy["required_providers"]["openai"]["model"],
+            "gpt-5.6-luna",
+        )
+        self.assertEqual(
+            policy["required_providers"]["meta"]["model"],
+            "muse-spark-1.2-contributor",
+        )

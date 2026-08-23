@@ -1,4 +1,5 @@
 PYTHON := .venv/bin/python
+RELEASE_ARTIFACT_FLAGS ?=
 
 .PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
@@ -75,7 +76,7 @@ build:
 	$(PYTHON) -m build --no-isolation --outdir dist
 
 release-install-check:
-	$(PYTHON) scripts/verify_release_artifacts.py --dist-dir dist
+	$(PYTHON) scripts/verify_release_artifacts.py --dist-dir dist $(RELEASE_ARTIFACT_FLAGS)
 
 release-evidence:
 	$(PYTHON) scripts/collect_release_evidence.py

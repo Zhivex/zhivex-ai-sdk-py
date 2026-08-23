@@ -18,6 +18,7 @@ from zhivex_ai.workflow_state import (
     InMemoryWorkflowCheckpointStore,
     create_in_memory_workflow_checkpoint_store,
     deserialize_workflow_checkpoint,
+    migrate_workflow_run_checkpoint,
     serialize_workflow_checkpoint,
     workflow_checkpoint_to_json,
 )
@@ -113,6 +114,33 @@ class WorkflowV015CheckpointSerializationCompatibilityTests(unittest.TestCase):
 
 
 class WorkflowV015CheckpointRuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_migrates_and_resumes_v015_checkpoint_history(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        run_id, _ = await _restore_fixture_history(store)
+        graph = _workflow(store, output="published-after-schema-migration")
+
+        migrated = await migrate_workflow_run_checkpoint(
+            store,
+            run_id,
+            applied_at_ms=1_725_000_000_000,
+        )
+        assert migrated.pending_interrupt is not None
+        resumed = await resume_workflow(
+            graph,
+            run_id,
+            interrupt_id=migrated.pending_interrupt.interrupt_id,
+            resume_value={"approved": True},
+        )
+
+        self.assertEqual(migrated.schema_version, 2)
+        self.assertEqual(migrated.sequence, 2)
+        self.assertEqual(migrated.transition.type, "workflow-checkpoint-schema-migrated")
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(resumed.state["published"], "published-after-schema-migration")
+        assert resumed.checkpoint is not None
+        self.assertEqual(resumed.checkpoint.schema_version, 2)
+        self.assertEqual(len(resumed.checkpoint.migration_history), 1)
+
     async def test_current_runtime_resumes_v015_checkpoint_history(self) -> None:
         store = create_in_memory_workflow_checkpoint_store()
         run_id, _ = await _restore_fixture_history(store)

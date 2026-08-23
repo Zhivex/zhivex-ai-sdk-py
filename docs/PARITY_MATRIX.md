@@ -38,12 +38,12 @@ These areas define the Python product boundary and the path toward GA.
 
 ## Optional Extensions And Incubating Capabilities
 
-These areas remain available for teams that need them. Their presence does not expand the core GA boundary, and applications should isolate Beta or Experimental contracts behind app-owned interfaces. New code should prefer `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations`, or `zhivex_ai.experimental` as appropriate.
+These areas remain available for teams that need them. Their presence does not expand the package-wide GA boundary. Applications should use the focused namespaces and isolate Beta or Experimental contracts behind app-owned interfaces; Stable workflows still require application-owned authorization, storage policy, and side-effect controls.
 
 | Area | Implemented | Documented | Offline-tested | Live-smoked | Stability |
 | --- | --- | --- | --- | --- | --- |
 | MCP helpers and registries | Yes | Yes | partial | optional | stable helper path |
-| Workflow orchestration and durable graphs | Yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork/cancel, execution leases, heartbeat, and fencing | Yes | Yes; in-memory/SQLite ownership and recovery covered | Postgres checkpoint/lease integration gated | beta |
+| Workflow orchestration and durable graphs | Yes: sequential/parallel/loop, DAG, functional steps, versioned checkpoints/migration, resume/fork/cancel, execution leases, heartbeat, and fencing | Yes | Yes; in-memory/SQLite ownership, compatibility, migration, and recovery covered | Installed-wheel Postgres checkpoint/lease integration is mandatory in CI/release | stable core; named external-engine factories beta |
 | Agent evaluations and CI gates | Yes: repeated trials, bounded concurrency, custom metrics, baselines, regression gates, JSON/JUnit artifacts, and trace-derived datasets | Yes | Yes | optional provider-backed evaluation | beta |
 | Agent protocols and hosting | Yes: A2A v1, AG-UI, constrained Responses hosting, trusted run context, safe errors, limits, and optional stores/replay | Yes | Yes; official protocol packages exercised | provider-dependent | beta |
 | General CLI and local playground | Yes: inspect, run, eval, Responses/A2A serve, and loopback-only playground | Yes | Yes | N/A | beta |

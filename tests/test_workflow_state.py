@@ -17,6 +17,7 @@ from zhivex_ai.workflow_state import (
     SQLiteWorkflowCheckpointStore,
     SQLiteWorkflowLeaseManager,
     WorkflowCheckpoint,
+    WorkflowCheckpointMigration,
     WorkflowInterrupt,
     WorkflowNodeCheckpoint,
     WorkflowTransition,
@@ -27,6 +28,9 @@ from zhivex_ai.workflow_state import (
     create_sqlite_workflow_checkpoint_store,
     create_sqlite_workflow_lease_manager,
     deserialize_workflow_checkpoint,
+    migrate_workflow_checkpoint,
+    migrate_workflow_checkpoint_payload,
+    migrate_workflow_run_checkpoint,
     serialize_workflow_checkpoint,
     workflow_checkpoint_from_json,
     workflow_checkpoint_to_json,
@@ -40,6 +44,7 @@ def checkpoint(
     sequence: int = 0,
     idempotency_key: str | None = "workflow-request-1",
     status: str = "running",
+    schema_version: int = WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
 ) -> WorkflowCheckpoint:
     return WorkflowCheckpoint(
         checkpoint_id=checkpoint_id,
@@ -48,6 +53,7 @@ def checkpoint(
         definition_version="2026-07-31",
         definition_digest="sha256:definition",
         sequence=sequence,
+        schema_version=schema_version,
         status=status,  # type: ignore[arg-type]
         session_id="session-1",
         parent_run_id="parent-1",
@@ -117,6 +123,49 @@ class WorkflowCheckpointSerializationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValidationError, "future schema_version"):
             deserialize_workflow_checkpoint(payload)
+
+    def test_migrates_schema_v1_to_v2_deterministically(self) -> None:
+        legacy = checkpoint(schema_version=1)
+
+        migrated = migrate_workflow_checkpoint(legacy, applied_at_ms=1_725_000_000_000)
+        payload = migrate_workflow_checkpoint_payload(
+            serialize_workflow_checkpoint(legacy),
+            applied_at_ms=1_725_000_000_000,
+        )
+
+        expected_migration = WorkflowCheckpointMigration(
+            migration_id="workflow-checkpoint-v1-to-v2",
+            from_version=1,
+            to_version=2,
+            applied_at_ms=1_725_000_000_000,
+            metadata={"sdk_schema_version": 2},
+        )
+        self.assertEqual(legacy.schema_version, 1)
+        self.assertEqual(migrated.schema_version, 2)
+        self.assertEqual(migrated.migration_history, [expected_migration])
+        self.assertEqual(payload, serialize_workflow_checkpoint(migrated))
+
+    def test_migration_rejects_downgrades_and_unsupported_targets(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "do not support downgrades"):
+            migrate_workflow_checkpoint(checkpoint(), target_version=1)
+        with self.assertRaisesRegex(ValidationError, "unsupported future schema_version"):
+            migrate_workflow_checkpoint(
+                checkpoint(schema_version=1),
+                target_version=WORKFLOW_CHECKPOINT_SCHEMA_VERSION + 1,
+            )
+
+    def test_schema_v1_cannot_claim_migration_history(self) -> None:
+        legacy = checkpoint(schema_version=1)
+        legacy.migration_history.append(
+            WorkflowCheckpointMigration(
+                migration_id="invalid",
+                from_version=1,
+                to_version=2,
+                applied_at_ms=1,
+            )
+        )
+        with self.assertRaisesRegex(ValidationError, "schema_version 1"):
+            serialize_workflow_checkpoint(legacy)
 
     def test_rejects_node_key_drift_and_non_boolean_edges(self) -> None:
         mismatched = checkpoint()
@@ -205,6 +254,39 @@ class InMemoryWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
                 expected_sequence=0,
             )
 
+    async def test_migrates_latest_checkpoint_as_an_audited_cas_append(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        await store.append(checkpoint(schema_version=1))
+
+        migrated = await migrate_workflow_run_checkpoint(
+            store,
+            "run-1",
+            applied_at_ms=1_725_000_000_000,
+        )
+        history = await store.list_checkpoints("run-1")
+
+        self.assertEqual([item.schema_version for item in history], [1, 2])
+        self.assertEqual(migrated.sequence, 1)
+        self.assertEqual(migrated.transition.type, "workflow-checkpoint-schema-migrated")
+        self.assertEqual(
+            migrated.transition.detail,
+            {"from_schema_version": 1, "to_schema_version": 2},
+        )
+        self.assertEqual(len(migrated.migration_history), 1)
+
+        unchanged = await migrate_workflow_run_checkpoint(store, "run-1")
+        self.assertEqual(unchanged, migrated)
+        self.assertEqual(len(await store.list_checkpoints("run-1")), 2)
+
+    async def test_terminal_schema_v1_checkpoint_remains_readable_but_is_not_rewritten(self) -> None:
+        store = create_in_memory_workflow_checkpoint_store()
+        await store.append(checkpoint(schema_version=1, status="completed"))
+
+        with self.assertRaisesRegex(WorkflowConflictError, "remains readable"):
+            await migrate_workflow_run_checkpoint(store, "run-1")
+        latest = await store.load_latest("run-1")
+        self.assertEqual(latest.schema_version, 1)
+
     async def test_fenced_append_rejects_a_replaced_owner_atomically(self) -> None:
         store = create_in_memory_workflow_checkpoint_store()
         leases = create_in_memory_workflow_lease_manager()
@@ -235,6 +317,28 @@ class InMemoryWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SQLiteWorkflowCheckpointStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_persists_schema_migration_history_across_reinstantiation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "workflow-migration.sqlite3")
+            store = create_sqlite_workflow_checkpoint_store(path, namespace="tenant-a")
+            await store.append(checkpoint(schema_version=1))
+            migrated = await migrate_workflow_run_checkpoint(
+                store,
+                "run-1",
+                applied_at_ms=1_725_000_000_000,
+            )
+
+            reopened = create_sqlite_workflow_checkpoint_store(path, namespace="tenant-a")
+            latest = await reopened.load_latest("run-1")
+            history = await reopened.list_checkpoints("run-1")
+
+            self.assertEqual(latest, migrated)
+            self.assertEqual([item.schema_version for item in history], [1, 2])
+            self.assertEqual(
+                latest.migration_history[0].migration_id,
+                "workflow-checkpoint-v1-to-v2",
+            )
+
     async def test_survives_reinstantiation_and_preserves_append_only_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "workflow.sqlite3")

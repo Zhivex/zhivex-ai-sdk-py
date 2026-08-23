@@ -14,11 +14,16 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from .errors import ValidationError, WorkflowConflictError, WorkflowLeaseLostError
+from .errors import (
+    ValidationError,
+    WorkflowConflictError,
+    WorkflowLeaseLostError,
+    WorkflowRunNotFoundError,
+)
 from .types import JsonValue
 
 
-WORKFLOW_CHECKPOINT_SCHEMA_VERSION = 1
+WORKFLOW_CHECKPOINT_SCHEMA_VERSION = 2
 WORKFLOW_POSTGRES_SCHEMA_VERSION = 1
 
 WorkflowNodeStatus = Literal[
@@ -174,6 +179,15 @@ class WorkflowTransition:
     detail: dict[str, JsonValue] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowCheckpointMigration:
+    migration_id: str
+    from_version: int
+    to_version: int
+    applied_at_ms: int
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class WorkflowCheckpoint:
     checkpoint_id: str
@@ -199,6 +213,7 @@ class WorkflowCheckpoint:
     created_at_ms: int | None = None
     updated_at_ms: int | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    migration_history: list[WorkflowCheckpointMigration] = field(default_factory=list)
 
 
 class WorkflowCheckpointStore(Protocol):
@@ -295,6 +310,18 @@ def _validate_transition(transition: WorkflowTransition) -> None:
     _validate_json_value(transition.detail, path="transition.detail")
 
 
+def _validate_checkpoint_migration(migration: WorkflowCheckpointMigration) -> None:
+    _validate_non_empty(migration.migration_id, "migration_id")
+    from_version = _validate_non_negative_integer(migration.from_version, "migration from_version")
+    to_version = _validate_non_negative_integer(migration.to_version, "migration to_version")
+    if from_version < 1 or to_version != from_version + 1:
+        raise ValidationError(
+            "Workflow checkpoint migrations must advance exactly one positive schema version."
+        )
+    _validate_non_negative_integer(migration.applied_at_ms, "migration applied_at_ms")
+    _validate_json_value(migration.metadata, path=f"migration_history.{migration.migration_id}.metadata")
+
+
 def _validate_checkpoint(checkpoint: WorkflowCheckpoint) -> None:
     _validate_non_empty(checkpoint.checkpoint_id, "checkpoint_id")
     _validate_non_empty(checkpoint.run_id, "run_id")
@@ -310,6 +337,20 @@ def _validate_checkpoint(checkpoint: WorkflowCheckpoint) -> None:
             "Workflow checkpoint uses unsupported future schema_version "
             f"{schema_version}; this SDK supports up to {WORKFLOW_CHECKPOINT_SCHEMA_VERSION}."
         )
+    migration_ids: set[str] = set()
+    if schema_version == 1 and checkpoint.migration_history:
+        raise ValidationError("Workflow checkpoint schema_version 1 cannot contain migration history.")
+    for migration in checkpoint.migration_history:
+        _validate_checkpoint_migration(migration)
+        if migration.migration_id in migration_ids:
+            raise ValidationError(
+                f'Workflow checkpoint migration_id "{migration.migration_id}" must be unique.'
+            )
+        migration_ids.add(migration.migration_id)
+        if migration.to_version > schema_version:
+            raise ValidationError(
+                "Workflow checkpoint migration history cannot target a version newer than schema_version."
+            )
     if checkpoint.status not in _WORKFLOW_CHECKPOINT_STATUSES:
         raise ValidationError(f'Unsupported workflow checkpoint status "{checkpoint.status}".')
     for field_name, value in (
@@ -388,9 +429,19 @@ def _transition_to_payload(transition: WorkflowTransition) -> dict[str, Any]:
     }
 
 
+def _migration_to_payload(migration: WorkflowCheckpointMigration) -> dict[str, Any]:
+    return {
+        "migration_id": migration.migration_id,
+        "from_version": migration.from_version,
+        "to_version": migration.to_version,
+        "applied_at_ms": migration.applied_at_ms,
+        "metadata": dict(migration.metadata),
+    }
+
+
 def serialize_workflow_checkpoint(checkpoint: WorkflowCheckpoint) -> dict[str, Any]:
     _validate_checkpoint(checkpoint)
-    return {
+    payload: dict[str, Any] = {
         "checkpoint_id": checkpoint.checkpoint_id,
         "run_id": checkpoint.run_id,
         "workflow_name": checkpoint.workflow_name,
@@ -419,6 +470,11 @@ def serialize_workflow_checkpoint(checkpoint: WorkflowCheckpoint) -> dict[str, A
         "updated_at_ms": checkpoint.updated_at_ms,
         "metadata": dict(checkpoint.metadata),
     }
+    if checkpoint.schema_version >= 2:
+        payload["migration_history"] = [
+            _migration_to_payload(migration) for migration in checkpoint.migration_history
+        ]
+    return payload
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -469,6 +525,17 @@ def _transition_from_payload(payload: Any) -> WorkflowTransition | None:
     )
 
 
+def _migration_from_payload(payload: Any) -> WorkflowCheckpointMigration:
+    item = _mapping(payload)
+    return WorkflowCheckpointMigration(
+        migration_id=str(item.get("migration_id", "")),
+        from_version=item.get("from_version", 0),
+        to_version=item.get("to_version", 0),
+        applied_at_ms=item.get("applied_at_ms", 0),
+        metadata=_mapping(item.get("metadata")),
+    )
+
+
 def deserialize_workflow_checkpoint(payload: dict[str, Any]) -> WorkflowCheckpoint:
     nodes_payload = _mapping(payload.get("nodes"))
     checkpoint = WorkflowCheckpoint(
@@ -478,7 +545,7 @@ def deserialize_workflow_checkpoint(payload: dict[str, Any]) -> WorkflowCheckpoi
         definition_version=str(payload.get("definition_version", "")),
         definition_digest=str(payload.get("definition_digest", "")),
         sequence=payload.get("sequence", 0),
-        schema_version=payload.get("schema_version", WORKFLOW_CHECKPOINT_SCHEMA_VERSION),
+        schema_version=payload.get("schema_version", 1),
         status=payload.get("status", "running"),
         session_id=payload.get("session_id"),
         parent_run_id=payload.get("parent_run_id"),
@@ -495,6 +562,9 @@ def deserialize_workflow_checkpoint(payload: dict[str, Any]) -> WorkflowCheckpoi
         created_at_ms=payload.get("created_at_ms"),
         updated_at_ms=payload.get("updated_at_ms"),
         metadata=_mapping(payload.get("metadata")),
+        migration_history=[
+            _migration_from_payload(item) for item in payload.get("migration_history") or []
+        ],
     )
     _validate_checkpoint(checkpoint)
     return checkpoint
@@ -521,6 +591,117 @@ def workflow_checkpoint_from_json(value: str) -> WorkflowCheckpoint:
 
 def _clone_checkpoint(checkpoint: WorkflowCheckpoint) -> WorkflowCheckpoint:
     return workflow_checkpoint_from_json(workflow_checkpoint_to_json(checkpoint))
+
+
+def migrate_workflow_checkpoint(
+    checkpoint: WorkflowCheckpoint,
+    *,
+    target_version: int = WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
+    applied_at_ms: int | None = None,
+) -> WorkflowCheckpoint:
+    """Return a migrated checkpoint without mutating or persisting the source value.
+
+    Migrations are explicit, sequential, and auditable. Callers control the timestamp
+    when deterministic release or fixture evidence is required.
+    """
+
+    _validate_checkpoint(checkpoint)
+    resolved_target = _validate_non_negative_integer(target_version, "migration target_version")
+    if resolved_target < checkpoint.schema_version:
+        raise ValidationError("Workflow checkpoint schema migrations do not support downgrades.")
+    if resolved_target > WORKFLOW_CHECKPOINT_SCHEMA_VERSION:
+        raise ValidationError(
+            "Workflow checkpoint migration targets unsupported future schema_version "
+            f"{resolved_target}; this SDK supports up to {WORKFLOW_CHECKPOINT_SCHEMA_VERSION}."
+        )
+    migrated = _clone_checkpoint(checkpoint)
+    if resolved_target == migrated.schema_version:
+        return migrated
+    migrated_at_ms = _now_ms() if applied_at_ms is None else _validate_non_negative_integer(
+        applied_at_ms,
+        "migration applied_at_ms",
+    )
+    while migrated.schema_version < resolved_target:
+        from_version = migrated.schema_version
+        to_version = from_version + 1
+        if (from_version, to_version) != (1, 2):
+            raise ValidationError(
+                f"No workflow checkpoint migration is registered for schema v{from_version} to v{to_version}."
+            )
+        migrated.migration_history.append(
+            WorkflowCheckpointMigration(
+                migration_id="workflow-checkpoint-v1-to-v2",
+                from_version=from_version,
+                to_version=to_version,
+                applied_at_ms=migrated_at_ms,
+                metadata={"sdk_schema_version": WORKFLOW_CHECKPOINT_SCHEMA_VERSION},
+            )
+        )
+        migrated.schema_version = to_version
+    _validate_checkpoint(migrated)
+    return migrated
+
+
+def migrate_workflow_checkpoint_payload(
+    payload: dict[str, Any],
+    *,
+    target_version: int = WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
+    applied_at_ms: int | None = None,
+) -> dict[str, Any]:
+    """Deserialize, migrate, and serialize a persisted checkpoint payload."""
+
+    return serialize_workflow_checkpoint(
+        migrate_workflow_checkpoint(
+            deserialize_workflow_checkpoint(payload),
+            target_version=target_version,
+            applied_at_ms=applied_at_ms,
+        )
+    )
+
+
+async def migrate_workflow_run_checkpoint(
+    store: WorkflowCheckpointStore,
+    run_id: str,
+    *,
+    target_version: int = WORKFLOW_CHECKPOINT_SCHEMA_VERSION,
+    applied_at_ms: int | None = None,
+) -> WorkflowCheckpoint:
+    """Append the migrated latest checkpoint using the store's compare-and-swap contract."""
+
+    resolved_run_id = _validate_non_empty(run_id, "migration run_id")
+    current = await store.load_latest(resolved_run_id)
+    if current is None:
+        raise WorkflowRunNotFoundError(f'Workflow run "{resolved_run_id}" was not found.')
+    if current.schema_version == target_version:
+        return _clone_checkpoint(current)
+    if current.status in _TERMINAL_WORKFLOW_CHECKPOINT_STATUSES:
+        raise WorkflowConflictError(
+            f'Workflow run "{resolved_run_id}" is terminal with status "{current.status}"; '
+            "its checkpoint remains readable but cannot be migrated by appending history."
+        )
+    migrated_at_ms = _now_ms() if applied_at_ms is None else _validate_non_negative_integer(
+        applied_at_ms,
+        "migration applied_at_ms",
+    )
+    migrated = migrate_workflow_checkpoint(
+        current,
+        target_version=target_version,
+        applied_at_ms=migrated_at_ms,
+    )
+    migrated.checkpoint_id = f"wfc_{uuid4().hex}"
+    migrated.sequence = current.sequence + 1
+    migrated.updated_at_ms = migrated_at_ms
+    migrated.transition = WorkflowTransition(
+        type="workflow-checkpoint-schema-migrated",
+        at_ms=migrated_at_ms,
+        from_status=current.status,
+        to_status=current.status,
+        detail={
+            "from_schema_version": current.schema_version,
+            "to_schema_version": migrated.schema_version,
+        },
+    )
+    return await store.append(migrated, expected_sequence=current.sequence)
 
 
 def _prepare_append(

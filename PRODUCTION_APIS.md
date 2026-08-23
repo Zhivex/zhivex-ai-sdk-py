@@ -119,7 +119,7 @@ See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTIO
 
 ## Protocol APIs
 
-The current `0.19.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
+The current `0.20.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
 
 - Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
 - Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.
@@ -136,7 +136,7 @@ See [docs/PROTOCOLS.md](./docs/PROTOCOLS.md) for supported routes, extras, wire 
 
 ## Workflow APIs
 
-Durable workflow graphs were introduced in `0.15.0` and remain beta in the current `0.19.0` line; expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly.
+Durable workflow graphs were introduced in `0.15.0` and their SDK-owned core is Stable in `0.20.0`. Still expose them behind an application-owned API contract rather than returning SDK checkpoint objects directly; Stable API compatibility is not authentication, tenant isolation, retention policy, or a distributed transaction.
 
 Recommended endpoint boundaries:
 
@@ -154,10 +154,12 @@ Functional graph executors receive ephemeral `deps` plus a stable logical step i
 
 Reconstruct the same `WorkflowGraph` definition before resume or fork. The SDK rejects mismatched workflow names, definition versions, and definition digests. Supply runtime `deps` again; never place database clients, credentials, authorization objects, or other runtime dependencies into checkpoint state.
 
+When upgrading a stored schema-v1 run, stop its workers and call `migrate_workflow_run_checkpoint(...)` before resuming it. The migration appends a schema-v2 checkpoint with a `workflow-checkpoint-schema-migrated` transition and auditable migration history under the same CAS sequence boundary. Concurrent writers fail with `WorkflowConflictError`; terminal v1 history remains readable and immutable. Migration does not change the graph definition or reconcile an external write whose outcome is unknown.
+
 Idempotent re-entry does not take over a `running` workflow automatically. It fails closed unless `recover_running=True`. With a `WorkflowLeaseManager`, takeover succeeds only after lease expiry and increments a fencing token; without one, the operator must prove the previous worker is gone. Recovery records `workflow-recovered`, but external writes still require the logical step idempotency key, destination-supported fencing, or reconciliation.
 
-The DBOS, Temporal, Prefect, and Restate adapter factories expose versioned callback request/outcome contracts only. They do not start those engines or certify their persistence, retry, signal, or worker behavior. Keep the real engine client and worker integration in the application layer and test it end to end.
+The DBOS, Temporal, Prefect, and Restate adapter factories remain Beta and expose versioned callback request/outcome contracts only. They do not start those engines or certify their persistence, retry, signal, or worker behavior. Keep the real engine client and worker integration in the application layer and test it end to end.
 
-See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for the complete beta contract and [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py) for an offline SQLite reconstruction/resume/fork example.
+See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for the complete Stable core and Beta named-engine boundary, and [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py) for an offline SQLite reconstruction/resume/fork example.
 
 The production agent example requires `ZHIVEX_AGENT_API_TOKEN`, `ZHIVEX_TENANT_ID`, and a server-owned `ZHIVEX_AGENT_MODEL`; it uses a fixed server-side Postgres table prefix, limits request bodies and Pydantic fields, and applies a small process-local rate limit. Put a distributed limiter at the API gateway when running more than one process or replica. Clients must send both `Authorization: Bearer ...` and the matching `X-Tenant-ID`; a user-controlled tenant header is not an authorization mechanism on its own, and clients do not select provider model IDs.
