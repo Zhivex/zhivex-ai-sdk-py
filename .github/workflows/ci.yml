@@ -104,6 +104,23 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zhivex
+          POSTGRES_USER: zhivex
+          POSTGRES_PASSWORD: zhivex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zhivex -d zhivex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      ZHIVEX_TEST_POSTGRES_DSN: postgres://zhivex:zhivex@127.0.0.1:5432/zhivex
 
     steps:
       - name: Check out repository
@@ -126,4 +143,4 @@ jobs:
         run: python -m twine check dist/*
 
       - name: Verify release artifacts
-        run: python scripts/verify_release_artifacts.py --dist-dir dist
+        run: python scripts/verify_release_artifacts.py --dist-dir dist --require-postgres-workflow-smoke

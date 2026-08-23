@@ -161,8 +161,10 @@ class DocsOnboardingTests(TestCase):
 
     def test_current_release_docs_do_not_regress_to_the_previous_workflow_boundary(self) -> None:
         workflows = (ROOT / "docs/WORKFLOWS.md").read_text("utf-8")
-        self.assertIn("`0.16.0` still does not provide an automatic checkpoint migration engine", workflows)
-        self.assertNotIn("`0.15.0` does not provide an automatic checkpoint migration engine", workflows)
+        self.assertIn("`0.20.0` provides explicit checkpoint schema migration", workflows)
+        self.assertIn("workflow-checkpoint-schema-migrated", workflows)
+        self.assertIn("terminal v1 run remains readable", workflows)
+        self.assertNotIn("still does not provide an automatic checkpoint migration engine", workflows)
 
     def test_examples_readme_lists_the_complete_live_smoke_scope(self) -> None:
         examples = (ROOT / "examples/README.md").read_text("utf-8")

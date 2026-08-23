@@ -24,7 +24,7 @@ The recommended public import paths are:
 
 - `zhivex_ai` for the Stable portable foundation, agent runtime, provider factories, gateway, and backend transport contracts
 - `zhivex_ai.evals` for Beta evaluation APIs
-- `zhivex_ai.workflows` for Beta declarative and durable workflow APIs
+- `zhivex_ai.workflows` for the Stable declarative and durable workflow core plus clearly identified Beta named-engine factories
 - `zhivex_ai.integrations.protocols` for Beta A2A, AG-UI, and Responses-compatible hosting
 - `zhivex_ai.experimental` for Experimental realtime/live-agent and non-portable provider surfaces
 
@@ -39,7 +39,7 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Portable foundation contracts: `LanguageModel`, `GroundedLanguageModel`, `EmbeddingModel`, `ModelMessage`, `GenerateTextOutput`, `GenerateObjectOutput`, `GenerateGroundedTextOutput`, `StreamTextResult`, `StreamObjectResult`, `StreamEvent`, `EmbedOutput`, `EmbeddingContent`, `TokenUsage`, `FinishReason`
+- Portable foundation contracts: `LanguageModel`, `GroundedLanguageModel`, `EmbeddingModel`, `ModelMessage`, `GenerateTextOutput`, `GenerateObjectOutput`, `GenerateGroundedTextOutput`, `StreamTextResult`, `StreamObjectResult`, `StreamEvent`, `EmbedOutput`, `EmbeddingContent`, `TokenUsage`, `FinishReason`, `JsonValue`
 - Agent runtime: `Agent`, `AgentContext`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunRequest`, `AgentRunResult`, `AgentStreamResult`, `AgentHandoff`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `handoff_to`, `create_agent_session`, `load_agent_session`
 - Agent result contracts: `AgentTrace`, `AgentCheckpoint`, `ToolCall`
 - Agent extension contracts: `AgentHooks`, `AgentMiddleware`, `AgentMiddlewareNext`, `AgentObserver`, `DynamicInstructions`
@@ -52,10 +52,16 @@ These APIs are the supported public contract for application code and production
 - Agent persistence: `create_postgres_agent_memory_store`, `create_postgres_checkpoint_store`
 - MCP helpers and registries: `discover_mcp_tools`, `mcp_stdio_server`, `mcp_http_server`, `create_mcp_tool_registry`
 - Gateway: `GatewayAttempt`, `GatewayConfig`, `GatewayError`, `GatewayImageAttachment`, `GatewayMessage`, `GatewayModelTarget`, `GatewayObjectResponse`, `GatewayResponse`, `create_gateway`
+- Declarative workflows: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, `WorkflowTraceEvent`, `WorkflowState`, `WorkflowErrorPolicy`, `WorkflowRunStatus`, `WorkflowStepStatus`, `WorkflowStopCondition`, `WorkflowRetryPolicy`, `WorkflowRetryPredicate`, `WorkflowFunctionContext`, `WorkflowFunctionResult`, `WorkflowFunctionExecutor`, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
+- Durable workflow graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowEdgeCondition`, `WorkflowContext`, `WorkflowInterruptPhase`, `resume_workflow`, `fork_workflow`, and `cancel_workflow`
+- Workflow durable state: `WORKFLOW_CHECKPOINT_SCHEMA_VERSION`, `WorkflowCheckpoint`, `WorkflowCheckpointMigration`, `WorkflowCheckpointStatus`, `WorkflowNodeCheckpoint`, `WorkflowNodeStatus`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, `serialize_workflow_checkpoint`, `deserialize_workflow_checkpoint`, `workflow_checkpoint_to_json`, `workflow_checkpoint_from_json`, `migrate_workflow_checkpoint`, `migrate_workflow_checkpoint_payload`, and `migrate_workflow_run_checkpoint`
+- Workflow stores and ownership: `InMemoryWorkflowCheckpointStore`, `SQLiteWorkflowCheckpointStore`, `PostgresWorkflowCheckpointStore`, `create_in_memory_workflow_checkpoint_store`, `create_sqlite_workflow_checkpoint_store`, `create_postgres_workflow_checkpoint_store`, `WorkflowExecutionLease`, `WorkflowLeaseManager`, `InMemoryWorkflowLeaseManager`, `SQLiteWorkflowLeaseManager`, `PostgresWorkflowLeaseManager`, `create_in_memory_workflow_lease_manager`, `create_sqlite_workflow_lease_manager`, and `create_postgres_workflow_lease_manager`
+- Workflow adapter envelope: `WORKFLOW_ADAPTER_SCHEMA_VERSION`, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, `WorkflowAdapter`, and `WorkflowAdapterCapabilities`
+- Workflow failures: `WorkflowConflictError`, `WorkflowLeaseLostError`, `WorkflowDefinitionMismatchError`, `WorkflowRunNotFoundError`, and `WorkflowInterruptError`
 - Core errors: `AgentEventDeliveryError`, `AgentRunCancelled`, `ProviderHTTPError`, `ToolExecutionOutcomeUnknown`, `ConfigurationError`, `ValidationError`, `UnsupportedFeatureError`
 - HTTP and SSE helpers: `HTTPResponse`, `stream_sse`, `to_sse_response`, `to_sse_stream`, `to_text_stream`, `to_text_stream_response`, `to_ui_message_stream_response`
 
-The Stable surface is the agent-first core contract. It reflects the most defendable cross-provider experience and the main backend primitives in this SDK today; extension namespaces do not expand the core product promise.
+The Stable surface is the agent-first core contract plus the application-owned workflow orchestration primitives required to coordinate it durably. Stable workflows do not turn external effects into distributed transactions: destinations still need idempotency, fencing, an outbox, or reconciliation.
 
 ## Beta
 
@@ -83,13 +89,9 @@ These APIs are supported and documented, but they may still change between minor
 - Evaluation trials, experiments, and gates: `AGENT_EVALUATION_ARTIFACT_SCHEMA_VERSION`, `AgentEvaluationTrialResult`, `AgentEvaluationTrajectory`, `AgentEvaluationTrajectoryEvent`, `AgentEvaluationCostEstimator`, trace extractor aliases, `create_agent_evaluation_trajectory`, `create_agent_evaluation_dataset_from_traces`, `AgentEvaluationMetric`, `AgentEvaluationGate`, `AgentEvaluationVariant`, `AgentEvaluationVariantResult`, `AgentEvaluationGateResult`, `AgentEvaluationExperimentResult`, `AgentEvaluationScorer`, `AgentEvaluationAgentFactory`, and `run_agent_evaluation_experiment`
 - Agent protocols and hosting: `A2A_PROTOCOL_VERSION`, `A2AAgentSkill`, `A2AAgentCard`, `A2AAgentExecutor`, `AGUIEvent`, `HostedAgentRunOptions`, `ProtocolInvocation`, `ProtocolLimits`, `ProtocolRunOptionsResolver`, `ProtocolErrorMapper`, `ProtocolEventCallback`, `AgentResolver`, `ResponsesAgentHost`, `StoredResponsesRun`, `ResponsesEventStore`, `InMemoryResponsesEventStore`, `create_a2a_agent_card`, `create_a2a_app`, `stream_agent_ag_ui`, `to_ag_ui_sse_response`, `create_responses_app`, and `create_agent_playground_app`
 - General `zhivex` CLI commands for inspect, run, eval, protocol serve, and the local playground
-- Declarative workflow agents: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, `WorkflowTraceEvent`, `WorkflowState`, `WorkflowErrorPolicy`, `WorkflowRunStatus`, `WorkflowStepStatus`, `WorkflowStopCondition`, `run_workflow`, `workflow_step`, shared `session.state`, and workflow expectation helpers
-- Durable workflow graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowEdgeCondition`, `WorkflowContext`, `WorkflowInterruptPhase`, `WorkflowFunctionContext`, `WorkflowFunctionResult`, `WorkflowFunctionExecutor`, `resume_workflow`, `fork_workflow`, `cancel_workflow`, `WorkflowRetryPolicy`, and `WorkflowRetryPredicate`
-- Workflow durable state and execution ownership: `WORKFLOW_CHECKPOINT_SCHEMA_VERSION`, `WorkflowCheckpoint`, `WorkflowCheckpointStatus`, `WorkflowNodeCheckpoint`, `WorkflowNodeStatus`, `WorkflowInterrupt`, `WorkflowTransition`, `WorkflowCheckpointStore`, `WorkflowExecutionLease`, `WorkflowLeaseManager`, serialization helpers, in-memory/SQLite/Postgres checkpoint and lease managers, and their factories
-- Typed workflow failures: `WorkflowConflictError`, `WorkflowLeaseLostError`, `WorkflowDefinitionMismatchError`, `WorkflowRunNotFoundError`, and `WorkflowInterruptError`
-- External workflow runtime contracts: `WORKFLOW_ADAPTER_SCHEMA_VERSION`, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, `WorkflowAdapter`, `WorkflowAdapterCapabilities`, and callback-adapter factories for DBOS, Temporal, Prefect, and Restate. These factories are contracts for application-owned integrations, not certified engine integrations.
+- Named external workflow-engine factories: `create_dbos_workflow_adapter`, `create_temporal_workflow_adapter`, `create_prefect_workflow_adapter`, and `create_restate_workflow_adapter`. These dependency-free factories only label the Stable callback envelope with conservative engine capability metadata; they are not certified DBOS, Temporal, Prefect, or Restate clients, workers, schedulers, or integrations.
 
-Workflow semantics and operational boundaries are documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md). SQLite and Postgres workflow checkpoint stores are durable storage implementations, but their workflow APIs remain beta and are not promoted by the stable Postgres agent-store guarantee.
+Workflow semantics, checkpoint migration, and operational boundaries are documented in [docs/WORKFLOWS.md](./docs/WORKFLOWS.md). Stable classification covers the SDK contracts and built-in storage behavior; deployment-specific database, proxy, retention, authorization, and external-engine validation remain application responsibilities.
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the Stable surface. Prefer their focused namespaces in new code so the compatibility risk is visible at the import site.
 

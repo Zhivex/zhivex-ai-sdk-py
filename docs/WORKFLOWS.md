@@ -1,12 +1,12 @@
 # Durable Workflow Graphs
 
-Zhivex AI SDK provides beta orchestration primitives for backend workflows whose shape is known before execution. `WorkflowGraph` adds validated DAG execution, persisted routing decisions, append-only checkpoints, explicit interruption and resume, fork lineage, and step-level retry policy to the existing sequential, parallel, and loop agents.
+Zhivex AI SDK provides Stable orchestration primitives for backend workflows whose shape is known before execution. `WorkflowGraph` adds validated DAG execution, persisted routing decisions, append-only checkpoints, explicit interruption and resume, fork lineage, and step-level retry policy to the existing sequential, parallel, and loop agents.
 
 The SDK owns orchestration mechanics. The application continues to own business policy, authorization, vertical records, approval UI, artifact storage, retention, and external integrations.
 
 ## Stability
 
-The complete workflow surface introduced in `0.15.0` remains beta in `0.19.0`:
+In `0.20.0`, the application-owned workflow core becomes Stable:
 
 - Existing orchestration: `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `WorkflowStep`, `WorkflowRunResult`, `WorkflowStepResult`, workflow status/error aliases, `run_workflow`, `workflow_step`, and `validate_workflow_expectations`
 - Graphs: `WorkflowBuilder`, `WorkflowGraph`, `GraphWorkflow`, `WorkflowEdge`, `WorkflowContext`, graph callable/phase aliases, `resume_workflow`, `fork_workflow`, and `cancel_workflow`
@@ -15,9 +15,10 @@ The complete workflow surface introduced in `0.15.0` remains beta in `0.19.0`:
 - Execution ownership: `WorkflowExecutionLease`, `WorkflowLeaseManager`, and the in-memory, SQLite, and Postgres lease managers/factories
 - Operational failures: `WorkflowConflictError`, `WorkflowLeaseLostError`, `WorkflowDefinitionMismatchError`, `WorkflowRunNotFoundError`, and `WorkflowInterruptError`
 - Step retries: `WorkflowRetryPolicy`
-- External runtime contracts: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, `CallbackWorkflowAdapter`, and the DBOS, Temporal, Prefect, and Restate callback-adapter factories
+- External runtime envelope: adapter schema/capability types, `WorkflowStepRequest`, `WorkflowStepOutcome`, `WorkflowStepExecutor`, `WorkflowStepExecutorRegistry`, and `CallbackWorkflowAdapter`
+- Checkpoint migration: `WorkflowCheckpointMigration`, `migrate_workflow_checkpoint`, `migrate_workflow_checkpoint_payload`, and `migrate_workflow_run_checkpoint`
 
-Use the focused public namespace `zhivex_ai.workflows`. Existing top-level imports remain available for compatibility, but new workflow code should make the Beta dependency explicit. Implementation-module deep imports remain unsupported. These APIs may evolve between minor releases and are not part of the Stable compatibility contract yet.
+Use the focused public namespace `zhivex_ai.workflows`. Existing top-level imports remain available for compatibility, and implementation-module deep imports remain unsupported. The named `create_dbos_workflow_adapter(...)`, `create_temporal_workflow_adapter(...)`, `create_prefect_workflow_adapter(...)`, and `create_restate_workflow_adapter(...)` factories remain Beta because they are labels for application callbacks, not certified integrations with those engines.
 
 ## Choose The Orchestration Model
 
@@ -159,7 +160,35 @@ Checkpoint stores have different operational guarantees:
 - `create_sqlite_workflow_checkpoint_store(path, namespace=...)` persists append-only history on one local filesystem and survives worker reconstruction. Coordinate filesystem ownership and backup outside the SDK.
 - `create_postgres_workflow_checkpoint_store(dsn, table_prefix=..., namespace=..., pool_min_size=..., pool_max_size=...)` uses the optional `postgres` extra, a bounded lazy pool, checked schema metadata, and transactional sequence/idempotency constraints for shared workers. Pass `pool=application_pool` instead of `dsn` to share an application-owned `asyncpg` pool. Validate it against the deployment database before production use.
 
-Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming. Schema-v1 payloads produced by `0.15.0` are covered by a committed compatibility fixture for deserialize, canonical reserialize, resume, and fork. Unsupported future checkpoint or Postgres backend schema versions fail closed; the SDK does not silently rewrite application history.
+Persist only JSON data. Dependencies, clients, credentials, agents, and callables are runtime objects and must be supplied again when resuming. Schema-v1 payloads produced by `0.15.0` are covered by a committed compatibility fixture for deserialize, canonical reserialize, resume, fork, and explicit migration. Unsupported future checkpoint or Postgres backend schema versions fail closed; the SDK never migrates a stored run implicitly.
+
+## Checkpoint Schema Migration
+
+Checkpoint schema v2 adds an auditable `migration_history`. Reading and canonically serializing published v1 checkpoints remains supported. Migrate a detached value or stored payload without mutating its source:
+
+```python
+from zhivex_ai.workflows import (
+    migrate_workflow_checkpoint,
+    migrate_workflow_checkpoint_payload,
+)
+
+migrated = migrate_workflow_checkpoint(legacy_checkpoint, applied_at_ms=audit_time_ms)
+migrated_payload = migrate_workflow_checkpoint_payload(legacy_payload, applied_at_ms=audit_time_ms)
+```
+
+For an active non-terminal run, append the migrated latest checkpoint through the store's compare-and-swap boundary:
+
+```python
+from zhivex_ai.workflows import migrate_workflow_run_checkpoint
+
+migrated = await migrate_workflow_run_checkpoint(
+    checkpoint_store,
+    run_id,
+    applied_at_ms=audit_time_ms,
+)
+```
+
+Pause workers for that run before migration. A concurrent append or second migration loses the sequence CAS instead of overwriting history. The appended transition is `workflow-checkpoint-schema-migrated`, and the migration record names the source/target versions and timestamp. A terminal v1 run remains readable but is not rewritten because terminal workflow history is immutable. This API migrates the Zhivex checkpoint payload only; it does not reconcile external side effects, change `definition_version`, or migrate third-party engine state.
 
 ## Execution Leases And Fencing
 
@@ -310,21 +339,21 @@ The adapter layer defines JSON envelopes and callback boundaries for dispatching
 - `WorkflowStepExecutorRegistry` resolves only an explicitly registered `executor_ref` and matching definition digest.
 - `CallbackWorkflowAdapter` supports sync or async dispatch callbacks.
 
-`create_dbos_workflow_adapter(...)`, `create_temporal_workflow_adapter(...)`, `create_prefect_workflow_adapter(...)`, and `create_restate_workflow_adapter(...)` create dependency-free callback contracts with conservative capability metadata. They are not embedded engine clients, workers, schedulers, or certified integrations. The application must install, configure, operate, and integration-test the selected engine, then implement the callback with that engine's real activity/task API.
+The Stable envelope is engine-neutral. The Beta `create_dbos_workflow_adapter(...)`, `create_temporal_workflow_adapter(...)`, `create_prefect_workflow_adapter(...)`, and `create_restate_workflow_adapter(...)` factories create dependency-free callback contracts with conservative capability metadata. They are not embedded engine clients, workers, schedulers, or certified integrations. The application must install, configure, operate, and integration-test the selected engine, then implement the callback with that engine's real activity/task API.
 
 ## Recovery And Operational Boundaries
 
 - Re-entering `WorkflowGraph.run(...)` with the same workflow idempotency key returns a terminal or suspended result. If the latest checkpoint is still `running`, the call fails closed by default.
 - With a lease manager configured, `run(..., recover_running=True)` can take over only after the prior lease expires; the new fencing token prevents the old owner from appending. Without a lease manager, the caller must first reconcile that the prior worker is gone. Recovery appends `workflow-recovered` and resets recorded running nodes to pending.
 - Recovery can re-dispatch a node whose external outcome is unknown. Every agent tool, functional executor, and callback activity that writes externally must deduplicate with its stable logical step idempotency key or reconcile before retrying.
-- Definition version and digest drift fail closed. `0.16.0` still does not provide an automatic checkpoint migration engine; migration is an explicit application operation with its own audit record.
+- Definition version and digest drift fail closed. `0.20.0` provides explicit checkpoint schema migration with its own append-only audit record; graph-definition and external-engine migration remain application operations.
 - SQLite and Postgres stores keep append-only checkpoint history. Retention, archival, encryption, tenant authorization, backups, and deletion remain deployment responsibilities.
 - Checkpoints may contain prompts, model output, approval values, and business state. Treat them as sensitive records and avoid placing secrets in workflow state or metadata.
 - Adapter callbacks, local tools, and agent nodes can produce external effects. Durable orchestration is not a distributed transaction.
 
 ## Existing Workflow Agents
 
-The existing declarative agents remain supported and beta:
+The existing declarative agents are part of the Stable workflow core:
 
 - `SequentialAgent` runs steps in order.
 - `ParallelAgent` isolates a fan-out wave and merges only declared output/metadata keys.

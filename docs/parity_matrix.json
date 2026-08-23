@@ -108,11 +108,11 @@
     },
     {
       "area": "Workflow orchestration and durable graphs",
-      "implemented": "yes: sequential/parallel/loop, DAG, functional steps, checkpoints, resume/fork/cancel, execution leases, heartbeat, and fencing",
+      "implemented": "yes: sequential/parallel/loop, DAG, functional steps, versioned checkpoints/migration, resume/fork/cancel, execution leases, heartbeat, and fencing",
       "documented": "yes",
-      "offline_tested": "yes; in-memory/SQLite ownership and recovery covered",
-      "live_smoked": "Postgres checkpoint/lease integration gated",
-      "stability": "beta"
+      "offline_tested": "yes; in-memory/SQLite ownership, compatibility, migration, and recovery covered",
+      "live_smoked": "installed-wheel Postgres checkpoint/lease integration is mandatory in CI/release",
+      "stability": "stable core; named external-engine factories beta"
     },
     {
       "area": "Agent evaluations and CI gates",

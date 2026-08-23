@@ -14,7 +14,7 @@ The core product is deliberately small:
 - add sessions, durable state, human approval, replay, gateway fallback, and observability when the application needs them
 - keep provider-specific behavior behind explicit `provider.native.*` escape hatches
 
-Workflow engines, evaluation pipelines, protocol hosting, packaged skills, the general CLI/playground, and realtime voice are available, but they are optional extensions rather than prerequisites for building an agent.
+Stable workflow orchestration, evaluation pipelines, protocol hosting, packaged skills, the general CLI/playground, and realtime voice are available, but they are optional extensions rather than prerequisites for building an agent. Named external-engine adapters remain Beta contracts owned by the application.
 
 ## Why Zhivex AI SDK
 
@@ -77,7 +77,8 @@ The agent code uses the portable model contract while the application owns the t
 | Agent core | `Agent`, tools, streaming, handoffs, sessions, approvals, durable run state, replay | Default starting point |
 | Foundation | Text, structured output, embeddings, grounding, normalized messages | Use directly or through agents |
 | Providers and gateway | Portable adapters, native escape hatches, fallback routing | Choose only the providers your app needs |
-| Optional extensions | `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations` | Beta; isolate behind app-owned boundaries |
+| Stable orchestration | `zhivex_ai.workflows` core, stores, leases, migration, resume/fork/cancel | Adopt when the application needs durable coordination |
+| Optional extensions | `zhivex_ai.evals`, `zhivex_ai.integrations`, named workflow-engine adapters | Beta; isolate behind app-owned boundaries |
 | Incubating capabilities | `zhivex_ai.experimental`, including realtime/live agents | Experimental; expect contract changes |
 
 ## Stability And Support
@@ -86,7 +87,7 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, and approval resume. Workflow graphs, checkpoint/lease managers, resume/fork/cancel, callback adapter contracts, existing declarative workflow agents, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, packaged skills, trace artifacts, safety-policy helpers, and local run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, approval resume, and the workflow orchestration core under `zhivex_ai.workflows`. Named DBOS/Temporal/Prefect/Restate adapter factories, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, packaged skills, trace artifacts, safety-policy helpers, and local agent run stores remain beta.
 
 See [docs/SCOPE.md](./docs/SCOPE.md), [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the product boundary, public API expectations, support scope, and release communication.
 
@@ -104,7 +105,7 @@ Core path:
 
 Optional extensions:
 
-- Beta durable workflow graphs: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
+- Stable durable workflow orchestration: [docs/WORKFLOWS.md](./docs/WORKFLOWS.md)
 - Beta evaluations and CI gates: [docs/EVALUATIONS.md](./docs/EVALUATIONS.md)
 - Beta protocols and hosting: [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
 - Beta CLI and local playground: [docs/CLI.md](./docs/CLI.md)
@@ -126,7 +127,8 @@ Project setup:
 
 ## Optional And Incubating Capabilities
 
-- Beta durable workflow graphs under `zhivex_ai.workflows`, with DAG validation, persisted checkpoints, execution leases, resume/fork/cancel, retries, and callback adapters
+- Stable durable workflow orchestration under `zhivex_ai.workflows`, with DAG validation, persisted checkpoints, explicit schema migration, execution leases, resume/fork/cancel, retries, and a generic callback adapter contract
+- Beta named DBOS, Temporal, Prefect, and Restate callback-adapter factories; applications own and certify the actual engine integration
 - Beta repeated evaluation trials under `zhivex_ai.evals`, with concurrency, confidence intervals, cost/latency metrics, JSON/JUnit artifacts, variants, and CI gates
 - Beta A2A v1, AG-UI, and Responses-compatible hosting under `zhivex_ai.integrations`, plus packaged skills and a loopback-only CLI playground
 - Beta provider-native hosted tools, provider-data payloads, remote MCP approvals, media clients, and lifecycle clients
@@ -1571,7 +1573,7 @@ For production-style FastAPI integration patterns, see [PRODUCTION_APIS.md](./PR
 
 The Python SDK now exposes an agent-first runtime on top of the core model contract:
 
-The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Items explicitly described as beta below—including native subagent tools, durable workflow graphs/checkpoints, declarative workflow agents, local run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
+The stable agent slice covers the run/result/stream lifecycle, local tools, direct handoffs, sessions, Postgres persistence, replay, and durable approvals. Stable workflow orchestration is documented separately below. Items explicitly described as beta—including native subagent tools, named external workflow-engine factories, local agent run stores, evaluation helpers, and trace artifacts—may still evolve between minor releases.
 
 - `Agent(...)`
 - `AgentCancellationToken`
@@ -1665,13 +1667,15 @@ result = await resume_workflow(
 
 `WorkflowGraph` validates an acyclic definition, runs ready nodes in bounded parallel waves, and persists routing decisions before downstream dispatch. `WorkflowCheckpoint` is the canonical durable record; `WorkflowRunResult.state_snapshot` remains an agent-run projection for replay compatibility. Use step/edge `definition_revision` values for application configuration that callable source inspection cannot capture. Optional in-memory, SQLite, and Postgres lease managers add TTL, heartbeat, monotonic fencing, and atomic stale-owner rejection when paired with the matching checkpoint backend. Postgres also supports bounded or application-owned pools, namespaces, server-clock lease decisions, and checked schema metadata; validate it against the actual deployment database.
 
-`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. These workflow graph, checkpoint/store/lease, resume/fork/cancel, and callback adapter APIs remain beta in `0.19.0`.
+`fork_workflow(...)` creates a new run with explicit source lineage, while `cancel_workflow(...)` appends cooperative cancellation. `WorkflowRetryPolicy` retries a complete logical step separately from the existing model/provider `max_retries`. Applications must still deduplicate external writes and supply runtime dependencies again after resume. In `0.20.0` these workflow graph, declarative agent, checkpoint/store/lease, resume/fork/cancel, migration, and generic callback-envelope APIs are Stable.
+
+Checkpoint schema v2 adds auditable migration history. Use `migrate_workflow_checkpoint(...)` for an in-memory or payload migration and `migrate_workflow_run_checkpoint(...)` to append a migrated latest checkpoint with compare-and-swap protection. Published schema-v1 checkpoints remain readable and canonically serializable; pause active workers before an operational migration. Terminal v1 runs remain readable and are not rewritten.
 
 Re-entering a still-running idempotent workflow fails closed. With a lease manager, `recover_running=True` can take over only after expiry and increments the fence; without one, it remains an operator-reconciled operation. Recovery cannot make unknown external effects safe without destination idempotency or reconciliation.
 
 Graph steps may use an `Agent` or a sync/async functional `executor`. Functional steps receive `WorkflowFunctionContext` with ephemeral dependencies and a stable idempotency key, then return a finite JSON value or `WorkflowFunctionResult` with an output, state patch, and metadata. They are graph-only and do not change the existing declarative agents.
 
-The DBOS, Temporal, Prefect, and Restate adapter factories create versioned callback contracts and conservative capability metadata. They do not install or operate those engines and are not certified integrations. See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for graph validation, branching, persistence, security, migration, retry, resume/fork, and adapter boundaries.
+The DBOS, Temporal, Prefect, and Restate adapter factories remain Beta. They create versioned callback contracts and conservative capability metadata, but do not install or operate those engines and are not certified integrations. See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for graph validation, branching, persistence, security, migration, retry, resume/fork, and adapter boundaries.
 
 For a runnable offline durable-graph flow, see [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py). The broader references in [`examples/agents/small_business_loan_agent.py`](./examples/agents/small_business_loan_agent.py), [`examples/agents/hr_candidate_selection_agent.py`](./examples/agents/hr_candidate_selection_agent.py), and the focused workflow examples model regulated review, structured validation, document artifacts, and research reports. The SDK owns orchestration primitives; applications keep credit/hiring policy, authorization, persistence, approval UI, external systems, artifact storage, and compliance controls behind replaceable interfaces.
 
@@ -1902,7 +1906,7 @@ export ZHIVEX_SMOKE_QWEN_REGION=intl
 make smoke
 ```
 
-It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,meta,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: every explicitly selected provider must execute its generation smoke and a real `run_agent(...)` loop that calls a local nonce-validation tool exactly once, consumes its result, and finishes successfully. Without a selector, strict mode keeps the local-development rule that at least one configured provider must execute. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider subset runs from the exact verified wheel before the Trusted Publisher job can start. That gate certifies only the providers and models actually configured in the recorded run, not the complete tier-1 set. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`. DeepSeek smoke uses `DEEPSEEK_API_KEY` and `ZHIVEX_SMOKE_DEEPSEEK_MODEL`, with optional `DEEPSEEK_BASE_URL` or `ZHIVEX_SMOKE_DEEPSEEK_BASE_URL`. Meta smoke uses `MODEL_API_KEY` and an explicit `ZHIVEX_SMOKE_META_MODEL`; use `muse-spark-1.2` Standard for sensitive smoke data and do not infer live certification until that exact run is recorded.
+It only runs providers that have the required credentials and model IDs configured, and you can scope it with `ZHIVEX_SMOKE_PROVIDERS=openai,anthropic,azure-openai,gemini,vertex,qwen,kimi,deepseek,meta,vllm`. Run `ZHIVEX_SMOKE_PROVIDERS=openai make smoke-agents` for the strict agent-first gate: every explicitly selected provider must execute its generation smoke and a real `run_agent(...)` loop that calls a local nonce-validation tool exactly once, consumes its result, and finishes successfully. Without a selector, strict mode keeps the local-development rule that at least one configured provider must execute. Secret values, authenticated URLs, paths, and query strings are redacted from reported failures. PyPI and TestPyPI publication additionally require the protected `release-smoke` GitHub environment; its configured provider subset runs from the exact verified wheel before the Trusted Publisher job can start. The 0.20.0 policy pins `gpt-5.6-luna` plus Beta `muse-spark-1.2-contributor` for non-sensitive synthetic canaries; that evidence certifies only those exact targets and does not certify Meta Standard. Tier-1 setup details live in [docs/providers/tier-1.md](./docs/providers/tier-1.md). Optional Google media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_MEDIA=1` and model IDs such as `ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL`, `ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL`, `ZHIVEX_SMOKE_GEMINI_MEDIA_MODEL`, `ZHIVEX_SMOKE_VERTEX_IMAGE_MODEL`, `ZHIVEX_SMOKE_VERTEX_VIDEO_MODEL`, and `ZHIVEX_SMOKE_VERTEX_MEDIA_MODEL`. Ollama smoke runs default to `http://localhost:11434/v1` and can be redirected with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`. Qwen smoke uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`, supports `ZHIVEX_SMOKE_QWEN_BASE_URL` and `ZHIVEX_SMOKE_QWEN_RESPONSES_BASE_URL` overrides, and can optionally validate embeddings, ASR, and TTS with `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`. Kimi smoke uses `MOONSHOT_API_KEY` or `KIMI_API_KEY`, with optional `MOONSHOT_BASE_URL` or `ZHIVEX_SMOKE_KIMI_BASE_URL`. DeepSeek smoke uses `DEEPSEEK_API_KEY` and `ZHIVEX_SMOKE_DEEPSEEK_MODEL`, with optional `DEEPSEEK_BASE_URL` or `ZHIVEX_SMOKE_DEEPSEEK_BASE_URL`. Meta smoke uses `MODEL_API_KEY` and an explicit `ZHIVEX_SMOKE_META_MODEL`; use `muse-spark-1.2` Standard for sensitive smoke data and do not infer live certification until that exact run is recorded.
 
 If realtime examples fail on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, the issue is usually the local Python certificate bundle rather than the SDK. Two practical fixes are:
 

@@ -21,6 +21,33 @@ Related documents:
 
 ### Added
 
+- Added explicit, auditable workflow checkpoint schema migration from v1 to v2 through `WorkflowCheckpointMigration`, `migrate_workflow_checkpoint(...)`, `migrate_workflow_checkpoint_payload(...)`, and CAS-backed `migrate_workflow_run_checkpoint(...)`.
+- Added a version-pinned release smoke policy for OpenAI and Meta, exact-wheel SHA256 evidence, and full Meta Contributor smoke coverage for generation, streaming, structured output, portable retrieval, and an agent tool loop. The synthetic release gate uses `gpt-5.6-luna` and `muse-spark-1.2-contributor` to control cost; it does not promote Contributor to Stable or certify Standard.
+- Added a mandatory installed-wheel Postgres workflow smoke to CI and both publication workflows.
+
+### Changed
+
+- Promoted the declarative and durable workflow core, state stores, leases/fencing, resume/fork/cancel, migration helpers, callback envelope, and typed workflow failures to Stable. The DBOS, Temporal, Prefect, and Restate named adapter factories remain Beta because they do not provide certified engine integrations.
+- Promoted `JsonValue` to Stable because it is part of persisted workflow state and multiple existing Stable annotations.
+- Bumped the package version to `0.20.0`; the distribution remains a Beta package with an expanded Stable API cohort.
+
+### Fixed
+
+- Closed the `0.19.0` release-certification gap that allowed Meta to be omitted from the protected exact-artifact smoke after `create_meta()` became Tier-1. The mandatory 0.20.0 canary is Contributor and therefore records adapter evidence without claiming exact-artifact Standard certification.
+- Raised the Meta Contributor certification ceiling to 512 output tokens while keeping `reasoning_effort="low"`; live verification showed the model can consume more than 128 output tokens on hidden reasoning and otherwise complete without a visible streaming delta.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.19.0
+
+### Added
+
 - Added focused public namespaces for optional and incubating capabilities: `zhivex_ai.evals`, `zhivex_ai.workflows`, `zhivex_ai.integrations` / `zhivex_ai.integrations.protocols`, and `zhivex_ai.experimental`. Existing top-level imports remain available for compatibility.
 - Added `docs/SCOPE.md` as the normative agent-first product boundary, including extension ownership, application responsibilities, provider-evidence definitions, and core non-goals.
 - Added fail-closed provider evidence metadata through `ProviderSupportRow.evidence_status`. Portable providers default to `contract-supported`; only separately validated release evidence can mark an exact provider as `release-certified`.

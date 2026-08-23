@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 import zhivex_ai
 from zhivex_ai.api_stability import BETA_EXPORTS, STABLE_EXPORTS
 from zhivex_ai.errors import ValidationError, WorkflowConflictError
+from zhivex_ai.workflows import __all__ as WORKFLOW_EXPORTS
 
 
 DOCUMENTED_STABLE_EXPORTS = {
@@ -147,7 +148,20 @@ DOCUMENTED_STABLE_EXPORTS = {
     "to_ui_message_stream_response",
 }
 
-COMPATIBILITY_ROOT_EXPORTS_SHA256 = "2ec751f8c57bff050288ba1c7b418be1c11ef8c518b7808e3cd861f7596a166b"
+WORKFLOW_STABLE_EXPORTS = {
+    name
+    for name in WORKFLOW_EXPORTS
+    if name
+    not in {
+        "create_dbos_workflow_adapter",
+        "create_prefect_workflow_adapter",
+        "create_restate_workflow_adapter",
+        "create_temporal_workflow_adapter",
+    }
+}
+DOCUMENTED_STABLE_EXPORTS |= WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
+
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "21de785e153879814a2b578a76ef1aaad99f08af0c220677d87c88b2df003dd2"
 
 
 class PublicContractTests(TestCase):
@@ -184,15 +198,16 @@ class PublicContractTests(TestCase):
         for name in meta_exports - {"create_meta"}:
             self.assertIs(getattr(zhivex_ai, name), getattr(sys.modules["zhivex_ai.providers.meta"], name))
 
-    def test_example_fixture_types_are_beta_top_level_exports(self) -> None:
-        fixture_types = {"GenerateResult", "JsonValue", "ModelGenerateInput"}
+    def test_example_fixture_types_keep_their_documented_stability(self) -> None:
+        beta_fixture_types = {"GenerateResult", "ModelGenerateInput"}
 
-        self.assertTrue(fixture_types.issubset(zhivex_ai.__all__))
-        self.assertTrue(fixture_types.issubset(BETA_EXPORTS))
-        for name in fixture_types:
+        self.assertTrue((beta_fixture_types | {"JsonValue"}).issubset(zhivex_ai.__all__))
+        self.assertTrue(beta_fixture_types.issubset(BETA_EXPORTS))
+        self.assertIn("JsonValue", STABLE_EXPORTS)
+        for name in beta_fixture_types | {"JsonValue"}:
             self.assertIsNotNone(getattr(zhivex_ai, name))
 
-    def test_workflow_errors_are_typed_beta_top_level_exports(self) -> None:
+    def test_workflow_errors_are_typed_stable_top_level_exports(self) -> None:
         workflow_errors = {
             "WorkflowConflictError",
             "WorkflowDefinitionMismatchError",
@@ -202,7 +217,7 @@ class PublicContractTests(TestCase):
         }
 
         self.assertTrue(workflow_errors.issubset(zhivex_ai.__all__))
-        self.assertTrue(workflow_errors.issubset(BETA_EXPORTS))
+        self.assertTrue(workflow_errors.issubset(STABLE_EXPORTS))
         for name in workflow_errors:
             error_type = getattr(zhivex_ai, name)
             self.assertTrue(issubclass(error_type, ValidationError))
@@ -259,7 +274,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.19.0"', pyproject)
+        self.assertIn('version = "0.20.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

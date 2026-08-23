@@ -22,7 +22,7 @@ The stable core is:
 - Postgres memory, checkpoint, and run stores
 - run-state serialization, cancellation tree, replay, run-snapshot helpers, and durable pending approvals
 
-The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite stores, packaged skills, declarative workflow agents, durable workflow graphs/checkpoint stores/resume/fork, functional workflow steps, callback adapter contracts, and UI approval chunks. Live/realtime agent APIs are experimental.
+Stable workflow orchestration—including declarative agents, durable graphs, checkpoint stores, leases, migration, functional steps, resume/fork/cancel, and the generic callback envelope—is documented in [WORKFLOWS.md](./WORKFLOWS.md). The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite agent stores, packaged skills, named external workflow-engine adapter factories, and UI approval chunks. Live/realtime agent APIs are experimental.
 
 ## Minimal Tool-Using Agent
 
