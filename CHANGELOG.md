@@ -24,6 +24,7 @@ Related documents:
 - Added explicit, auditable workflow checkpoint schema migration from v1 to v2 through `WorkflowCheckpointMigration`, `migrate_workflow_checkpoint(...)`, `migrate_workflow_checkpoint_payload(...)`, and CAS-backed `migrate_workflow_run_checkpoint(...)`.
 - Added a version-pinned release smoke policy for OpenAI and Meta, exact-wheel SHA256 evidence, and full Meta Contributor smoke coverage for generation, streaming, structured output, portable retrieval, and an agent tool loop. The synthetic release gate uses `gpt-5.6-luna` and `muse-spark-1.2-contributor` to control cost; it does not promote Contributor to Stable or certify Standard.
 - Added a mandatory installed-wheel Postgres workflow smoke to CI and both publication workflows.
+- Added provider/model gateway rates through `GatewayConfig.model_costs_per_1k_tokens` and machine-readable `GatewayAttempt.reason` / `on_attempt.reason` values for policy skips.
 
 ### Changed
 
@@ -35,10 +36,11 @@ Related documents:
 
 - Closed the `0.19.0` release-certification gap that allowed Meta to be omitted from the protected exact-artifact smoke after `create_meta()` became Tier-1. The mandatory 0.20.0 canary is Contributor and therefore records adapter evidence without claiming exact-artifact Standard certification.
 - Raised the Meta Contributor certification ceiling to 512 output tokens while keeping `reasoning_effort="low"`; live verification showed the model can consume more than 128 output tokens on hidden reasoning and otherwise complete without a visible streaming delta.
+- Gateway routes with `max_cost_per_1k_tokens` now fail closed before adapter invocation when pricing is unknown or invalid, prefer model-specific rates over provider defaults, allow rates equal to the ceiling, and preserve unknown-price eligibility when no ceiling is configured.
 
 ### Deprecated
 
-- None.
+- `GatewayConfig.provider_costs_per_1k_tokens` is retained as a compatibility fallback but is deprecated in favor of provider/model rates or a reviewed model catalog.
 
 ### Removed
 

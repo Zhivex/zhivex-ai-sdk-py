@@ -66,7 +66,7 @@ Recommended span attributes:
 
 ## Gateway Attempts
 
-`GatewayConfig(on_attempt=...)` receives provider, model, success status, latency, retryability, retry number, target rank, and error text. Use it for fallback dashboards and incident debugging.
+`GatewayConfig(on_attempt=...)` receives provider, model, success status, latency, retryability, retry number, target rank, sanitized error text, and a machine-readable `reason`. Policy skips use `missing_adapter`, `vision_unsupported`, `capability_mismatch`, `cost_unknown`, `cost_exceeds_budget`, or `provider_refusal`; ordinary executions and transport/provider failures use `None`. Use the typed reason for metrics and the redacted error text only for human diagnosis.
 
 Standardize gateway attempt logs with:
 
@@ -77,6 +77,7 @@ Standardize gateway attempt logs with:
 - retry number
 - success status
 - retryable status
+- policy-skip reason
 - latency
 - redacted error class or message
 

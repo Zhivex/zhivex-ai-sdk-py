@@ -154,10 +154,16 @@ def _smoke_code(expected_version: str) -> str:
             AgentHooks,
             AgentMiddleware,
             AgentRunRequest,
+            GatewayConfig,
+            GatewayError,
+            GatewayMessage,
+            GatewayModelTarget,
             ModelMessage,
             ToolCall,
             create_deepseek,
+            create_gateway,
             create_meta,
+            create_openai,
             create_text_message,
             generate_text,
             run_agent,
@@ -237,6 +243,39 @@ def _smoke_code(expected_version: str) -> str:
             model = create_mock_language_model(responses=[GenerateResult(text="hello", finish_reason="stop")])
             text = await generate_text(model=model, prompt="hello")
             assert text.text == "hello"
+
+            gateway_attempts = []
+            gateway = create_gateway(
+                GatewayConfig(
+                    adapters={{"openai": create_openai(api_key="artifact-smoke-key")}},
+                    max_retries=0,
+                    on_attempt=lambda payload: gateway_attempts.append(payload),
+                )
+            )
+            try:
+                await gateway.generate(
+                    messages=[GatewayMessage(role="user", content="must-not-reach-provider")],
+                    primary=GatewayModelTarget(provider="openai", model_id="unknown-artifact-price"),
+                    max_cost_per_1k_tokens=1,
+                )
+            except GatewayError as error:
+                assert not error.retryable
+            else:
+                raise AssertionError("Unknown gateway pricing must fail closed under a configured budget.")
+            assert gateway_attempts == [
+                {{
+                    "provider": "openai",
+                    "modelId": "unknown-artifact-price",
+                    "ok": False,
+                    "latencyMs": 0,
+                    "errorMessage": "Skipped because model cost is unknown under the configured budget.",
+                    "retryable": False,
+                    "reason": "cost_unknown",
+                    "retry": 0,
+                    "targetRank": 0,
+                }}
+            ]
+            assert "must-not-reach-provider" not in str(gateway_attempts)
 
             tool_executions = []
 

@@ -11,7 +11,16 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import GatewayConfig, GatewayError, GatewayImageAttachment, GatewayMessage, GatewayModelTarget, create_gateway
+from zhivex_ai import (
+    GatewayConfig,
+    GatewayError,
+    GatewayImageAttachment,
+    GatewayMessage,
+    GatewayModelTarget,
+    ModelCatalogEntry,
+    create_gateway,
+    create_model_catalog,
+)
 from zhivex_ai.errors import ProviderHTTPError
 from zhivex_ai.gateway import supports_vision_input
 from zhivex_ai.messages import create_text_message
@@ -55,6 +64,15 @@ class WorkingModel:
 
     async def stream(self, input: ModelGenerateInput):
         raise RuntimeError("not used")
+
+
+class RecordingModel(WorkingModel):
+    def __init__(self) -> None:
+        self.generate_calls = 0
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self.generate_calls += 1
+        return await super().generate(input)
 
 
 class RefusalModel(WorkingModel):
@@ -325,6 +343,235 @@ class GatewayTests(IsolatedAsyncioTestCase):
         self.assertEqual(attempt_events[0]["ok"], False)
         self.assertEqual(attempt_events[0]["targetRank"], 0)
         self.assertIn("No adapter registered", str(attempt_events[0]["errorMessage"]))
+
+    async def test_gateway_fail_closes_unknown_cost_under_budget_and_falls_back(self) -> None:
+        attempt_events: list[dict[str, object]] = []
+        primary_model = RecordingModel()
+        fallback_model = RecordingModel()
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: primary_model),
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: fallback_model),
+                },
+                max_retries=0,
+                on_attempt=lambda payload: attempt_events.append(payload),
+                model_costs_per_1k_tokens={"anthropic": {"priced-fallback": 0.5}},
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="do not log this prompt")],
+            primary=GatewayModelTarget(provider="openai", model_id="unknown-price"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="priced-fallback")],
+            max_cost_per_1k_tokens=1,
+        )
+
+        self.assertEqual(result.provider_used, "anthropic")
+        self.assertEqual(primary_model.generate_calls, 0)
+        self.assertEqual(fallback_model.generate_calls, 1)
+        self.assertEqual(result.attempts[0].reason, "cost_unknown")
+        self.assertEqual(attempt_events[0]["provider"], "openai")
+        self.assertEqual(attempt_events[0]["modelId"], "unknown-price")
+        self.assertEqual(attempt_events[0]["reason"], "cost_unknown")
+        self.assertNotIn("do not log this prompt", str(attempt_events[0]))
+
+    async def test_gateway_allows_unknown_cost_without_budget(self) -> None:
+        model = RecordingModel()
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: model)},
+                max_retries=0,
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="unknown-price"),
+        )
+
+        self.assertEqual(result.provider_used, "openai")
+        self.assertEqual(model.generate_calls, 1)
+
+    async def test_gateway_treats_invalid_model_cost_as_unknown_before_resolving_adapter(self) -> None:
+        factory_calls = 0
+
+        def create_model(model_id: str) -> RecordingModel:
+            nonlocal factory_calls
+            factory_calls += 1
+            return RecordingModel()
+
+        for model_id, model_cost in (("negative-price", -1.0), ("non-finite-price", float("nan"))):
+            with self.subTest(model_id=model_id):
+                attempt_events: list[dict[str, object]] = []
+                gateway = create_gateway(
+                    GatewayConfig(
+                        adapters={"openai": ProviderAdapter(name="openai", language_model_factory=create_model)},
+                        max_retries=0,
+                        on_attempt=lambda payload: attempt_events.append(payload),
+                        model_costs_per_1k_tokens={"openai": {model_id: model_cost}},
+                    )
+                )
+
+                with self.assertRaises(GatewayError):
+                    await gateway.generate(
+                        messages=[GatewayMessage(role="user", content="hello")],
+                        primary=GatewayModelTarget(provider="openai", model_id=model_id),
+                        required_capabilities={"structured_output": True},
+                        max_cost_per_1k_tokens=1,
+                    )
+
+                self.assertEqual(factory_calls, 0)
+                self.assertEqual(attempt_events[0]["reason"], "cost_unknown")
+
+    async def test_gateway_accepts_cost_less_than_or_equal_to_budget(self) -> None:
+        for model_id, model_cost in (("under-budget", 0.5), ("at-budget", 1.0)):
+            with self.subTest(model_id=model_id):
+                model = RecordingModel()
+                gateway = create_gateway(
+                    GatewayConfig(
+                        adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda _: model)},
+                        max_retries=0,
+                        model_costs_per_1k_tokens={"openai": {model_id: model_cost}},
+                    )
+                )
+
+                result = await gateway.generate(
+                    messages=[GatewayMessage(role="user", content="hello")],
+                    primary=GatewayModelTarget(provider="openai", model_id=model_id),
+                    max_cost_per_1k_tokens=1,
+                )
+
+                self.assertEqual(result.provider_used, "openai")
+                self.assertEqual(model.generate_calls, 1)
+
+    async def test_gateway_skips_cost_above_budget_with_typed_reason(self) -> None:
+        primary_model = RecordingModel()
+        fallback_model = RecordingModel()
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={
+                    "openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: primary_model),
+                    "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda model_id: fallback_model),
+                },
+                provider_costs_per_1k_tokens={"openai": 0.1},
+                max_retries=0,
+                model_costs_per_1k_tokens={
+                    "openai": {"over-budget": 1.01},
+                    "anthropic": {"priced-fallback": 0.5},
+                },
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="over-budget"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="priced-fallback")],
+            max_cost_per_1k_tokens=1,
+        )
+
+        self.assertEqual(result.provider_used, "anthropic")
+        self.assertEqual(primary_model.generate_calls, 0)
+        self.assertEqual(fallback_model.generate_calls, 1)
+        self.assertEqual(result.attempts[0].reason, "cost_exceeds_budget")
+
+    async def test_gateway_uses_model_costs_to_rank_fallbacks(self) -> None:
+        cheap_model = RecordingModel()
+        expensive_model = RecordingModel()
+        models = {
+            "primary-fails": FailingModel(),
+            "expensive-fallback": expensive_model,
+            "cheap-fallback": cheap_model,
+        }
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: models[model_id])},
+                max_retries=0,
+                model_costs_per_1k_tokens={
+                    "openai": {
+                        "primary-fails": 0.5,
+                        "expensive-fallback": 2,
+                        "cheap-fallback": 0.5,
+                    }
+                },
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="primary-fails"),
+            fallbacks=[
+                GatewayModelTarget(provider="openai", model_id="expensive-fallback"),
+                GatewayModelTarget(provider="openai", model_id="cheap-fallback"),
+            ],
+            routing_mode="quality",
+        )
+
+        self.assertEqual(result.model_used, "cheap-fallback")
+        self.assertEqual(cheap_model.generate_calls, 1)
+        self.assertEqual(expensive_model.generate_calls, 0)
+
+    async def test_gateway_model_cost_precedes_provider_default(self) -> None:
+        model = RecordingModel()
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: model)},
+                provider_costs_per_1k_tokens={"openai": 10},
+                max_retries=0,
+                model_costs_per_1k_tokens={"openai": {"cheap-model": 0.5}},
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="cheap-model"),
+            max_cost_per_1k_tokens=1,
+        )
+
+        self.assertEqual(result.provider_used, "openai")
+        self.assertEqual(model.generate_calls, 1)
+
+    async def test_gateway_catalog_model_cost_precedes_provider_default_and_resolves_alias(self) -> None:
+        model = RecordingModel()
+        catalog = create_model_catalog(
+            [ModelCatalogEntry(provider="openai", model_id="canonical-model", aliases=["model-alias"], cost_per_1k_tokens=0.5)]
+        )
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: model)},
+                model_catalog=catalog,
+                provider_costs_per_1k_tokens={"openai": 10},
+                max_retries=0,
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="model-alias"),
+            max_cost_per_1k_tokens=1,
+        )
+
+        self.assertEqual(result.provider_used, "openai")
+        self.assertEqual(model.generate_calls, 1)
+
+    async def test_gateway_provider_cost_fallback_remains_compatible(self) -> None:
+        model = RecordingModel()
+        gateway = create_gateway(
+            GatewayConfig(
+                adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda model_id: model)},
+                provider_costs_per_1k_tokens={"openai": 0.5},
+                max_retries=0,
+            )
+        )
+
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="legacy-provider-price"),
+            max_cost_per_1k_tokens=1,
+        )
+
+        self.assertEqual(result.provider_used, "openai")
+        self.assertEqual(model.generate_calls, 1)
 
     async def test_gateway_can_fail_fast_when_adapter_is_missing(self) -> None:
         gateway = create_gateway(

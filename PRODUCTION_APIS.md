@@ -87,8 +87,11 @@ When you want fallback routing in the API layer:
 - keep primary and fallback targets explicit
 - return the selected provider and model in the JSON response
 - treat routing as application policy, not client policy
+- provide reviewed provider/model rates when setting `max_cost_per_1k_tokens`; unknown or invalid pricing is skipped fail-closed
 
 The gateway example uses OpenAI as primary and Anthropic as fallback, but the pattern is the same for any supported provider set. DeepSeek can participate in text-only routes through `create_deepseek()`; gateway vision requests skip it rather than dropping image inputs.
+
+Use `GatewayConfig.model_costs_per_1k_tokens` or a reviewed `model_catalog` for budgeted routes. The provider-only pricing map is a deprecated compatibility fallback and cannot represent price differences between models. Keep currency, pricing source, effective date, and refresh policy in application configuration; the gateway compares a single conservative rate per 1,000 total tokens and does not calculate the final provider invoice.
 
 For direct Anthropic Opus 5 routes, use the fixed `claude-opus-5` ID and let adaptive thinking remain the default unless the endpoint deliberately selects a supported effort. Do not configure non-default sampling, assistant prefill, server-side Web Fetch, or Priority Tier for this model. Keep Bedrock routing separate because the current Bedrock Converse adapter does not claim Opus 5.
 

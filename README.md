@@ -267,7 +267,7 @@ Tool support now follows the same rule everywhere:
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
 - Gemini and Vertex are portable for the core contract, with `gemini-3.6-flash` as the current stable Flash reference and `gemini-3.5-flash-lite` as the stable low-latency Flash-Lite reference. Those two current models reject custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks Interactions-only `gemini-omni-flash-preview` and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Gemini built-in tools remain native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
-- Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback.
+- Gateway routing emits `on_attempt` payloads for skipped targets as well as executed attempts, including a machine-readable `reason` for policy skips. Cost ceilings are fail-closed: `model_costs_per_1k_tokens` and configured catalog entries take precedence over the deprecated provider-wide fallback, and a target with unknown pricing is not invoked when `max_cost_per_1k_tokens` is set. Without a cost ceiling, unknown-price targets remain eligible. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback. See [docs/GATEWAY.md](./docs/GATEWAY.md) for units, precedence, and migration guidance.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
 - Qwen catalog guidance now starts with GA `qwen3.8-max` for pay-as-you-go Singapore. Text, streaming, image understanding, function tools, all seven portable reasoning efforts, and the five announced built-ins use the current `/compatible-mode/v1/responses` route. Mixed vision input follows Qwen's current Responses `input_text` / `input_image` content contract; the legacy `/api/v2/apps/protocols/compatible-mode/v1` route is not used.
 - `qwen3.8-max` transparently selects Chat Completions for native JSON Schema output, `FilePart` image/video inputs, or `ReasoningConfig.budget_tokens`, because those operations are not part of Qwen Responses. Structured output disables thinking, video uses `video_url`, and Chat reasoning state is preserved as Qwen `provider-data` for replay. Qwen hosted helpers cover `web_search`, `web_extractor`, `code_interpreter`, `web_search_image`, and `image_search`; Web Extractor still requires Web Search. The Token Plan continues to list the separate `qwen3.8-max-preview` ID, so it is not treated as a GA alias.
@@ -1192,7 +1192,12 @@ async def main() -> None:
             adapters={
                 "openai": create_openai(),
                 "anthropic": create_anthropic(),
-            }
+            },
+            # Illustrative application-owned rates; validate them for your account and effective date.
+            model_costs_per_1k_tokens={
+                "openai": {"gpt-5.6-terra": 1.0},
+                "anthropic": {"claude-sonnet-5": 3.0},
+            },
         )
     )
 
@@ -1200,6 +1205,7 @@ async def main() -> None:
         messages=[GatewayMessage(role="user", content="Say hello in one sentence.")],
         primary=GatewayModelTarget(provider="openai", model_id="gpt-5.6-terra"),
         fallbacks=[GatewayModelTarget(provider="anthropic", model_id="claude-sonnet-5")],
+        max_cost_per_1k_tokens=3.0,
     )
 
     print(result.text)

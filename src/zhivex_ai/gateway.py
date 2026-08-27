@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -28,6 +29,15 @@ GatewayProviderId = Literal[
 ]
 GatewayRoutingMode = Literal["speed", "balanced", "quality"]
 GatewayTaskIntent = Literal["chat", "reasoning", "tool-heavy"]
+_GatewayAttemptReason = Literal[
+    "missing_adapter",
+    "vision_unsupported",
+    "capability_mismatch",
+    "cost_unknown",
+    "cost_exceeds_budget",
+    "provider_refusal",
+]
+_GatewayCostSource = Literal["model_override", "model_catalog", "provider_default", "unknown"]
 
 
 @dataclass(slots=True)
@@ -57,6 +67,7 @@ class GatewayAttempt:
     latency_ms: int
     error_message: str | None = None
     retryable: bool = False
+    reason: _GatewayAttemptReason | None = None
 
 
 @dataclass(slots=True)
@@ -100,6 +111,13 @@ class GatewayConfig:
     fail_on_missing_adapter: bool = False
     fallback_on_refusal: bool = False
     on_attempt: Any = None
+    model_costs_per_1k_tokens: dict[GatewayProviderId, dict[str, float]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _GatewayCostResolution:
+    cost_per_1k_tokens: float | None
+    source: _GatewayCostSource
 
 
 class GatewayError(ZhivexAIError):
@@ -152,13 +170,50 @@ def create_route_decision(mode: GatewayRoutingMode, intent: GatewayTaskIntent, o
     )
 
 
+def _normalize_cost(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    cost = float(value)
+    if not math.isfinite(cost) or cost < 0:
+        return None
+    return cost
+
+
+def _resolve_target_cost(config: GatewayConfig, target: GatewayModelTarget) -> _GatewayCostResolution:
+    model_costs = config.model_costs_per_1k_tokens.get(target.provider, {})
+    if target.model_id in model_costs:
+        return _GatewayCostResolution(_normalize_cost(model_costs[target.model_id]), "model_override")
+
+    catalog_entry: Any = None
+    if config.model_catalog is not None:
+        try:
+            catalog_entry = config.model_catalog.find(target.provider, target.model_id)
+        except Exception:
+            return _GatewayCostResolution(None, "unknown")
+
+    if catalog_entry is not None:
+        canonical_model_id = getattr(catalog_entry, "model_id", None)
+        if isinstance(canonical_model_id, str) and canonical_model_id in model_costs:
+            return _GatewayCostResolution(_normalize_cost(model_costs[canonical_model_id]), "model_override")
+        catalog_cost = getattr(catalog_entry, "cost_per_1k_tokens", None)
+        if catalog_cost is not None:
+            return _GatewayCostResolution(_normalize_cost(catalog_cost), "model_catalog")
+
+    if target.provider in config.provider_costs_per_1k_tokens:
+        return _GatewayCostResolution(
+            _normalize_cost(config.provider_costs_per_1k_tokens[target.provider]),
+            "provider_default",
+        )
+    return _GatewayCostResolution(None, "unknown")
+
+
 def _score_target(mode: GatewayRoutingMode, intent: GatewayTaskIntent, target: GatewayModelTarget, config: GatewayConfig) -> float:
     model = target.model_id.lower()
     local_boost = -2 if target.provider == "ollama" else 0
     quality_boost = 2 if ("pro" in model or "claude" in model) else 0
     speed_boost = 2 if ("flash" in model or "lite" in model) else 0
     reasoning_boost = 2 if ("pro" in model or "claude" in model) else 0
-    cost_penalty = config.provider_costs_per_1k_tokens.get(target.provider, 0)
+    cost_penalty = _resolve_target_cost(config, target).cost_per_1k_tokens or 0
     latency_penalty = config.latency_bias_ms.get(target.provider, 0) / 100
     if mode == "speed":
         return speed_boost + local_boost - latency_penalty
@@ -195,11 +250,19 @@ def _supports_required_capabilities(adapter: Any, target: GatewayModelTarget, re
     return True
 
 
-def _within_cost_budget(config: GatewayConfig, max_cost: float | None, target: GatewayModelTarget) -> bool:
+def _cost_budget_reason(
+    config: GatewayConfig,
+    max_cost: float | None,
+    target: GatewayModelTarget,
+) -> Literal["cost_unknown", "cost_exceeds_budget"] | None:
     if max_cost is None:
-        return True
-    effective_cost = config.provider_costs_per_1k_tokens.get(target.provider)
-    return effective_cost is None or effective_cost <= max_cost
+        return None
+    effective_cost = _resolve_target_cost(config, target).cost_per_1k_tokens
+    if effective_cost is None:
+        return "cost_unknown"
+    if not effective_cost <= max_cost:
+        return "cost_exceeds_budget"
+    return None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -266,6 +329,7 @@ def _attempt_payload(attempt: GatewayAttempt, retry: int, target_rank: int) -> d
         "latencyMs": attempt.latency_ms,
         "errorMessage": attempt.error_message,
         "retryable": attempt.retryable,
+        "reason": attempt.reason,
         "retry": retry,
         "targetRank": target_rank,
     }
@@ -294,7 +358,12 @@ def create_gateway(config: GatewayConfig):
             route_decision = create_route_decision(routing_mode, task_intent, ordered_targets)
             refusal_result: tuple[Any, GatewayProviderId, str, list[GatewayAttempt], GatewayRouteDecision, float] | None = None
 
-            async def record_skipped_attempt(target: GatewayModelTarget, target_index: int, error_message: str) -> None:
+            async def record_skipped_attempt(
+                target: GatewayModelTarget,
+                target_index: int,
+                error_message: str,
+                reason: _GatewayAttemptReason,
+            ) -> None:
                 attempts.append(
                     GatewayAttempt(
                         provider=target.provider,
@@ -303,6 +372,7 @@ def create_gateway(config: GatewayConfig):
                         latency_ms=0,
                         error_message=error_message,
                         retryable=False,
+                        reason=reason,
                     )
                 )
                 if config.on_attempt:
@@ -315,15 +385,30 @@ def create_gateway(config: GatewayConfig):
                         target,
                         target_index,
                         f'No adapter registered for provider "{target.provider}".',
+                        "missing_adapter",
                     )
                     if config.fail_on_missing_adapter:
                         raise _final_gateway_error(attempts)
+                    continue
+                cost_budget_reason = _cost_budget_reason(config, max_cost_per_1k_tokens, target)
+                if cost_budget_reason is not None:
+                    await record_skipped_attempt(
+                        target,
+                        target_index,
+                        (
+                            "Skipped because model cost is unknown under the configured budget."
+                            if cost_budget_reason == "cost_unknown"
+                            else "Skipped because model cost exceeds the configured budget."
+                        ),
+                        cost_budget_reason,
+                    )
                     continue
                 if _messages_require_vision(messages) and not _target_supports_vision(adapter, target):
                     await record_skipped_attempt(
                         target,
                         target_index,
                         "Skipped because the request contains images and the target does not support vision input.",
+                        "vision_unsupported",
                     )
                     continue
                 if not _supports_required_capabilities(adapter, target, required_capabilities):
@@ -331,13 +416,7 @@ def create_gateway(config: GatewayConfig):
                         target,
                         target_index,
                         "Skipped because model capabilities do not satisfy the request.",
-                    )
-                    continue
-                if not _within_cost_budget(config, max_cost_per_1k_tokens, target):
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        "Skipped because provider cost exceeds the configured budget.",
+                        "capability_mismatch",
                     )
                     continue
                 for retry in range(max(0, config.max_retries) + 1):
@@ -370,6 +449,7 @@ def create_gateway(config: GatewayConfig):
                                     latency_ms=latency_ms,
                                     error_message="Provider returned refusal stop reason.",
                                     retryable=False,
+                                    reason="provider_refusal",
                                 )
                             )
                             if config.on_attempt:
