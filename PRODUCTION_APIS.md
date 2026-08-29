@@ -122,7 +122,7 @@ See [docs/AGENTS.md](./docs/AGENTS.md) and [docs/PRODUCTION.md](./docs/PRODUCTIO
 
 ## Protocol APIs
 
-The current `0.20.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
+The current `0.21.0` line includes beta A2A v1, AG-UI, and Responses-compatible adapters. Use them behind the same production controls as any other public agent API:
 
 - Resolve A2A skills and Responses `model` values to a server-owned allowlist of configured agents. Never construct providers from caller input.
 - Authenticate before agent execution and derive tenant/task/thread/run ownership from the authenticated tenant and subject. A protocol ID, model alias, or tenant header is not authorization.

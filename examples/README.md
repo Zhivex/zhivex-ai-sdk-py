@@ -40,7 +40,7 @@ Optional Gemini/Vertex media smoke checks are gated behind `ZHIVEX_SMOKE_GOOGLE_
 Ollama uses `http://localhost:11434/v1` by default for smoke runs and can be pointed elsewhere with `ZHIVEX_SMOKE_OLLAMA_BASE_URL`.
 vLLM uses `http://localhost:8000/v1` by default and can be pointed elsewhere with `ZHIVEX_SMOKE_VLLM_BASE_URL` and `ZHIVEX_SMOKE_VLLM_API_KEY`.
 Qwen uses `DASHSCOPE_API_KEY` or `QWEN_API_KEY`; optional checks are enabled by `ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL`, `ZHIVEX_SMOKE_QWEN_ASR_MODEL` plus `ZHIVEX_SMOKE_QWEN_ASR_AUDIO_PATH`, and `ZHIVEX_SMOKE_QWEN_TTS_MODEL`.
-Meta uses `MODEL_API_KEY` plus an explicit `ZHIVEX_SMOKE_META_MODEL`; `muse-spark-1.2` Standard remains the recommended Tier-1 target for sensitive data. The 0.20.0 release policy explicitly uses Beta `muse-spark-1.2-contributor` only for non-sensitive synthetic canaries to reduce cost, and that evidence does not certify Standard.
+Meta uses `MODEL_API_KEY` plus an explicit `ZHIVEX_SMOKE_META_MODEL`; `muse-spark-1.2` Standard remains the recommended Tier-1 target for sensitive data. The 0.21.0 release policy explicitly uses Beta `muse-spark-1.2-contributor` only for non-sensitive synthetic canaries to reduce cost, and that evidence does not certify Standard.
 
 If a realtime example fails on macOS with `ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED`, that usually means the local Python install is missing CA roots. You can work around it per-command with:
 
