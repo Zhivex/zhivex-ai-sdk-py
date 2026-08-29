@@ -27,6 +27,7 @@ The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by 
 - Keep top-level imports from `zhivex_ai` as the primary public entrypoint.
 - Update `src/zhivex_ai/api_stability.py` and its drift tests whenever `zhivex_ai.__all__` changes.
 - New stable provider factories are additive public API changes and must land with provider contracts, support metadata, docs, examples, and artifact-install verification. `create_deepseek` follows that policy; `0.19.0` applies it to `create_meta` with a deliberately narrow Standard `muse-spark-1.2` portable text/tool/application-supplied retrieval contract.
+- Stable gateway cost routing keeps `provider_costs_per_1k_tokens` as a deprecated compatibility fallback. New configurations should use provider/model rates or a reviewed catalog; removal of the provider-wide map requires the normal stable deprecation workflow. The fail-closed behavior applies only when a caller explicitly supplies `max_cost_per_1k_tokens`.
 - Additive fields on `Agent`, `AgentContext`, `AgentRunRequest`, `AgentRunResult`, and `ToolExecutionContext` must preserve existing positional construction and string-only `result.text` behavior. Generic typing and `result.output` are additive in `0.14.0`.
 - Stable workflow changes must preserve definition identity, checkpoint append ordering, schema-v1 readability, typed failures, resume/fork/cancel semantics, and the public callback envelope. New serialized fields require an explicit versioned migration and compatibility evidence.
 

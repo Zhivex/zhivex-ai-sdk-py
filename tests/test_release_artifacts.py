@@ -105,7 +105,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 )
 
     def test_installed_artifact_smoke_uses_the_focused_namespaces(self) -> None:
-        smoke = verify_release_artifacts._smoke_code("0.20.0")
+        smoke = verify_release_artifacts._smoke_code("0.21.0")
 
         for namespace in [
             "zhivex_ai.evals",
@@ -121,6 +121,9 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn('assert "migrate_workflow_checkpoint" in STABLE_EXPORTS', smoke)
         self.assertIn('assert "create_temporal_workflow_adapter" in BETA_EXPORTS', smoke)
         self.assertIn("workflow-checkpoint-v1-to-v2", smoke)
+        self.assertIn("unknown-artifact-price", smoke)
+        self.assertIn('"reason": "cost_unknown"', smoke)
+        self.assertIn("must-not-reach-provider", smoke)
 
     def test_release_artifact_selection_requires_exact_version_and_clean_dist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -433,7 +436,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 workflow,
             )
             self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
-            self.assertIn("docs/releases/0.20.0-smoke-policy.json", workflow)
+            self.assertIn("docs/releases/0.21.0-smoke-policy.json", workflow)
             self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
             self.assertIn("release-smoke-evidence.json", workflow)
             self.assertIn("name: release-smoke-evidence", workflow)
@@ -451,7 +454,7 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)
 
         policy = json.loads(
-            (ROOT / "docs/releases/0.20.0-smoke-policy.json").read_text("utf-8")
+            (ROOT / "docs/releases/0.21.0-smoke-policy.json").read_text("utf-8")
         )
         self.assertEqual(
             policy["required_providers"]["openai"]["model"],

@@ -77,7 +77,7 @@ jobs:
       ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna
       ZHIVEX_SMOKE_META_MODEL: muse-spark-1.2-contributor
       ZHIVEX_SMOKE_META_CERTIFICATION: "1"
-      ZHIVEX_RELEASE_SMOKE_POLICY: docs/releases/0.20.0-smoke-policy.json
+      ZHIVEX_RELEASE_SMOKE_POLICY: docs/releases/0.21.0-smoke-policy.json
       ZHIVEX_SMOKE_ARTIFACT_PATH: dist
       ZHIVEX_SMOKE_EVIDENCE_PATH: release-smoke-evidence.json
       OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_OPENAI_API_KEY }}

@@ -21,6 +21,50 @@ Related documents:
 
 ### Added
 
+- None.
+
+### Changed
+
+- None.
+
+### Fixed
+
+- None.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+## 0.21.0
+
+### Added
+
+- Added provider/model gateway rates through `GatewayConfig.model_costs_per_1k_tokens` and machine-readable `GatewayAttempt.reason` / `on_attempt.reason` values for policy skips.
+
+### Changed
+
+- Bumped the package version to `0.21.0`; the distribution remains Beta and the existing Stable gateway surface remains backward compatible.
+
+### Fixed
+
+- Gateway routes with `max_cost_per_1k_tokens` now fail closed before adapter invocation when pricing is unknown or invalid, prefer model-specific rates over provider defaults, allow rates equal to the ceiling, and preserve unknown-price eligibility when no ceiling is configured.
+
+### Deprecated
+
+- `GatewayConfig.provider_costs_per_1k_tokens` is retained as a compatibility fallback but is deprecated in favor of provider/model rates or a reviewed model catalog.
+
+### Removed
+
+- None.
+
+## 0.20.0
+
+### Added
+
 - Added explicit, auditable workflow checkpoint schema migration from v1 to v2 through `WorkflowCheckpointMigration`, `migrate_workflow_checkpoint(...)`, `migrate_workflow_checkpoint_payload(...)`, and CAS-backed `migrate_workflow_run_checkpoint(...)`.
 - Added a version-pinned release smoke policy for OpenAI and Meta, exact-wheel SHA256 evidence, and full Meta Contributor smoke coverage for generation, streaming, structured output, portable retrieval, and an agent tool loop. The synthetic release gate uses `gpt-5.6-luna` and `muse-spark-1.2-contributor` to control cost; it does not promote Contributor to Stable or certify Standard.
 - Added a mandatory installed-wheel Postgres workflow smoke to CI and both publication workflows.
