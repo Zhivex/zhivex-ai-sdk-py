@@ -50,6 +50,12 @@ class OperationsDocsTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, text)
 
+    def test_gateway_attempt_docs_include_catalog_policy_skip_reasons(self) -> None:
+        for relative in ["docs/OBSERVABILITY.md", "docs/GATEWAY.md"]:
+            text = (ROOT / relative).read_text("utf-8")
+            for reason in ["model_unavailable", "unsupported_api_surface"]:
+                self.assertIn(f"`{reason}`", text, relative)
+
     def test_operations_docs_cover_failure_and_runtime_patterns(self) -> None:
         text = (ROOT / "docs/OPERATIONS.md").read_text("utf-8")
         for phrase in [
