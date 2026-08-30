@@ -38,6 +38,18 @@ class OperationsDocsTests(unittest.TestCase):
         ]:
             self.assertIn(phrase, text)
 
+    def test_observability_docs_define_terminal_gateway_attempt_contract(self) -> None:
+        text = (ROOT / "docs/OBSERVABILITY.md").read_text("utf-8")
+        for phrase in [
+            'phase="finished"',
+            "terminal=True",
+            "attemptId",
+            "errorType",
+            "exactly one terminal payload",
+            "Observer exceptions are non-authoritative",
+        ]:
+            self.assertIn(phrase, text)
+
     def test_operations_docs_cover_failure_and_runtime_patterns(self) -> None:
         text = (ROOT / "docs/OPERATIONS.md").read_text("utf-8")
         for phrase in [

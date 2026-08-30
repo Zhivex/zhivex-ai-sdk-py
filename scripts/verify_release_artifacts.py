@@ -158,11 +158,13 @@ def _smoke_code(expected_version: str) -> str:
             GatewayError,
             GatewayMessage,
             GatewayModelTarget,
+            ModelCatalogEntry,
             ModelMessage,
             ToolCall,
             create_deepseek,
             create_gateway,
             create_meta,
+            create_model_catalog,
             create_openai,
             create_text_message,
             generate_text,
@@ -179,6 +181,7 @@ def _smoke_code(expected_version: str) -> str:
         from zhivex_ai.experimental import stream_live_agent as experimental_stream_live_agent
         from zhivex_ai.integrations.protocols import A2AAgentExecutor, ProtocolLimits, create_a2a_agent_card
         from zhivex_ai.integrations.responses import InMemoryResponsesEventStore, ResponsesAgentHost
+        from zhivex_ai.providers.base import ProviderAdapter
         from zhivex_ai.workflows import (
             SequentialAgent,
             WorkflowBuilder,
@@ -264,11 +267,15 @@ def _smoke_code(expected_version: str) -> str:
                 raise AssertionError("Unknown gateway pricing must fail closed under a configured budget.")
             assert gateway_attempts == [
                 {{
+                    "attemptId": "0:0",
+                    "phase": "finished",
+                    "terminal": True,
                     "provider": "openai",
                     "modelId": "unknown-artifact-price",
                     "ok": False,
                     "latencyMs": 0,
                     "errorMessage": "Skipped because model cost is unknown under the configured budget.",
+                    "errorType": "policy_skip",
                     "retryable": False,
                     "reason": "cost_unknown",
                     "retry": 0,
@@ -276,6 +283,73 @@ def _smoke_code(expected_version: str) -> str:
                 }}
             ]
             assert "must-not-reach-provider" not in str(gateway_attempts)
+
+            class FailingArtifactModel:
+                capabilities = model.capabilities
+
+                async def generate(self, input):
+                    raise RuntimeError("503 artifact primary failure")
+
+            artifact_models = {{
+                "primary-fails": FailingArtifactModel(),
+                "ultra-pro-flash-lite": create_mock_language_model(
+                    responses=[GenerateResult(text="heuristic", finish_reason="stop")]
+                ),
+                "plain-model": create_mock_language_model(
+                    responses=[GenerateResult(text="catalog", finish_reason="stop")]
+                ),
+            }}
+            catalog_gateway = create_gateway(
+                GatewayConfig(
+                    adapters={{
+                        "openai": ProviderAdapter(
+                            name="openai",
+                            language_model_factory=lambda model_id: artifact_models[model_id],
+                        )
+                    }},
+                    model_catalog=create_model_catalog(
+                        [
+                            ModelCatalogEntry(
+                                provider="openai",
+                                model_id="primary-fails",
+                                recommended_for=["chat"],
+                            ),
+                            ModelCatalogEntry(
+                                provider="openai",
+                                model_id="ultra-pro-flash-lite",
+                                recommended_for=["chat"],
+                            ),
+                            ModelCatalogEntry(
+                                provider="openai",
+                                model_id="canonical-speed-model",
+                                aliases=["plain-model"],
+                                cost_per_1k_tokens=0.25,
+                                recommended_for=["speed"],
+                                availability="preview",
+                            ),
+                        ]
+                    ),
+                    max_retries=0,
+                )
+            )
+            catalog_result = await catalog_gateway.generate(
+                messages=[GatewayMessage(role="user", content="catalog route")],
+                primary=GatewayModelTarget(provider="openai", model_id="primary-fails"),
+                fallbacks=[
+                    GatewayModelTarget(provider="openai", model_id="ultra-pro-flash-lite"),
+                    GatewayModelTarget(provider="openai", model_id="plain-model"),
+                ],
+                routing_mode="speed",
+            )
+            assert catalog_result.text == "catalog"
+            assert catalog_result.model_used == "plain-model"
+            catalog_evidence = catalog_result.route_decision.target_evidence[1]
+            assert catalog_evidence.canonical_model_id == "canonical-speed-model"
+            assert catalog_evidence.scoring_source == "model_catalog"
+            assert catalog_evidence.recommended_for == ("speed",)
+            assert catalog_evidence.availability == "preview"
+            assert catalog_evidence.cost_per_1k_tokens == 0.25
+            assert catalog_evidence.cost_source == "model_catalog"
 
             tool_executions = []
 

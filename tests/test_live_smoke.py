@@ -501,7 +501,7 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
     def test_release_evidence_records_artifact_hash_without_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            artifact = Path(directory) / "zhivex_ai_sdk-0.21.0-py3-none-any.whl"
+            artifact = Path(directory) / "zhivex_ai_sdk-0.22.0-py3-none-any.whl"
             artifact.write_bytes(b"exact-wheel")
             evidence = Path(directory) / "smoke.json"
             with patch.dict(

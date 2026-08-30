@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import asyncio
+import errno
 import hashlib
 import json
+import os
+import stat
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .errors import ValidationError
 from .types import GenerateResult, LanguageModel, ModelGenerateInput
+
+
+_FILE_CACHE_TEMP_PREFIX = ".zhivex-generate-cache-"
+_FILE_CACHE_TEMP_SUFFIX = ".tmp"
+_FILE_CACHE_STALE_TEMP_SECONDS = 24 * 60 * 60
+_FILE_CACHE_CLEANUP_SCAN_LIMIT = 256
+_FILE_CACHE_CLEANUP_DELETE_LIMIT = 32
 
 
 def _serialize_input(input: Any) -> str:
@@ -113,16 +126,38 @@ def create_cached_generate_middleware(
     cache: GenerateCache,
     get_key: Callable[[ModelGenerateInput, LanguageModel], str] | None = None,
 ) -> GenerateMiddleware:
+    in_flight: dict[str, asyncio.Task[GenerateResult]] = {}
+    in_flight_lock = asyncio.Lock()
+
+    def consume_task_exception(task: asyncio.Task[GenerateResult]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def resolve(key: str, next: MiddlewareNext) -> GenerateResult:
+        try:
+            cached = await cache.get(key)
+            if cached is not None:
+                return cached
+            output = await next()
+            await cache.set(key, output)
+            return output
+        finally:
+            task = asyncio.current_task()
+            async with in_flight_lock:
+                if in_flight.get(key) is task:
+                    del in_flight[key]
+
     async def middleware(context: MiddlewareContext, next: MiddlewareNext) -> GenerateResult:
         key = get_key(context.input, context.model) if get_key else _serialize_input(
             {"provider": context.model.provider, "model_id": context.model.model_id, "input": context.input}
         )
-        cached = await cache.get(key)
-        if cached is not None:
-            return cached
-        output = await next()
-        await cache.set(key, output)
-        return output
+        async with in_flight_lock:
+            task = in_flight.get(key)
+            if task is None:
+                task = asyncio.create_task(resolve(key, next))
+                task.add_done_callback(consume_task_exception)
+                in_flight[key] = task
+        return await asyncio.shield(task)
 
     return middleware
 
@@ -146,20 +181,137 @@ class FileGenerateCache:
     def __init__(self, dir: str) -> None:
         self._dir = Path(dir)
 
+    @staticmethod
+    def _digest(key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
     def _path(self, key: str) -> Path:
-        filename = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json"
-        return self._dir / filename
+        return self._dir / f"{self._digest(key)}.json"
+
+    def _temp_prefix(self, key: str) -> str:
+        return f"{_FILE_CACHE_TEMP_PREFIX}{self._digest(key)}-"
+
+    @staticmethod
+    def _corrupt_entry(path: Path) -> ValidationError:
+        return ValidationError(
+            f'File generate cache entry "{path.name}" is corrupt, incompatible, or not a regular file.'
+        )
 
     async def get(self, key: str) -> GenerateResult | None:
+        return await asyncio.to_thread(self._get_sync, key)
+
+    def _get_sync(self, key: str) -> GenerateResult | None:
         path = self._path(key)
-        if not path.exists():
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        if no_follow:
+            flags |= no_follow
+        else:
+            try:
+                if stat.S_ISLNK(os.lstat(path).st_mode):
+                    raise self._corrupt_entry(path)
+            except FileNotFoundError:
+                return None
+
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
             return None
-        return GenerateResult(**json.loads(path.read_text("utf-8")))
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise self._corrupt_entry(path) from error
+            raise
+
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise self._corrupt_entry(path)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = None
+                payload = json.load(handle)
+            if not isinstance(payload, dict):
+                raise self._corrupt_entry(path)
+            return GenerateResult(**payload)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
+            raise self._corrupt_entry(path) from error
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     async def set(self, key: str, value: GenerateResult) -> None:
+        await asyncio.to_thread(self._set_sync, key, value)
+
+    def _set_sync(self, key: str, value: GenerateResult) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
         serializable = json.loads(_serialize_input(value))
-        self._path(key).write_text(json.dumps(serializable), "utf-8")
+        payload = json.dumps(serializable, separators=(",", ":"), sort_keys=True)
+        self._cleanup_stale_temp_files(key)
+
+        descriptor: int | None = None
+        temp_path: str | None = None
+        try:
+            descriptor, temp_path = tempfile.mkstemp(
+                dir=self._dir,
+                prefix=self._temp_prefix(key),
+                suffix=_FILE_CACHE_TEMP_SUFFIX,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+                descriptor = None
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            os.replace(temp_path, self._path(key))
+            temp_path = None
+            self._fsync_directory()
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
+
+    def _cleanup_stale_temp_files(self, key: str) -> None:
+        prefix = self._temp_prefix(key)
+        cutoff = time.time() - _FILE_CACHE_STALE_TEMP_SECONDS
+        deleted = 0
+        try:
+            with os.scandir(self._dir) as entries:
+                for scanned, entry in enumerate(entries):
+                    if scanned >= _FILE_CACHE_CLEANUP_SCAN_LIMIT or deleted >= _FILE_CACHE_CLEANUP_DELETE_LIMIT:
+                        break
+                    if not entry.name.startswith(prefix) or not entry.name.endswith(_FILE_CACHE_TEMP_SUFFIX):
+                        continue
+                    try:
+                        metadata = entry.stat(follow_symlinks=False)
+                        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mtime > cutoff:
+                            continue
+                        os.unlink(entry.path)
+                        deleted += 1
+                    except (FileNotFoundError, PermissionError):
+                        continue
+        except (FileNotFoundError, PermissionError):
+            return
+
+    def _fsync_directory(self) -> None:
+        if os.name == "nt":
+            return
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            descriptor = os.open(self._dir, flags)
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EINVAL, errno.ENOTSUP}:
+                return
+            raise
+        try:
+            os.fsync(descriptor)
+        except OSError as error:
+            if error.errno not in {errno.EBADF, errno.EINVAL, errno.ENOTSUP}:
+                raise
+        finally:
+            os.close(descriptor)
 
 
 def create_file_generate_cache(*, dir: str) -> FileGenerateCache:
