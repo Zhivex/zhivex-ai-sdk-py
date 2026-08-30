@@ -39,6 +39,41 @@ Related documents:
 
 - None.
 
+## 0.22.0
+
+### Added
+
+- Added `GatewayAttempt.error_type` and terminal `on_attempt` fields `attemptId`, `phase`, `terminal`, and `errorType` for deterministic correlation and typed metrics without parsing error text.
+- Added typed `ModelCatalogEntry.capabilities` metadata and per-target `GatewayRouteDecision.target_evidence` covering the canonical model, routing source, score, recommendations, capabilities, availability, and resolved cost source.
+- Added focused `zhivex_ai.catalog.ModelPricing` metadata with published input/output rates per million tokens, currency, source URL, effective windows, and conservative gateway conversion.
+
+### Changed
+
+- Bumped the package version to `0.22.0`; the distribution remains Beta and the existing Stable public surface remains backward compatible.
+- `GatewayConfig.on_attempt` now emits one terminal `phase="finished"` payload for each executed retry or skipped target. The premature `ok=True`/`latencyMs=0` pre-call payload is no longer emitted; consumers that treated it as a start signal should migrate to terminal-event accounting.
+- Provider refusals are recorded as `ok=False` attempts with `reason="provider_refusal"` and `error_type="refusal"` even when `fallback_on_refusal=False` returns the refusal response without trying another target.
+- `GatewayConfig.model_catalog` is now typed as `ModelCatalog | None` and actively drives fallback scoring. Cataloged targets use maintained recommendation metadata instead of `pro`/`flash`/`lite` name heuristics; uncataloged targets retain the legacy heuristic as a compatibility path.
+- Refreshed `default_model_catalog` against official provider sources on 2026-08-29, including Gemini/Vertex 3.7 Flash, Gemini Omni 1.1 Flash and Transcribe, Qwen3.8 Flash, current Claude lifecycle/prices, and explicit retired/deprecated records. Versions, snapshots, previews, and separately billed IDs are no longer modeled as aliases.
+- Model catalogs now reject canonical/alias collisions, normalize collection fields to immutable tuples, and return defensive copies. Recommendations affect ranking only; they no longer imply capabilities.
+
+### Fixed
+
+- Gateway success events now include measured provider latency with a minimum one-millisecond representation for executed attempts, while policy skips retain zero latency.
+- Gateway timeout, refusal, provider HTTP, transport, and generic provider failures now emit typed, sanitized terminal errors; generic exception messages are not copied into attempt telemetry.
+- Synchronous or asynchronous `on_attempt` observer failures no longer change provider outcomes or trigger retries after successful external work.
+- Cataloged targets now fail closed before provider invocation when required capability metadata is absent or false, while adapter capabilities remain a second runtime guard.
+- Cataloged text routes now skip retired models and non-language API surfaces before adapter resolution; preview, limited, and deprecated fallbacks receive explicit ranking penalties. Expired typed catalog prices resolve as unknown under a budget.
+- Cached generation now coalesces identical concurrent misses into one downstream call, keeps distinct keys independent, shields shared work from individual waiter cancellation, and removes in-flight entries after success or failure so retries remain possible.
+- File-backed generation cache writes now fsync a same-directory temporary and publish with atomic replacement, preserve the previous value when publication fails, reject corrupt/symlinked/non-regular entries with `ValidationError`, and clean only a bounded set of cache-owned stale temporaries.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
 ## 0.21.0
 
 ### Added

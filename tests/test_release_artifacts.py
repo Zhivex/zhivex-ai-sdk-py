@@ -105,7 +105,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 )
 
     def test_installed_artifact_smoke_uses_the_focused_namespaces(self) -> None:
-        smoke = verify_release_artifacts._smoke_code("0.21.0")
+        smoke = verify_release_artifacts._smoke_code("0.22.0")
 
         for namespace in [
             "zhivex_ai.evals",
@@ -436,7 +436,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 workflow,
             )
             self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
-            self.assertIn("docs/releases/0.21.0-smoke-policy.json", workflow)
+            self.assertIn("docs/releases/0.22.0-smoke-policy.json", workflow)
             self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
             self.assertIn("release-smoke-evidence.json", workflow)
             self.assertIn("name: release-smoke-evidence", workflow)
@@ -454,7 +454,7 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)
 
         policy = json.loads(
-            (ROOT / "docs/releases/0.21.0-smoke-policy.json").read_text("utf-8")
+            (ROOT / "docs/releases/0.22.0-smoke-policy.json").read_text("utf-8")
         )
         self.assertEqual(
             policy["required_providers"]["openai"]["model"],
