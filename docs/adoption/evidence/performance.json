@@ -1,0 +1,39 @@
+{
+  "cache": {
+    "p50_ms": 1.5430630010087043,
+    "p95_ms": 1.930667000124231,
+    "throughput_requests_per_second": 9932.984456893522,
+    "peak_bytes": 561808,
+    "max_downstream_calls": 1,
+    "wall_seconds_with_warmup": 0.3316908330016304
+  },
+  "gateway": {
+    "p50_ms": 0.12495848932303488,
+    "p95_ms": 0.17033398034982383,
+    "throughput_requests_per_second": 7072.805060533396,
+    "peak_bytes": 688403,
+    "max_downstream_calls": 1,
+    "wall_seconds_with_warmup": 0.032089500018628314
+  },
+  "postgres": {
+    "status": "passed",
+    "rounds": 200,
+    "concurrency": 16,
+    "max_winners": 1,
+    "recovery_consistent": true,
+    "fault": "owner_disappearance_logical_ttl",
+    "p50_ms": 13.322833474376239,
+    "p95_ms": 19.5372499874793
+  },
+  "schema_version": 1,
+  "seed": 14,
+  "rounds": 200,
+  "concurrency": 16,
+  "python": "3.14.6",
+  "platform": "Darwin",
+  "sdk_version": "0.23.0",
+  "commit": "77d48824f484a75786036dfa29c02bb9f569d5ed",
+  "wheel_sha256": "3990a493cd778465fbadddce5fbca6679b936d53ca2fe9a5bfa45c2bedabd38e",
+  "failures": [],
+  "status": "passed"
+}

@@ -168,3 +168,70 @@ These capabilities are available but are not part of the minimum agent journey:
 Use the focused imports `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations`, and `zhivex_ai.experimental` for these surfaces. Existing top-level imports remain compatible, but new extension code should make its dependency boundary explicit.
 
 Keep Beta and Experimental dependencies behind an application-owned boundary so the core agent path remains easy to upgrade. Stable workflows should still sit behind application authorization, storage, and side-effect controls. The complete boundary and non-goals are documented in [SCOPE.md](./SCOPE.md).
+
+## Installed Durable Walkthrough (Candidate)
+
+The next-release Beta CLI adds `zhivex init`. It is **not present in the published
+0.23.0 wheel**. Use the candidate wheel from this change until a release includes it.
+The SDK APIs used by the generated application already exist; no new Stable API is added.
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install '/absolute/path/to/candidate.whl[postgres]'
+.venv/bin/zhivex init durable-demo --backend postgres
+cd durable-demo
+```
+
+Set `DATABASE_URL` to a dedicated Postgres database through your environment.
+The generator writes placeholders only and never loads `.env` automatically.
+The default `--backend sqlite` is a local Beta alternative, not the Postgres proof.
+Keep this venv active, or use `../.venv/bin/python` below:
+
+```bash
+../.venv/bin/python app.py health
+../.venv/bin/python app.py ready
+../.venv/bin/python app.py first
+../.venv/bin/python app.py start
+```
+
+`first` verifies generation; `start` asks a synthetic model for a read-only tool and
+persists a pending approval before executing it. Copy the emitted `run_id` and
+one `approval_ids` value. The command exits, providing a real process boundary.
+After reviewing that pending request, continue in a new process:
+
+```bash
+../.venv/bin/python app.py approve --run-id RUN --approval-id APPROVAL
+../.venv/bin/python app.py status --run-id RUN
+```
+
+The original run completes and a child run continues from durable state. Repeating
+the approval fails. `deny` rejects the tool; `cancel --run-id RUN` cancels a pending
+run and prevents approval. A cancellation cannot undo an external effect. The
+example tool is a synthetic read; real writes require downstream idempotency.
+
+For real provider calls, set `OPENAI_API_KEY` and an available `OPENAI_MODEL`, then
+add `--live` to `first`, `start`, and `approve`. Keep the same model/mode throughout
+a run. Each command has a 60-second bound; calls use 15-second timeouts, zero
+retries and bounded output. A model that does not request approval fails the
+walkthrough instead of producing false success. Only statuses, IDs and timings
+are printed. Run/checkpoint storage still contains messages and requires access
+controls, retention, backups and tenant isolation. The application owns approval
+authorization and UI; possession of a run ID is not authorization.
+
+### Reproduce the acceptance evidence
+
+From a maintainer checkout, build a candidate and run the isolated consumer:
+
+```bash
+make build
+.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl --output /tmp/adoption-sqlite.json
+.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl --backend postgres --output /tmp/adoption-postgres.json
+```
+
+The Postgres command requires `DATABASE_URL`. Add `--live` only with the explicit
+provider configuration above. The verifier installs the wheel in a fresh venv,
+checks import origin, generates the project outside the checkout and checks
+restart, wrong/duplicate approvals, denial and cancellation. It records wheel
+SHA256 and machine timings. These timings **do not establish** first response
+under five minutes or durable onboarding under fifteen minutes for a new user.
+Use the [human timing protocol](./adoption/HUMAN_TIMING.md) for those criteria.

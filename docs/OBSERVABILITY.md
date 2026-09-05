@@ -168,3 +168,41 @@ For production services:
 - record `ProviderHTTPError.retryable` and `ProviderHTTPError.retry_after_ms`
 - emit cost fields from `TokenUsage` where available
 - redact prompts, tool inputs, provider payloads, traces, and error bodies according to application policy
+
+## Verified OTLP recipe (HU16)
+
+[The recipe](../examples/observability/otlp_recipe.py) exercises synthetic generation,
+gateway fallback, agent suspension and resume under one application request trace.
+The standard OTLP Collector fans out to Jaeger and Tempo; no vendor SDK enters the
+runtime. Versions are pinned in `examples/observability/compose.yaml`.
+
+```bash
+docker compose -p zhivex-observability -f examples/observability/compose.yaml up -d
+python -m pip install 'zhivex-ai-sdk[otel]' opentelemetry-exporter-otlp-proto-http
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:14318/v1/traces python examples/observability/otlp_recipe.py > /tmp/trace-receipt.json
+python scripts/verify_otlp.py --receipt /tmp/trace-receipt.json --output /tmp/otlp.json
+docker compose -p zhivex-observability -f examples/observability/compose.yaml down
+```
+
+For the new redaction behavior use the candidate wheel rather than published 0.23.0.
+The verifier requires the same trace in both backends. The loopback services are
+synthetic test infrastructure, not a production deployment. Backend auth, TLS,
+retention, exporter delivery monitoring and resource identity are application-owned.
+See the primary [Jaeger setup](https://www.jaegertracing.io/docs/2.20/getting-started/)
+and [Tempo Collector guide](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/).
+
+The Beta observer now exports only allowlisted attributes and exception class;
+it omits raw exception messages, stack traces, arbitrary metadata and idempotency
+keys. Caller-supplied names/IDs must already be approved and non-sensitive. Strings
+longer than 128 characters are dropped. Request correlation belongs on a parent
+application span; run/session identifiers belong on spans, never metric labels.
+The in-memory metric regression permits only operation (generation/gateway/agent)
+and outcome (ok/error): at most six combinations. The example's meter has no
+exporter: configure a standard metrics reader separately if metrics are needed.
+
+Sampling is explicit and parent-based; this synthetic recipe samples 100% to make
+receipt testable. Select a smaller trace ratio and attribute limits for production.
+No exporter is configured merely by importing the SDK. Approval tool execution
+currently occurs before the continuation runtime span; this recipe claims run/model
+correlation, not a dedicated resumed-tool span. Cross-process correlation requires
+the application to persist an approved trace context and restore/link it on resume.

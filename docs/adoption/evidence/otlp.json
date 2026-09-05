@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "backends": [
+    "jaeger",
+    "tempo"
+  ],
+  "span_count": 8,
+  "operations": [
+    "application.request",
+    "zhivex.agent.run",
+    "zhivex.gateway.attempt",
+    "zhivex.generation"
+  ]
+}

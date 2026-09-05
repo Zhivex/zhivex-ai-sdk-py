@@ -1936,10 +1936,17 @@ def _pending_approval_from_request(
     tool_call_id: str,
     tool_fingerprint: str,
 ) -> PendingApproval:
+    from pydantic import BaseModel
+
+    # Schema validation yields typed inputs; durable approvals store JSON and
+    # validate that JSON against the tool schema again when resuming.
+    arguments = request.tool_input
+    if isinstance(arguments, BaseModel):
+        arguments = arguments.model_dump(mode="json")
     return PendingApproval(
         id=decision.approval_id or _new_id("approval"),
         name=request.tool_name,
-        arguments=serialize_json_value(request.tool_input),
+        arguments=serialize_json_value(arguments),
         provider=str(request.tool_metadata.get("provider") or "") or None,
         reason=decision.reason,
         tool_call_id=tool_call_id or None,
@@ -4789,8 +4796,9 @@ async def _execute_resolved_approval_tool(
         if timeout_ms is not None and timeout_ms <= 0:
             raise ValidationError('The "tool_execution.timeout_ms" field must be greater than zero.')
         context.deadline_ms = _now_ms() + timeout_ms if timeout_ms is not None else None
+        parsed_input = create_schema_adapter(definition.schema).validate_python(pending.arguments)
         execution = _await_with_agent_cancellation(
-            registry.execute(definition, pending.arguments, context),
+            registry.execute(definition, parsed_input, context),
             cancellation_token=cancellation_token,
             run_id=state.run_id,
         )

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "description": "Conservative PR safety ceilings for synthetic local calls; latency trends need a dedicated runner.",
+  "max_p95_ms": 1000,
+  "max_peak_bytes": 67108864,
+  "downstream_calls_per_round": 1,
+  "lease_winners_per_round": 1
+}

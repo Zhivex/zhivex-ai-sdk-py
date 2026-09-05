@@ -9,6 +9,23 @@ from .catalog import ModelCatalog
 from .types import TokenUsage
 
 
+_OTEL_ATTRIBUTES = frozenset({
+    "agent.name", "gen_ai.agent.name", "gen_ai.operation.name", "gen_ai.provider.name",
+    "gen_ai.request.model", "gen_ai.response.finish_reasons", "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens", "gen_ai.usage.total_tokens", "session.id", "run.id",
+    "run.parent_id", "zhivex.duration_ms", "zhivex.run.status", "tool.name", "tool.source",
+    "gen_ai.tool.name", "gen_ai.tool.type", "guardrail.name", "guardrail.stage",
+    "guardrail.triggered", "orchestration.depth", "summary.updated", "finish.reason",
+})
+
+
+def _safe_otel_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+    # Callers own the approved names/IDs. Never export arbitrary metadata or payloads.
+    return {key: value for key, value in attributes.items()
+            if key in _OTEL_ATTRIBUTES and isinstance(value, (str, bool, int, float))
+            and (not isinstance(value, str) or len(value) <= 128)}
+
+
 @dataclass(slots=True)
 class _SpanHandle:
     manager: Any
@@ -16,17 +33,19 @@ class _SpanHandle:
 
     def end(self, *, attributes: dict[str, Any] | None = None, error: Exception | None = None) -> None:
         if self.span is not None and attributes:
-            for key, value in attributes.items():
+            for key, value in _safe_otel_attributes(attributes).items():
                 self.span.set_attribute(key, value)
         if self.span is not None and error is not None:
-            self.span.record_exception(error)
+            # Exception messages and stack traces can contain prompts, DSNs and keys.
+            self.span.set_attribute("error.type", type(error).__name__)
             try:
                 from opentelemetry.trace import Status, StatusCode  # type: ignore[import-not-found]
 
-                self.span.set_status(Status(StatusCode.ERROR, str(error)))
+                self.span.set_status(Status(StatusCode.ERROR))
             except Exception:
                 pass
-        self.manager.__exit__(type(error) if error is not None else None, error, getattr(error, "__traceback__", None))
+        # Passing the exception to the OTel context manager would auto-record it again.
+        self.manager.__exit__(None, None, None)
 
 
 class OTelAgentObserver:
@@ -36,7 +55,7 @@ class OTelAgentObserver:
     def start_span(self, name: str, attributes: dict[str, Any] | None = None) -> _SpanHandle:
         manager = self._tracer.start_as_current_span(name)
         span = manager.__enter__()
-        for key, value in (attributes or {}).items():
+        for key, value in _safe_otel_attributes(attributes or {}).items():
             span.set_attribute(key, value)
         return _SpanHandle(manager=manager, span=span)
 
