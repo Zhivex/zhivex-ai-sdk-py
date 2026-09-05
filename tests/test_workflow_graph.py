@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zhivex_ai import (
     Agent,
@@ -797,19 +798,50 @@ class WorkflowGraphTests(unittest.IsolatedAsyncioTestCase):
                 lease_heartbeat_ms=10,
             )
         )
-        worker = asyncio.create_task(graph.run(idempotency_key="leased-heartbeat"))
-        await asyncio.wait_for(started.wait(), timeout=1)
-        await asyncio.sleep(0.08)
+        # Control lease time independently of the runner's scheduling latency.
+        # A real heartbeat must renew the lease before we advance past its
+        # original expiry; merely increasing a sleep/TTL would not prove this.
+        renewals = asyncio.Queue()
+        original_renew = lease_manager.renew
 
-        with self.assertRaisesRegex(WorkflowConflictError, "active execution lease"):
-            await graph.run(idempotency_key="leased-heartbeat", recover_running=True)
+        async def observe_renew(*args, **kwargs):
+            renewed = await original_renew(*args, **kwargs)
+            await renewals.put(renewed)
+            return renewed
 
-        release.set()
-        result = await worker
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.state["result"], "done")
-        self.assertEqual(result.checkpoint.metadata["execution_lease"]["fencing_token"], 1)
-        self.assertIsNone(await lease_manager.get(result.run_id))
+        with patch("zhivex_ai.workflow_state._now_ms", return_value=1_000) as clock, patch.object(
+            lease_manager, "renew", side_effect=observe_renew
+        ):
+            worker = asyncio.create_task(graph.run(idempotency_key="leased-heartbeat"))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                clock.return_value = 1_050
+
+                async def wait_for_renewal():
+                    while True:
+                        renewed = await renewals.get()
+                        self.assertIsNotNone(renewed)
+                        if renewed.renewed_at_ms == 1_050:
+                            return renewed
+
+                renewed = await asyncio.wait_for(wait_for_renewal(), timeout=5)
+                self.assertEqual(renewed.expires_at_ms, 1_110)
+                # Past the original 1060 expiry, still before the renewed expiry.
+                clock.return_value = 1_080
+                with self.assertRaisesRegex(WorkflowConflictError, "active execution lease"):
+                    await graph.run(idempotency_key="leased-heartbeat", recover_running=True)
+
+                release.set()
+                result = await asyncio.wait_for(worker, timeout=5)
+                self.assertEqual(result.status, "completed")
+                self.assertEqual(result.state["result"], "done")
+                self.assertEqual(result.checkpoint.metadata["execution_lease"]["fencing_token"], 1)
+                self.assertIsNone(await lease_manager.get(result.run_id))
+            finally:
+                release.set()
+                if not worker.done():
+                    worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
 
     async def test_expired_lease_allows_recovery_and_increments_fence(self) -> None:
         calls = 0

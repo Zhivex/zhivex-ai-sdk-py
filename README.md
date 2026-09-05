@@ -16,6 +16,13 @@ The core product is deliberately small:
 
 Stable workflow orchestration, evaluation pipelines, protocol hosting, packaged skills, the general CLI/playground, and realtime voice are available, but they are optional extensions rather than prerequisites for building an agent. Named external-engine adapters remain Beta contracts owned by the application.
 
+## Documentation
+
+Read the [Python getting-started guide](https://sdk.zhivex.ai/doc/python/getting-started)
+and [versioned Python reference](https://sdk.zhivex.ai/doc/python/0.23.0/reference/index)
+on the SDK portal. Documentation maintenance and release ownership are described
+in the [portal maintenance guide](docs/DOCUMENTATION_SITE.md).
+
 ## Why Zhivex AI SDK
 
 Modern AI apps usually start simple and then drift into provider lock-in:

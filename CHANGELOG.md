@@ -30,6 +30,8 @@ Related documents:
 
 ### Added
 
+- Linked the versioned Python guides and installed-wheel API reference on sdk.zhivex.ai, with documentation maintenance owned by the shared Astro portal.
+
 - Added a versioned, fail-closed Tier-1 provider certification contract with strict JSON Schema validation, exact-wheel/source/workflow identity, per-target operations, sanitized diagnostics, and deterministic reports.
 - Added a generated provider certification matrix that separates source-contract, installed-wheel, and live evidence while keeping Meta Standard, Meta Contributor, and vLLM deployment targets distinct.
 - Added HU7 per-target exact-wheel policies and a protected manual workflow for the first Stable cohort: OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex.
