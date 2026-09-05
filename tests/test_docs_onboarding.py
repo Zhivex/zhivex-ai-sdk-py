@@ -193,6 +193,15 @@ class DocsOnboardingTests(TestCase):
             for raw_target in link_pattern.findall(text):
                 if raw_target.startswith(("http://", "https://")):
                     continue
+                if path.is_relative_to(ROOT / "docs/site"):
+                    from scripts.render_docs_reference import NAMESPACES
+
+                    generated = {f"reference/{name}.md" for name in NAMESPACES} | {"reference/index.md"}
+                    if raw_target in generated:
+                        # The Documentation CI job validates rendered pages and anchors.
+                        continue
+                    if raw_target.startswith("{{SOURCE}}/"):
+                        raw_target = str(ROOT / raw_target.removeprefix("{{SOURCE}}/"))
                 target = (path.parent / raw_target).resolve()
                 if not target.exists():
                     missing.append(f"{path.relative_to(ROOT)} -> {raw_target}")

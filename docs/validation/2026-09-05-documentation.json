@@ -1,0 +1,24 @@
+{
+  "version": "0.23.0",
+  "source_commit": "b129bb5a4741dc0bc235b3b7749d647195758f7b",
+  "wheel_sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+  "channel": "published",
+  "stable_total": 206,
+  "stable_documented": 206,
+  "snippets": {
+    "snippets/offline_agent.py": "execute",
+    "snippets/live_agent.py": "compile"
+  },
+  "compiled_blocks": 7,
+  "installed_wheel": true,
+  "api_reference_entries": 797,
+  "validation": {
+    "strict_build": "passed",
+    "local_pages_assets_anchors": "passed",
+    "immutable_source_links": "passed",
+    "browser_navigation_search_version_selector": "passed",
+    "browser_errors": 0,
+    "release_check": "908 passed, 16 skipped, 161 subtests; isolated wheel/sdist/extras, pip-audit and Twine passed",
+    "publication": "pending merge and manual main workflow"
+  }
+}

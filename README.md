@@ -1952,3 +1952,9 @@ or, for a permanent fix with the official python.org installer:
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Versioned documentation site
+
+Build the searchable, versioned reference with `make docs-build` after `make dev`.
+See [the documentation publishing guide](docs/DOCUMENTATION_SITE.md) for previews,
+artifact identity and the separate GitHub Pages deployment workflow.
