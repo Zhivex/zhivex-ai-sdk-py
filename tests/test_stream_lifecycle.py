@@ -45,6 +45,9 @@ class WaitingModel:
 
 class StreamLifecycleTests(IsolatedAsyncioTestCase):
     async def test_fastapi_response_close_stops_generation(self):
+        import importlib.util
+        if importlib.util.find_spec("fastapi") is None:
+            self.skipTest("api extra is not installed")
         from examples.integrations.fastapi_streaming_api import _to_fastapi_stream
         from zhivex_ai import to_text_stream_response
 

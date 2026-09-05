@@ -1,0 +1,33 @@
+{
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.22.0-py3-none-any.whl",
+    "installation_status": "passed",
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.22.0",
+    "sha256": "5e016ec99aa254f074b8b14292d1ee7f4d181168ddaae8c7b57b80c4af89116e",
+    "source_revision": "742f11c981e361479c0ff1762bef2b6620622c17"
+  },
+  "recorded_at": "2026-08-31T03:41:42.447581Z",
+  "run_status": "failed",
+  "schema_version": 1,
+  "targets": [
+    {
+      "diagnostic_code": "GEMINI_API_KEY_INVALID",
+      "diagnostic_fingerprint": null,
+      "model": "gemini-3.7-flash",
+      "operations": [],
+      "provider": "gemini",
+      "result": "blocked",
+      "surface": "standard",
+      "target_id": "gemini-standard"
+    }
+  ],
+  "workflow": {
+    "name": "Local provider smoke",
+    "platform": "local",
+    "repository": null,
+    "run_attempt": null,
+    "run_id": null
+  }
+}

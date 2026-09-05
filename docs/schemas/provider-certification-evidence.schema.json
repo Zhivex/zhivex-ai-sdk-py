@@ -1,0 +1,301 @@
+{
+  "$defs": {
+    "ArtifactEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "anyOf": [
+            {
+              "pattern": "^zhivex_ai_sdk-[A-Za-z0-9._+-]+-py3-none-any\\.whl$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "installation_status": {
+          "enum": [
+            "passed",
+            "failed",
+            "not-applicable"
+          ],
+          "title": "Installation Status",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "wheel",
+            "source"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "package_name": {
+          "const": "zhivex-ai-sdk",
+          "default": "zhivex-ai-sdk",
+          "title": "Package Name",
+          "type": "string"
+        },
+        "package_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[A-Za-z0-9.+-]*)?$",
+          "title": "Package Version",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source_revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "package_version",
+        "source_revision",
+        "installation_status"
+      ],
+      "title": "ArtifactEvidence",
+      "type": "object"
+    },
+    "OperationEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "generation",
+            "streaming",
+            "structured-output",
+            "agent-tool",
+            "portable-retrieval",
+            "embeddings",
+            "grounding",
+            "transcription",
+            "speech"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "unsupported"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "title": "OperationEvidence",
+      "type": "object"
+    },
+    "TargetEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "diagnostic_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z][A-Z0-9_]{2,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diagnostic Code"
+        },
+        "diagnostic_fingerprint": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diagnostic Fingerprint"
+        },
+        "model": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/+:-]{0,127}$",
+          "title": "Model",
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/OperationEvidence"
+          },
+          "title": "Operations",
+          "type": "array"
+        },
+        "provider": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "unsupported"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "surface": {
+          "enum": [
+            "standard",
+            "contributor",
+            "deployment"
+          ],
+          "title": "Surface",
+          "type": "string"
+        },
+        "target_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "provider",
+        "surface",
+        "model",
+        "result"
+      ],
+      "title": "TargetEvidence",
+      "type": "object"
+    },
+    "WorkflowEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "github-actions",
+            "local"
+          ],
+          "title": "Platform",
+          "type": "string"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "run_attempt": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Attempt"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        }
+      },
+      "required": [
+        "platform",
+        "name"
+      ],
+      "title": "WorkflowEvidence",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/Zhivex/zhivex-ai-sdk-py/blob/main/docs/schemas/provider-certification-evidence.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": {
+      "$ref": "#/$defs/ArtifactEvidence"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "run_status": {
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "title": "Run Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "targets": {
+      "items": {
+        "$ref": "#/$defs/TargetEvidence"
+      },
+      "title": "Targets",
+      "type": "array"
+    },
+    "workflow": {
+      "$ref": "#/$defs/WorkflowEvidence"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_status",
+    "recorded_at",
+    "artifact",
+    "workflow",
+    "targets"
+  ],
+  "title": "Zhivex Tier-1 Provider Certification Evidence",
+  "type": "object"
+}

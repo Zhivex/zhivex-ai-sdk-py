@@ -1,0 +1,54 @@
+{
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.23.0-py3-none-any.whl",
+    "installation_status": "passed",
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.23.0",
+    "sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+    "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+  },
+  "recorded_at": "2026-09-05T18:52:05.069155Z",
+  "run_status": "failed",
+  "schema_version": 1,
+  "targets": [
+    {
+      "diagnostic_code": "VLLM_DEPLOYMENT_UNAVAILABLE",
+      "diagnostic_fingerprint": null,
+      "model": "Qwen/Qwen2.5-1.5B-Instruct",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "blocked"
+        },
+        {
+          "name": "generation",
+          "status": "blocked"
+        },
+        {
+          "name": "portable-retrieval",
+          "status": "blocked"
+        },
+        {
+          "name": "streaming",
+          "status": "blocked"
+        },
+        {
+          "name": "structured-output",
+          "status": "blocked"
+        }
+      ],
+      "provider": "vllm",
+      "result": "blocked",
+      "surface": "deployment",
+      "target_id": "vllm-deployment"
+    }
+  ],
+  "workflow": {
+    "name": "Local provider smoke",
+    "platform": "local",
+    "repository": null,
+    "run_attempt": null,
+    "run_id": null
+  }
+}

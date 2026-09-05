@@ -1,0 +1,50 @@
+{
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.23.0-py3-none-any.whl",
+    "installation_status": "passed",
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.23.0",
+    "sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+    "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+  },
+  "recorded_at": "2026-09-05T18:50:48.041672Z",
+  "run_status": "passed",
+  "schema_version": 1,
+  "targets": [
+    {
+      "diagnostic_code": null,
+      "diagnostic_fingerprint": null,
+      "model": "gpt-5.6-luna",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "passed"
+        },
+        {
+          "name": "generation",
+          "status": "passed"
+        },
+        {
+          "name": "streaming",
+          "status": "passed"
+        },
+        {
+          "name": "structured-output",
+          "status": "passed"
+        }
+      ],
+      "provider": "openai",
+      "result": "passed",
+      "surface": "standard",
+      "target_id": "openai-standard"
+    }
+  ],
+  "workflow": {
+    "name": "Local provider smoke",
+    "platform": "local",
+    "repository": null,
+    "run_attempt": null,
+    "run_id": null
+  }
+}

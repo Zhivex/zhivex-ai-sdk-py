@@ -251,7 +251,7 @@ async def open_websocket_connection(
         raise RuntimeError(
             'Realtime support requires the "websockets" package. '
             'If you are running from this repo, install dependencies first with `make dev` '
-            "or `pip install -e .`."
+            'or `pip install "zhivex-ai-sdk[realtime]"`.'
         ) from error
 
     websocket = await websockets.connect(

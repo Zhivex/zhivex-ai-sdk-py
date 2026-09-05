@@ -336,6 +336,176 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         self.assertEqual(result, ("deepseek", True, "ok: deepseek-v4-flash", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
 
+    async def test_second_cohort_executes_portable_certification_instead_of_inferencing_it(self) -> None:
+        cases = (
+            (
+                "qwen",
+                run_live_smoke._run_qwen,
+                "create_qwen",
+                {"QWEN_API_KEY": "test-key", "ZHIVEX_SMOKE_QWEN_MODEL": "qwen3.8-max"},
+                "QWEN_SMOKE_OK",
+            ),
+            (
+                "kimi",
+                run_live_smoke._run_kimi,
+                "create_kimi",
+                {"MOONSHOT_API_KEY": "test-key", "ZHIVEX_SMOKE_KIMI_MODEL": "kimi-k3"},
+                "KIMI_SMOKE_OK",
+            ),
+            (
+                "deepseek",
+                run_live_smoke._run_deepseek,
+                "create_deepseek",
+                {
+                    "DEEPSEEK_API_KEY": "test-key",
+                    "ZHIVEX_SMOKE_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                },
+                "DEEPSEEK_SMOKE_OK",
+            ),
+        )
+        for provider_name, runner, factory_name, provider_env, token in cases:
+            with self.subTest(provider=provider_name):
+                provider = MagicMock()
+                language_model = MagicMock(model_id=next(iter(provider_env.values())))
+                provider.return_value = language_model
+                response = GenerateResult(
+                    text=token,
+                    messages=[create_text_message("assistant", token)],
+                    finish_reason="stop",
+                )
+                with (
+                    patch.dict(
+                        os.environ,
+                        {**provider_env, "ZHIVEX_SMOKE_PORTABLE_CERTIFICATION": "1"},
+                        clear=True,
+                    ),
+                    patch.object(run_live_smoke, factory_name, return_value=provider),
+                    patch.object(
+                        run_live_smoke,
+                        "generate_text",
+                        new=AsyncMock(return_value=response),
+                    ),
+                    patch.object(
+                        run_live_smoke,
+                        "_run_portable_certification",
+                        new=AsyncMock(),
+                    ) as certification,
+                ):
+                    result = await runner()
+
+                self.assertIn("portable-certification=ok", result[2])
+                certification.assert_awaited_once()
+                self.assertEqual(certification.await_args.kwargs["provider"], provider_name)
+                self.assertIs(certification.await_args.kwargs["model"], language_model)
+                if provider_name == "qwen":
+                    self.assertIsNone(
+                        certification.await_args.kwargs["structured_max_tokens"]
+                    )
+
+    async def test_vllm_certification_executes_portable_and_retrieval_operations(self) -> None:
+        provider = MagicMock()
+        language_model = MagicMock(model_id="Qwen/Qwen2.5-0.5B-Instruct")
+        provider.return_value = language_model
+        response = GenerateResult(
+            text="VLLM_SMOKE_OK",
+            messages=[create_text_message("assistant", "VLLM_SMOKE_OK")],
+            finish_reason="stop",
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_VLLM_MODEL": "Qwen/Qwen2.5-0.5B-Instruct",
+                    "ZHIVEX_SMOKE_PORTABLE_CERTIFICATION": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_vllm", return_value=provider),
+            patch.object(
+                run_live_smoke,
+                "generate_text",
+                new=AsyncMock(return_value=response),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_portable_certification",
+                new=AsyncMock(),
+            ) as portable,
+            patch.object(
+                run_live_smoke,
+                "_run_portable_retrieval_certification",
+                new=AsyncMock(),
+            ) as retrieval,
+        ):
+            result = await run_live_smoke._run_vllm()
+
+        self.assertIn("portable-certification=ok", result[2])
+        self.assertIn("portable-retrieval=ok", result[2])
+        portable.assert_awaited_once()
+        retrieval.assert_awaited_once()
+        self.assertEqual(portable.await_args.kwargs["provider"], "vllm")
+        self.assertIs(portable.await_args.kwargs["model"], language_model)
+        self.assertIs(
+            portable.await_args.kwargs["completed_operations"],
+            retrieval.await_args.kwargs["completed_operations"],
+        )
+
+    async def test_vllm_failure_preserves_completed_operations_for_evidence(self) -> None:
+        provider = MagicMock()
+        language_model = MagicMock(model_id="Qwen/Qwen2.5-0.5B-Instruct")
+        provider.return_value = language_model
+        response = GenerateResult(
+            text="VLLM_SMOKE_OK",
+            messages=[create_text_message("assistant", "VLLM_SMOKE_OK")],
+            finish_reason="stop",
+        )
+
+        async def complete_portable(**kwargs: Any) -> None:
+            kwargs["completed_operations"].update({"streaming", "structured-output"})
+
+        async def complete_retrieval(**kwargs: Any) -> None:
+            kwargs["completed_operations"].add("portable-retrieval")
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_VLLM_MODEL": "Qwen/Qwen2.5-0.5B-Instruct",
+                    "ZHIVEX_SMOKE_PORTABLE_CERTIFICATION": "1",
+                    "ZHIVEX_SMOKE_AGENTS": "1",
+                },
+                clear=True,
+            ),
+            patch.object(run_live_smoke, "create_vllm", return_value=provider),
+            patch.object(
+                run_live_smoke,
+                "generate_text",
+                new=AsyncMock(return_value=response),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_portable_certification",
+                new=AsyncMock(side_effect=complete_portable),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_portable_retrieval_certification",
+                new=AsyncMock(side_effect=complete_retrieval),
+            ),
+            patch.object(
+                run_live_smoke,
+                "_run_agent_tool_smoke",
+                new=AsyncMock(side_effect=RuntimeError("unexpected final text")),
+            ),
+        ):
+            with self.assertRaises(run_live_smoke._ProviderOperationError) as caught:
+                await run_live_smoke._run_vllm()
+
+        self.assertEqual(
+            caught.exception.completed_operations,
+            frozenset({"generation", "streaming", "structured-output", "portable-retrieval"}),
+        )
+
     async def test_openai_luna_smoke_uses_cost_oriented_reasoning(self) -> None:
         provider = MagicMock()
         language_model = MagicMock(model_id="gpt-5.6-luna")
@@ -366,6 +536,70 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ("openai", True, "ok: gpt-5.6-luna", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
+
+    async def test_portable_certification_covers_stream_and_structured_output(self) -> None:
+        language_model = MagicMock(model_id="gpt-5.6-luna")
+        stream_result = MagicMock()
+        stream_result.collect = AsyncMock(
+            return_value=GenerateResult(
+                text="ZHIVEX_OPENAI_STREAM_OK",
+                messages=[create_text_message("assistant", "ZHIVEX_OPENAI_STREAM_OK")],
+                finish_reason="stop",
+            )
+        )
+        structured_result = MagicMock()
+        structured_result.object.nonce = "zhivex-openai-structured-smoke"
+
+        with (
+            patch.object(run_live_smoke, "stream_text", return_value=stream_result) as stream,
+            patch.object(
+                run_live_smoke,
+                "generate_object",
+                new=AsyncMock(return_value=structured_result),
+            ) as generate_structured,
+        ):
+            await run_live_smoke._run_portable_certification(
+                provider="openai",
+                model=language_model,
+                reasoning=run_live_smoke.ReasoningConfig(effort="none"),
+            )
+
+        self.assertEqual(stream.call_args.kwargs["reasoning"].effort, "none")
+        self.assertEqual(generate_structured.await_args.kwargs["reasoning"].effort, "none")
+        self.assertEqual(
+            generate_structured.await_args.kwargs["schema_name"],
+            "openai_release_smoke",
+        )
+
+    def test_release_policy_requires_the_exact_artifact_hash(self) -> None:
+        policy = {
+            "schema_version": 1,
+            "package_version": run_live_smoke._source_package_version(),
+            "artifact_sha256": "a" * 64,
+            "require_artifact_sha256": True,
+            "required_providers": {"openai": {"operations": ["generation"]}},
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_PROVIDERS": "openai",
+                    "ZHIVEX_SMOKE_STRICT": "1",
+                    "ZHIVEX_SMOKE_ARTIFACT_PATH": str(
+                        Path(directory) / "zhivex_ai_sdk-0.22.0-py3-none-any.whl"
+                    ),
+                },
+                clear=True,
+            ),
+        ):
+            artifact = Path(directory) / "zhivex_ai_sdk-0.22.0-py3-none-any.whl"
+            artifact.write_bytes(b"different-wheel")
+            with self.assertRaisesRegex(ValueError, "SHA256 does not match"):
+                run_live_smoke._validate_release_smoke_configuration(
+                    policy,
+                    selected={"openai"},
+                )
 
     async def test_meta_smoke_uses_standard_opt_in_configuration(self) -> None:
         provider = MagicMock()
@@ -512,6 +746,10 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
                     "ZHIVEX_SMOKE_EVIDENCE_PATH": str(evidence),
                     "ZHIVEX_SMOKE_META_MODEL": "muse-spark-1.2-contributor",
                     "GITHUB_SHA": "a" * 40,
+                    "GITHUB_REPOSITORY": "Zhivex/zhivex-ai-sdk-py",
+                    "GITHUB_RUN_ID": "123456",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                    "GITHUB_WORKFLOW": "Publish to PyPI",
                 },
                 clear=True,
             ):
@@ -523,15 +761,68 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
             payload = json.loads(evidence.read_text("utf-8"))
             serialized = evidence.read_text("utf-8")
 
-        self.assertEqual(payload["status"], "passed")
-        self.assertEqual(payload["source_revision"], "a" * 40)
+        self.assertEqual(payload["run_status"], "passed")
+        self.assertEqual(payload["artifact"]["source_revision"], "a" * 40)
         self.assertEqual(payload["artifact"]["filename"], artifact.name)
         self.assertEqual(len(payload["artifact"]["sha256"]), 64)
         self.assertEqual(
-            payload["providers"]["meta"]["model"],
+            payload["targets"][0]["model"],
             "muse-spark-1.2-contributor",
         )
+        self.assertEqual(payload["targets"][0]["target_id"], "meta-contributor")
+        self.assertEqual(payload["targets"][0]["surface"], "contributor")
+        self.assertEqual(payload["workflow"]["platform"], "github-actions")
         self.assertNotIn("never-record-this-secret", serialized)
+
+    def test_blocked_second_cohort_evidence_records_each_operation_without_false_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "zhivex_ai_sdk-0.22.0-py3-none-any.whl"
+            artifact.write_bytes(b"exact-wheel")
+            evidence = Path(directory) / "smoke.json"
+            policy = {
+                "package_version": run_live_smoke._source_package_version(),
+                "required_providers": {
+                    "qwen": {
+                        "operations": [
+                            "generation",
+                            "streaming",
+                            "structured-output",
+                            "agent-tool",
+                        ],
+                        "unsupported_operations": ["portable-retrieval"],
+                    }
+                },
+            }
+            with patch.dict(
+                os.environ,
+                {
+                    "ZHIVEX_SMOKE_ARTIFACT_PATH": str(artifact),
+                    "ZHIVEX_SMOKE_EVIDENCE_PATH": str(evidence),
+                    "ZHIVEX_SMOKE_QWEN_MODEL": "qwen3.8-max",
+                    "GITHUB_SHA": "a" * 40,
+                },
+                clear=True,
+            ):
+                run_live_smoke._write_release_smoke_evidence(
+                    policy=policy,
+                    executed_operations={"qwen": {"generation"}},
+                    blocked_providers={"qwen": "QWEN_CREDENTIALS_UNAVAILABLE"},
+                    failures=1,
+                )
+
+            target = json.loads(evidence.read_text("utf-8"))["targets"][0]
+
+        self.assertEqual(target["result"], "blocked")
+        self.assertEqual(
+            {operation["name"]: operation["status"] for operation in target["operations"]},
+            {
+                "agent-tool": "blocked",
+                "generation": "passed",
+                "portable-retrieval": "unsupported",
+                "streaming": "blocked",
+                "structured-output": "blocked",
+            },
+        )
 
     async def test_agent_tool_smoke_rejects_a_marker_embedded_in_extra_text(self) -> None:
         model = create_mock_language_model(
@@ -580,6 +871,45 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(message, "failed: https://example.test/[REDACTED]")
+
+    def test_certification_diagnostics_are_allowlisted_without_response_bodies(self) -> None:
+        class ConnectError(RuntimeError):
+            pass
+
+        anthropic_error = RuntimeError("do not persist this body")
+        anthropic_error.response_body = (  # type: ignore[attr-defined]
+            '{"error":{"message":"anthropic-workspace-id is required"}}'
+        )
+        gemini_error = RuntimeError("do not persist this body")
+        gemini_error.response_body = (  # type: ignore[attr-defined]
+            '{"error":{"message":"API key not valid"}}'
+        )
+
+        self.assertEqual(
+            run_live_smoke._failure_diagnostic_code("anthropic", anthropic_error),
+            "ANTHROPIC_WORKSPACE_ID_REQUIRED",
+        )
+        self.assertEqual(
+            run_live_smoke._failure_diagnostic_code("gemini", gemini_error),
+            "GEMINI_API_KEY_INVALID",
+        )
+        self.assertEqual(
+            run_live_smoke._blocked_diagnostic_code("azure-openai"),
+            "AZURE_CREDENTIALS_UNAVAILABLE",
+        )
+        self.assertEqual(
+            run_live_smoke._blocked_diagnostic_code("vertex"),
+            "VERTEX_CREDENTIALS_UNAVAILABLE",
+        )
+        self.assertEqual(
+            run_live_smoke._failure_diagnostic_code("vllm", ConnectError("offline")),
+            "VLLM_DEPLOYMENT_UNAVAILABLE",
+        )
+        self.assertTrue(
+            run_live_smoke._is_external_blocker("ANTHROPIC_WORKSPACE_ID_REQUIRED")
+        )
+        self.assertTrue(run_live_smoke._is_external_blocker("GEMINI_API_KEY_INVALID"))
+        self.assertFalse(run_live_smoke._is_external_blocker("PROVIDER_EXECUTION_FAILED"))
 
     async def test_main_redacts_unexpected_provider_failure(self) -> None:
         output = io.StringIO()

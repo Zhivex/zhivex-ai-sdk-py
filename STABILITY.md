@@ -96,7 +96,7 @@ Workflow semantics, checkpoint migration, and operational boundaries are documen
 
 Beta APIs still require changelog coverage when they change, but they do not carry the same compatibility guarantees as the Stable surface. Prefer their focused namespaces in new code so the compatibility risk is visible at the import site.
 
-The README support matrix is generated from runtime metadata. Its `Agent Capabilities` section is useful product guidance for hosted tools and provider-managed events, but it should be read with the same beta expectations as the APIs listed above.
+The README support matrix combines runtime metadata with the versioned provider-certification policy. Its `Agent Capabilities` section is useful product guidance for hosted tools and provider-managed events, but it should be read with the same beta expectations as the APIs listed above. A `release-certified` badge is operational evidence for one exact provider target, model, operation set, wheel, commit, and workflow; it does not promote an API or a Beta provider surface to Stable.
 
 Agent production guidance lives in [docs/AGENTS.md](./docs/AGENTS.md), [docs/PRODUCTION.md](./docs/PRODUCTION.md), [docs/OPERATIONS.md](./docs/OPERATIONS.md), [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md), and [SECURITY.md](./SECURITY.md).
 
@@ -154,3 +154,7 @@ Built-in `StreamTextResult`, `StreamObjectResult`, and `AgentStreamResult` resul
 `stream_buffer_size` accepts a positive event count or `None`. Stable defaults preserve full history (`None`). Set a finite limit, such as 4096, for request-owned production streams. Consumers whose cursor has been evicted raise `ValidationError`, including late subscribers requesting unavailable history. There is no silent event loss. `collect()` retains its final-result contract independently of subscriber retention. A limit bounds retained event count, not individual payload bytes or final output size.
 
 DeepSeek's `deepseek-v4-flash-vision-exp` is an upstream Experimental model tracked as `preview` in the catalog. Its tested image path accepts user `ImagePart` URL/base64 inputs only. This does not promote vision to the Stable Tier-1 DeepSeek cohort or add Files, Responses, audio, or other native endpoints.
+
+## Dependency compatibility update
+
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.

@@ -3,21 +3,29 @@ from __future__ import annotations
 import asyncio
 import base64
 import builtins
-from copy import deepcopy
 import json
 import os
-from collections.abc import AsyncIterable, Callable
-from dataclasses import asdict, dataclass, field, replace
 import time
+from collections.abc import AsyncIterable, Callable
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from .._http import Fetcher, default_fetch
 from .._sse import parse_sse
-from ..errors import ConfigurationError, ProviderHTTPError, UnsupportedFeatureError, ValidationError
-from ..messages import is_hosted_tool_definition, normalize_finish_reason, validate_file_part, validate_message_parts
-from ..runtime import with_retry
-from ..schema import create_schema_adapter
+from ..errors import (
+    ConfigurationError,
+    ProviderHTTPError,
+    UnsupportedFeatureError,
+    ValidationError,
+)
+from ..messages import (
+    is_hosted_tool_definition,
+    normalize_finish_reason,
+    validate_file_part,
+    validate_message_parts,
+)
 from ..realtime import (
     CallbackRealtimeSession,
     RealtimeConnectionFactory,
@@ -26,17 +34,26 @@ from ..realtime import (
     open_websocket_connection,
     tool_result_payload,
 )
+from ..runtime import with_retry
+from ..schema import create_schema_adapter
 from ..types import (
     AgentCapabilities,
     AudioFrame,
     AudioInput,
+    AzureOpenAIMcpApprovalRequest,
+    AzureOpenAIMcpApprovalResponse,
+    AzureOpenAIMcpCall,
+    AzureOpenAIMcpListTools,
+    AzureOpenAIResponseReference,
     BatchesClient,
     CodeExecutionResultPart,
     ContainersClient,
     ConversationsClient,
-    EmbedResult,
     EmbeddingContent,
     EmbeddingModel,
+    EmbedResult,
+    FilePart,
+    FilesClient,
     FileSearchBatch,
     FileSearchDocument,
     FileSearchDocumentListResult,
@@ -45,11 +62,9 @@ from ..types import (
     FileSearchStore,
     FileSearchStoreListResult,
     FileSearchStoresClient,
-    FilePart,
-    FilesClient,
     FinishReason,
-    GenerateResult,
     GeneratedCodePart,
+    GenerateResult,
     GroundedGenerateResult,
     GroundedLanguageModel,
     GroundedModelGenerateInput,
@@ -61,12 +76,12 @@ from ..types import (
     ModelCapabilities,
     ModelGenerateInput,
     ModelMessage,
+    ModerationsClient,
     OpenAIMcpApprovalRequest,
     OpenAIMcpApprovalResponse,
     OpenAIMcpCall,
     OpenAIMcpListTools,
     OpenAIResponseReference,
-    ModerationsClient,
     ProviderDataPart,
     ProviderFile,
     ProviderImage,
@@ -83,8 +98,8 @@ from ..types import (
     RealtimeTokenResult,
     RealtimeToolCallEvent,
     RealtimeTranscriptEvent,
-    RetryOptions,
     ResponsesClient,
+    RetryOptions,
     SkillsClient,
     SpeechModel,
     SpeechOutput,
@@ -93,24 +108,19 @@ from ..types import (
     StreamProviderDataEvent,
     StreamTextDeltaEvent,
     StreamToolCallEvent,
+    TextPart,
     TokenUsage,
     ToolCall,
-    ToolChoiceName,
     ToolCallPart,
+    ToolChoiceName,
     ToolExecutionResult,
     ToolResultPart,
-    TextPart,
     TranscriptionModel,
     TranscriptionOutput,
     UploadsClient,
-    AzureOpenAIMcpApprovalRequest,
-    AzureOpenAIMcpApprovalResponse,
-    AzureOpenAIMcpCall,
-    AzureOpenAIMcpListTools,
-    AzureOpenAIResponseReference,
 )
-from .base import ProviderAdapter
 from ._payload import drop_none
+from .base import ProviderAdapter
 
 MAX_STREAM_RAW_CHUNKS = 1_000
 MAX_STREAM_AUDIO_BASE64_BYTES = 64 * 1024 * 1024
@@ -941,9 +951,7 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
         for content in item.get("content") or []:
             if isinstance(content, dict):
                 parts.extend(_parse_output_content_part(content))
-    elif item_type == "reasoning":
-        parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
-    elif item_type in {"program", "program_output"}:
+    elif item_type == "reasoning" or item_type in {"program", "program_output"}:
         parts.append(_provider_data_part_for(provider_name, deepcopy(item)))
     elif item_type == "function_call":
         parts.append(

@@ -32,6 +32,7 @@ The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by 
 - Stable gateway attempt telemetry preserves the `on_attempt` callback and existing payload field names. The `0.22.0` terminal-event correction removes the undocumented premature success-shaped callback, adds `attemptId`, `phase`, `terminal`, and `errorType`, and emits one terminal payload per executed retry or skipped target. Consumers must count only terminal payloads and must not use observer exceptions as provider control flow.
 - Additive fields on `Agent`, `AgentContext`, `AgentRunRequest`, `AgentRunResult`, and `ToolExecutionContext` must preserve existing positional construction and string-only `result.text` behavior. Generic typing and `result.output` are additive in `0.14.0`.
 - Stable workflow changes must preserve definition identity, checkpoint append ordering, schema-v1 readability, typed failures, resume/fork/cancel semantics, and the public callback envelope. New serialized fields require an explicit versioned migration and compatibility evidence.
+- Provider certification is versioned operational evidence, not an API stability classification. Evidence is target-, model-, operation-, artifact-, commit-, workflow-, and time-specific; expiry or failure removes `release-certified` status without changing the provider factory's compatibility level.
 
 ## Namespace policy
 
@@ -95,3 +96,7 @@ This policy governs the current `Beta` phase of the SDK. The goal is to keep the
 Built-in text/object/agent stream results add `aclose()` and async context management. Full replay remains the default; `stream_buffer_size` opts into bounded event retention with an explicit `ValidationError` on overrun. Existing `collect()` output and single-subscriber detachment semantics are preserved. Internal persistence extraction keeps the original `zhivex_ai` and `zhivex_ai.agent` names available.
 
 The September model refresh adds distinct API IDs, not replacements for previous IDs. Claude Fable/Mythos 5.1 forced tool selection and GPT-6 Astra unsupported sampling/reasoning options now fail before dispatch. Gemini 3.8 Flash rejects `minimal` thinking. The Qwen September snapshot retains the same operation-aware routing as Qwen3.8-Max. DeepSeek vision remains model-specific Experimental support.
+
+## Dependency compatibility update
+
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.

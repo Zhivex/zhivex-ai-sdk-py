@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -223,6 +224,7 @@ class ResponsesAgentHostTests(unittest.IsolatedAsyncioTestCase):
                 create_responses_app(agents={"support": _agent("done")})
 
 
+@unittest.skipUnless(importlib.util.find_spec("fastapi"), "api extra is not installed")
 class ResponsesFastAPITests(unittest.TestCase):
     def test_stream_headers_ids_get_and_last_event_id_replay(self) -> None:
         from fastapi.testclient import TestClient

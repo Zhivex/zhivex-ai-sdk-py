@@ -1,0 +1,146 @@
+{
+  "evidence_files": [],
+  "future_tolerance_minutes": 5,
+  "max_age_days": 30,
+  "schema_version": 1,
+  "targets": [
+    {
+      "expected_model": "gpt-5.6-luna",
+      "id": "openai-standard",
+      "provider": "openai",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "agent-tool"
+      ]
+    },
+    {
+      "expected_model": "claude-sonnet-5",
+      "id": "anthropic-standard",
+      "provider": "anthropic",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "id": "azure-openai-standard",
+      "provider": "azure-openai",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "expected_model": "gemini-3.7-flash",
+      "id": "gemini-standard",
+      "provider": "gemini",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "expected_model": "gemini-3.7-flash",
+      "id": "vertex-standard",
+      "provider": "vertex",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "expected_model": "qwen3.8-max",
+      "id": "qwen-standard",
+      "provider": "qwen",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "kimi-k3",
+      "id": "kimi-standard",
+      "provider": "kimi",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "deepseek-v4-flash",
+      "id": "deepseek-standard",
+      "provider": "deepseek",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "muse-spark-1.2",
+      "id": "meta-standard",
+      "provider": "meta",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "id": "vllm-deployment",
+      "provider": "vllm",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "deployment",
+      "tier1": true
+    },
+    {
+      "expected_model": "muse-spark-1.2-contributor",
+      "id": "meta-contributor",
+      "provider": "meta",
+      "stability": "beta",
+      "surface": "contributor",
+      "tier1": false,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ]
+    }
+  ]
+}

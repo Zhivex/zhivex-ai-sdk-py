@@ -32,22 +32,25 @@ jobs:
           version: "0.12.4"
 
       - name: Install dependencies and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]"
+        run: uv sync --locked --all-extras --python 3.11
 
       - name: Run dependency security gates
-        run: make PYTHON=python security-check
+        run: uv run --no-sync make PYTHON=python security-check
 
       - name: Compile sources
-        run: python -m compileall src tests examples
+        run: uv run --no-sync python -m compileall src tests examples
 
-      - name: Check generated support matrix
-        run: python scripts/generate_support_matrix.py --check-readme
+      - name: Validate provider certification evidence
+        run: uv run --no-sync python scripts/verify_provider_certification.py --check-schema
+
+      - name: Check generated provider documentation
+        run: uv run --no-sync python scripts/generate_support_matrix.py --check-docs
 
       - name: Run Ruff
-        run: python -m ruff check src tests examples
+        run: uv run --no-sync make PYTHON=python lint
 
       - name: Run Mypy
-        run: python -m mypy
+        run: uv run --no-sync python -m mypy
 
   test:
     needs: quality
@@ -86,19 +89,24 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+
       - name: Install dependencies and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling -e ".[dev,postgres,mcp,api,a2a,ag-ui,otel]"
+        run: uv sync --locked --all-extras --python "${{ matrix.python-version }}"
 
       - name: Verify production-hardening contracts
-        run: python -m pytest tests/test_agent_evaluation.py tests/test_cli.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow_graph.py tests/test_workflow_state.py -q
+        run: uv run --no-sync python -m pytest tests/test_agent_evaluation.py tests/test_cli.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow_graph.py tests/test_workflow_state.py -q
 
       - name: Run tests with coverage
         if: matrix.python-version == '3.11'
-        run: python -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
+        run: uv run --no-sync python -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
 
       - name: Run tests
         if: matrix.python-version != '3.11'
-        run: python -m pytest -q
+        run: uv run --no-sync python -m pytest -q
 
   build:
     needs: test
@@ -133,14 +141,50 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+
       - name: Install build tools and project
-        run: python -m pip install --upgrade pip "setuptools>=83.0.0" build hatchling twine -e ".[dev]"
+        run: uv sync --locked --all-extras --python 3.11
 
       - name: Build distributions
-        run: python -m build --no-isolation
+        run: uv run --no-sync python -m build --no-isolation
 
       - name: Check distributions
-        run: python -m twine check dist/*
+        run: uv run --no-sync python -m twine check dist/*
 
       - name: Verify release artifacts
-        run: python scripts/verify_release_artifacts.py --dist-dir dist --require-postgres-workflow-smoke
+        run: uv run --no-sync python scripts/verify_release_artifacts.py --dist-dir dist --require-postgres-workflow-smoke
+
+  dependency-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [minimum-core, minimum-extras, latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+
+      - name: Install locked orchestration tools
+        run: uv sync --locked --extra dev --python 3.11
+      - name: Test declared dependency ranges
+        run: uv run --no-sync python scripts/check_dependency_compatibility.py --mode "${{ matrix.mode }}" --report "dist/dependencies-${{ matrix.mode }}.json"
+      - name: Retain dependency versions and result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependencies-${{ matrix.mode }}
+          path: dist/dependencies-${{ matrix.mode }}.json
+          retention-days: 30
