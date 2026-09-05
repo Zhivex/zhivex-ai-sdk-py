@@ -40,3 +40,55 @@ class AgentPersistenceCompatibilityTests(IsolatedAsyncioTestCase):
             checkpoint = await create_sqlite_checkpoint_store(database).get_latest(session_id="session-compat")
             self.assertEqual(memory.summary, "Apollo checkpoint")
             self.assertEqual(_serialize_agent_checkpoint(checkpoint), FIXTURE["checkpoint"])
+
+    async def test_typed_tool_approval_survives_recreated_store_and_executes_once(self):
+        from datetime import date
+        from pydantic import BaseModel, ConfigDict
+        from zhivex_ai import (
+            Agent, ApprovalDecision, ModelMessage, ToolCall, ValidationError,
+            create_sqlite_agent_run_store, resume_agent_run, run_agent, tool, tool_call_part,
+        )
+        from zhivex_ai.evals import GenerateResult, create_mock_language_model
+
+        class Input(BaseModel):
+            model_config = ConfigDict(extra="forbid")
+            project: str
+            due: date
+
+        Input.model_rebuild(_types_namespace={"date": date})
+        executions = []
+
+        async def review(request):
+            self.assertIsInstance(request.tool_input, Input)
+            return ApprovalDecision.require_human(approval_id="typed-approval")
+
+        def execute(data):
+            self.assertIsInstance(data, Input)
+            executions.append(data)
+            return {"project": data.project}
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "state.sqlite3")
+            definition = tool(name="lookup", schema=Input, execute=execute, requires_approval=True)
+            agent = Agent(name="typed", run_store=create_sqlite_agent_run_store(path),
+                          approval_policy=review, tools={"lookup": definition},
+                          model=create_mock_language_model(responses=[GenerateResult(
+                              messages=[ModelMessage(role="assistant", parts=[tool_call_part(ToolCall(
+                                  id="typed-call", name="lookup", input={"project": "Apollo", "due": "2026-09-05"}
+                              ))])], finish_reason="tool-calls")]))
+            pending = await run_agent(agent=agent, prompt="synthetic")
+            self.assertEqual(pending.state.status, "suspended")
+            self.assertEqual(executions, [])
+            restored = await create_sqlite_agent_run_store(path).load(pending.run_id)
+            self.assertEqual(restored.pending_approvals[0].arguments,
+                             {"project": "Apollo", "due": "2026-09-05"})
+            resumed_agent = Agent(name="typed", run_store=create_sqlite_agent_run_store(path),
+                                  approval_policy=review, tools={"lookup": definition},
+                                  model=create_mock_language_model(responses=[GenerateResult(text="done", finish_reason="stop")]))
+            resumed = await resume_agent_run(agent=resumed_agent, run_id=pending.run_id, approval_id="typed-approval")
+            self.assertEqual(resumed.text, "done")
+            self.assertEqual(len(executions), 1)
+            self.assertEqual(executions[0].due, date(2026, 9, 5))
+            with self.assertRaises(ValidationError):
+                await resume_agent_run(agent=resumed_agent, run_id=pending.run_id, approval_id="typed-approval")
+            self.assertEqual(len(executions), 1)

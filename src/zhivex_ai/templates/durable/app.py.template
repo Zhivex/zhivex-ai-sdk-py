@@ -99,10 +99,11 @@ async def execute(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("missing durable state")
     checkpoint = await checkpoints.get_latest(run_id=result.run_id)
     parent = await runs.load(args.run_id) if args.run_id else None
+    tool_results = parent.tool_results if parent is not None else result.tool_results
     return {"status": state.status, "run_id": result.run_id,
             "approval_ids": [item.id for item in state.pending_approvals],
             "checkpoint": checkpoint is not None,
-            "tool_results": len(parent.tool_results if parent is not None else result.tool_results),
+            "tool_results": len(tool_results), "tool_errors": sum(item.is_error for item in tool_results),
             "elapsed_ms": round((perf_counter() - started) * 1000)}
 
 

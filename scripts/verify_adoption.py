@@ -119,6 +119,7 @@ def verify(wheel: Path, *, backend: str, live: bool) -> dict[str, object]:
         assert (
             completed["status"] == "completed"
             and completed["tool_results"] == 1
+            and completed["tool_errors"] == 0
             and completed["checkpoint"]
         )
         assert app("status", "--run-id", run_id)["status"] == "completed"

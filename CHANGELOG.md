@@ -22,6 +22,8 @@ Related documents:
 
 ### Adoption and observability
 
+- Fix durable human approval for Pydantic tool inputs by persisting JSON and revalidating the typed input on resume.
+
 - Add a Beta `zhivex init` durable application scaffold and isolated wheel acceptance smoke for approval, restart, denial and cancellation.
 - Restrict OTel attributes and omit exception payloads, stack traces and idempotency keys from observer spans.
 - Add correlated OTLP recipes and reproducible cache/gateway and Postgres fencing budgets.
