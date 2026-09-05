@@ -1,0 +1,20 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector:0.133.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:14318:4318"
+    depends_on: [jaeger, tempo]
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+    ports:
+      - "127.0.0.1:16686:16686"
+  tempo:
+    image: grafana/tempo:2.8.2
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+    ports:
+      - "127.0.0.1:13200:3200"

@@ -47,3 +47,14 @@ values; use `zhivex serve` behind application-owned authentication and normal
 deployment controls when remote access is required.
 
 The CLI server and playground are development conveniences. They do not add authentication, TLS, distributed rate limiting, tenant-scoped persistence, secret management, audit retention, or an approval UI. Keep loopback binding for local work. Production deployments should create the app in application code, provide authorization, and run it through the organization's normal ASGI, gateway, IAM, network, and observability controls.
+
+## Generate a durable application (next release, Beta)
+
+`zhivex init my-agent --backend postgres` creates a single new directory with an
+async application, pinned requirements, environment placeholders, health/readiness
+CLI probes and an approval example. `--backend sqlite` is the default local path.
+Names must be a single directory component; existing directories and symlinks are
+rejected. There is no overwrite flag, automatic install, hidden global state or
+telemetry. Generated README instructions cover checks, operating boundaries and
+upgrade/rollback. See the [installed walkthrough](./QUICKSTART.md#installed-durable-walkthrough-candidate).
+The command is not available in the published 0.23.0 package; use this candidate.

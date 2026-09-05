@@ -1,0 +1,134 @@
+"""Application-owned durable approval walkthrough. No implicit network calls."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+from time import perf_counter
+from typing import Any
+from pydantic import BaseModel, ConfigDict
+
+from zhivex_ai import (
+    Agent, ApprovalDecision, ModelMessage, ToolCall, ToolApprovalRequest, cancel_agent_run,
+    create_postgres_agent_run_store, create_postgres_checkpoint_store,
+    create_sqlite_agent_run_store, create_sqlite_checkpoint_store,
+    create_openai, generate_text, resume_agent_run, run_agent, tool, tool_call_part,
+)
+from zhivex_ai.evals import GenerateResult, create_mock_language_model
+
+BACKEND = "__BACKEND__"
+
+
+def stores() -> tuple[Any, Any]:
+    if BACKEND == "postgres":
+        dsn = os.environ["DATABASE_URL"]
+        return (
+            create_postgres_agent_run_store(dsn, table_prefix="zhivex_quickstart"),
+            create_postgres_checkpoint_store(dsn, table_prefix="zhivex_quickstart"),
+        )
+    path = os.getenv("ZHIVEX_STATE_PATH", "state.sqlite3")
+    return create_sqlite_agent_run_store(path), create_sqlite_checkpoint_store(path)
+
+
+def model_for(command: str, live: bool) -> Any:
+    if live:
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY required")
+        return create_openai()(os.environ["OPENAI_MODEL"])
+    responses = [GenerateResult(text="complete", finish_reason="stop")]
+    if command == "start":
+        responses.insert(0, GenerateResult(messages=[ModelMessage(role="assistant", parts=[
+            tool_call_part(ToolCall(id="demo-call", name="lookup", input={"project": "Apollo"}))
+        ])], finish_reason="tool-calls"))
+    return create_mock_language_model(responses=responses)
+
+
+async def review(request: ToolApprovalRequest) -> ApprovalDecision:
+    return ApprovalDecision.require_human("Review this synthetic read before execution.")
+
+
+class ProjectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+
+
+def lookup(data: ProjectInput) -> dict[str, str]:
+    # Read-only synthetic tool. Real writes need downstream idempotency keys.
+    return {"project": data.project, "status": "on track"}
+
+
+async def execute(args: argparse.Namespace) -> dict[str, Any]:
+    started = perf_counter()
+    if args.command == "health":
+        return {"status": "healthy"}
+    if args.command == "first":
+        generated = await generate_text(model=model_for("first", args.live), prompt="Reply with OK.",
+                                     max_tokens=64, timeout_ms=15000, max_retries=0)
+        if not generated.text:
+            raise RuntimeError("empty generation")
+        return {"status": "completed", "elapsed_ms": round((perf_counter() - started) * 1000)}
+    runs, checkpoints = stores()
+    if args.command == "ready":
+        await runs.load("readiness-probe")
+        return {"status": "ready", "backend": BACKEND}
+    if args.command in {"status", "cancel"}:
+        state = (await cancel_agent_run(runs, args.run_id, reason="operator cancelled")
+                 if args.command == "cancel" else await runs.load(args.run_id))
+        if state is None:
+            raise ValueError("unknown run")
+        return {"status": state.status, "run_id": state.run_id}
+    agent: Agent[Any, Any] = Agent(name="durable-demo", model=model_for(args.command, args.live),
+                  run_store=runs, checkpoint_store=checkpoints, approval_policy=review,
+                  instructions="Call lookup exactly once for Apollo, then answer concisely.",
+                  tools={"lookup": tool(name="lookup", schema=ProjectInput, execute=lookup,
+                                        requires_approval=True)})
+    if args.command == "start":
+        result = await run_agent(agent=agent, prompt="Look up Apollo.", tool_choice="required", max_steps=3,
+                                 max_tokens=128, timeout_ms=15000, max_retries=0)
+        if result.state is None or result.state.status != "suspended":
+            raise RuntimeError("model did not request approval")
+        if result.state.tool_results:
+            raise RuntimeError("tool ran before approval")
+    else:
+        result = await resume_agent_run(agent=agent, run_id=args.run_id, approval_id=args.approval_id,
+                                        approved=args.command == "approve", max_steps=3,
+                                        max_tokens=128, timeout_ms=15000, max_retries=0)
+    state = result.state
+    if state is None:
+        raise RuntimeError("missing durable state")
+    checkpoint = await checkpoints.get_latest(run_id=result.run_id)
+    parent = await runs.load(args.run_id) if args.run_id else None
+    return {"status": state.status, "run_id": result.run_id,
+            "approval_ids": [item.id for item in state.pending_approvals],
+            "checkpoint": checkpoint is not None,
+            "tool_results": len(parent.tool_results if parent is not None else result.tool_results),
+            "elapsed_ms": round((perf_counter() - started) * 1000)}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=["health", "ready", "first", "start", "status", "approve", "deny", "cancel"])
+    parser.add_argument("--live", action="store_true", help="Explicitly enable one configured provider.")
+    parser.add_argument("--run-id")
+    parser.add_argument("--approval-id")
+    args = parser.parse_args()
+    if args.command in {"status", "approve", "deny", "cancel"} and not args.run_id:
+        parser.error("--run-id is required")
+    if args.command in {"approve", "deny"} and not args.approval_id:
+        parser.error("--approval-id is required; review it before deciding")
+    try:
+        # End-to-end bound includes storage and all model/tool steps.
+        async def bounded() -> dict[str, Any]:
+            async with asyncio.timeout(60):
+                return await execute(args)
+        print(json.dumps(asyncio.run(bounded())))
+        return 0
+    except (Exception, KeyboardInterrupt) as error:
+        # Never expose provider payloads, DSNs, prompts or exception messages.
+        print(json.dumps({"status": "failed", "error_type": type(error).__name__}))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

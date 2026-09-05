@@ -1959,3 +1959,11 @@ or, for a permanent fix with the official python.org installer:
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Next-release adoption work
+
+The candidate adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough-candidate),
+[OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
+[reproducible performance evidence](docs/PERFORMANCE.md). These changes are not yet
+in published 0.23.0. The scaffold composes existing APIs and does not promote Beta
+storage, CLI or observability to Stable.

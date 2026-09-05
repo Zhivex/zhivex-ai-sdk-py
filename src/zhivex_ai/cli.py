@@ -232,6 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {_sdk_version()}")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    init_parser = commands.add_parser("init", help="Create a new durable application (Beta).")
+    init_parser.add_argument("name", help="New immediate child directory; never overwritten.")
+    init_parser.add_argument("--backend", choices=("sqlite", "postgres"), default="sqlite")
+
     inspect_parser = commands.add_parser("inspect", help="Inspect a trusted local Agent definition.")
     inspect_parser.add_argument("agent", help="Python reference in module:attribute form.")
 
@@ -271,6 +275,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "init":
+            from ._scaffold import create_project
+
+            destination = create_project(args.name, backend=args.backend, sdk_version=_sdk_version())
+            print(f"Created {destination.name}. Follow its README.md.")
+            return 0
         if args.command == "inspect":
             return _inspect_command(args)
         if args.command == "run":
