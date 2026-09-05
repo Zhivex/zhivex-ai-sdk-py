@@ -2,23 +2,32 @@
   "version": "0.23.0",
   "source_commit": "b129bb5a4741dc0bc235b3b7749d647195758f7b",
   "wheel_sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
-  "channel": "published",
-  "stable_total": 206,
+  "documentation_owner": "Zhivex/sdk-page",
+  "portal_pr": "https://github.com/Zhivex/sdk-page/pull/2",
+  "portal_commit": "280445357537bc84e3870e75895aaccd5b3517ee",
+  "portal_merge_commit": "23b1610c21b72ba1e0e2552c91cff8fb6efa9e88",
+  "portal_ci": "https://github.com/Zhivex/sdk-page/actions/runs/33989832183",
+  "portal_ci_result": "success",
+  "portal_evidence": "https://github.com/Zhivex/sdk-page/blob/280445357537bc84e3870e75895aaccd5b3517ee/src/data/python/0.23.0.json",
   "stable_documented": 206,
-  "snippets": {
-    "snippets/offline_agent.py": "execute",
-    "snippets/live_agent.py": "compile"
-  },
-  "compiled_blocks": 7,
+  "stable_total": 206,
   "installed_wheel": true,
-  "api_reference_entries": 797,
-  "validation": {
-    "strict_build": "passed",
-    "local_pages_assets_anchors": "passed",
-    "immutable_source_links": "passed",
-    "browser_navigation_search_version_selector": "passed",
-    "browser_errors": 0,
-    "release_check": "908 passed, 16 skipped, 161 subtests; isolated wheel/sdist/extras, pip-audit and Twine passed",
-    "publication": "pending merge and manual main workflow"
+  "validation_scope": "Portal evidence; SDK PR40 does not own a second documentation build or publisher.",
+  "production_http_check": {
+    "date": "2026-09-05",
+    "status": 200,
+    "paths": [
+      "/doc/python/0.23.0/index",
+      "/doc/python/0.23.0/reference/index",
+      "/doc/python/0.23.0/reference/root"
+    ],
+    "content_and_run_agent_anchor": "verified"
+  },
+  "sdk_validation": {
+    "make_check": "passed",
+    "tests_passed": 1008,
+    "tests_skipped": 16,
+    "subtests_passed": 161,
+    "coverage_percent": 84.26
   }
 }

@@ -12,7 +12,7 @@ ENV/
 # Build and packaging artifacts
 build/
 dist/
-/site/
+site/
 *.egg-info/
 .eggs/
 *.egg
@@ -46,7 +46,3 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
-
-# Isolated candidate documentation preview
-site-candidate/
-site-release/

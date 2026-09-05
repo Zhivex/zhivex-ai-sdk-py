@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 RELEASE_ARTIFACT_FLAGS ?=
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs docs-build docs-check test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile lock-check catalog-freshness-check certification-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile lock-check catalog-freshness-check certification-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv sync --locked --all-extras
@@ -32,14 +32,6 @@ test-agents:
 
 test-evals:
 	$(PYTHON) -m pytest tests/test_agent_evaluation.py tests/test_cli.py -q
-
-docs-build:
-	$(PYTHON) scripts/build_docs.py
-
-docs-check:
-	$(PYTHON) -m pytest tests/test_documentation_pipeline.py -q
-	$(PYTHON) -m ruff check scripts/build_docs.py scripts/render_docs_reference.py scripts/publish_docs.py docs/site/snippets
-	$(PYTHON) scripts/build_docs.py
 
 test-docs:
 	$(PYTHON) -m pytest tests/test_docs_onboarding.py tests/test_operations_docs.py -q

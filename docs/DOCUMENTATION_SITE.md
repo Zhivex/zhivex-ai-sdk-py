@@ -1,102 +1,62 @@
-# Versioned documentation
+# Python documentation portal
 
-PY-HU-13 adds a Python-native MkDocs site. Its source is `docs/site/`; the existing
-long-form guides remain linked at the documented release's exact source revision.
-The stack uses MkDocs' built-in search and theme, with a version selector. No
-implementation-module imports are recommended in the generated reference.
+The public documentation lives at [sdk.zhivex.ai](https://sdk.zhivex.ai/doc).
+The [sdk-page repository](https://github.com/Zhivex/sdk-page) owns its Astro
+frontend, generated reference, documentation tests and Vercel deployment.
 
-## Build and preview
+## Reader entrypoints
 
-```bash
-make dev
-make docs-check
-python3 -m http.server 8000 --directory site
-```
+- [Python getting started](https://sdk.zhivex.ai/doc/python/getting-started)
+- [Python 0.23.0 guides](https://sdk.zhivex.ai/doc/python/0.23.0/index)
+- [Python 0.23.0 reference and symbol search](https://sdk.zhivex.ai/doc/python/0.23.0/reference/index)
+- [Release notes](https://sdk.zhivex.ai/doc/releases)
 
-Open `http://localhost:8000/0.23.0/` or the version index at
-`http://localhost:8000/`. `make docs-build` builds without rerunning tooling tests.
-The uv installation must meet the repository's documented tooling floor.
+The versioned reference describes a published wheel, not the current checkout.
+The package remains Beta; individual public APIs retain Stable/Beta/Experimental
+labels. Documentation checks do not certify live provider availability.
 
-The default build downloads the exact published wheel recorded in
-`docs/site/published.json`. It verifies the hash against both PyPI metadata and
-the downloaded bytes, then installs it in a clean venv. `python -I` prevents
-checkout imports. The renderer reads public exports and stability metadata from
-that installation, renders callable signatures/docstrings and fails if any Stable
-root export lacks a reference entry. Docstring absence is not filled with invented
-API behavior. The internal stability manifest is read by tooling only.
+## Ownership and validation
 
-`documentation-evidence.json` inside each generated version records wheel SHA256,
-source commit, installed version, namespace/level inventory, Stable coverage and
-snippet execution modes. The installed wheel's runtime dependencies are resolved
-at build time; the documentation tooling itself is locked by `uv.lock`.
+This SDK repository owns runtime contracts, source docstrings, public stability
+manifests, examples, package tests and release artifacts. Run `make check` and
+`make release-check` here when required by an SDK change.
 
-## Validation boundaries
-
-- All Python snippets are parsed, compiled and checked against the installed public
-  namespaces and exported names. Star imports and implementation imports fail.
-- The mock-agent snippet is executed in the clean wheel environment. The live-agent
-  example is compiled and import-checked; site builds do not spend provider tokens.
-- MkDocs strict mode and the HTML checker reject missing pages/assets/anchors.
-- Immutable GitHub source links are checked against their exact Git objects. This
-  proves target existence without depending on GitHub HTTP availability; it does
-  not promise third-party service uptime.
-- Every Stable root export appears in the reference. Focused and legacy extension
-  exports retain their installed Stable/Beta/Experimental classification.
-- The timed human onboarding and full production recipes remain separate HU14/HU16
-  acceptance work. This site does not claim their completion or package-wide GA.
-
-## Candidate previews
+The portal owns the wheel-to-documentation pipeline. In a `sdk-page` checkout:
 
 ```bash
-.venv/bin/python -m build --wheel --no-isolation
-.venv/bin/python scripts/build_docs.py --wheel dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl --output site-candidate
+bun install --frozen-lockfile --ignore-scripts
+bun run docs:python:check
+bun run docs:check
+bun run build
 ```
 
-Candidate pages use the `candidate/` path and an explicit unpublished label, even
-when their package version equals a previously published version. Their hash is
-recorded separately. The source revision is the checkout HEAD, with the channel
-identifying that this is a checkout build; commit the changes before retaining
-release evidence. Candidate output is never included in the publishing command.
+Snapshot reproduction downloads the wheel selected by version and SHA256,
+installs it in an isolated Python environment, reads the final public stability
+manifest and signatures, and checks snippets. Only the registered offline agent
+is executed; provider-backed examples are compiled. CI checks the homepage and
+guide call signatures, snapshot integrity, and built pages, resources and anchors.
+See the [portal runbook](https://github.com/Zhivex/sdk-page#published-python-documentation)
+for Python/uv versions, dependency constraints and sibling SDK checkout paths.
 
-## CI and deployment
+## Updating a release
 
-The `Documentation` workflow runs tests, strict published-wheel documentation and
-an isolated candidate preview on every PR and main push. It retains both sites and
-their JSON evidence as the `python-sdk-documentation` artifact.
+1. Validate and publish the SDK using this repository's release process.
+2. In `sdk-page`, add a version directory under `docs/python` with the published
+   version, source commit and wheel SHA256. Preserve earlier version directories.
+3. Run `bun run docs:python`, update release curation, then run
+   `bun run docs:releases` and `bun run docs:reference`.
+4. Run the portal checks and review its Vercel preview, including version identity,
+   search, public signatures and mobile navigation.
+5. Merge the portal change and verify the production URLs before recording the
+   documentation rollout as complete.
 
-Publishing is a separate manual `workflow_dispatch` on `main`, behind the
-`github-pages` environment. Configure repository Pages with GitHub Actions as its
-build source. The workflow archives only published-version content on `gh-pages`,
-preserves older version directories and deploys the reviewed static artifact with
-GitHub Pages. No SDK tag, PyPI upload or stability promotion occurs.
+Candidate SDK wheels continue through this repository's installed-artifact gates;
+do not label a checkout build as published documentation. A portal change alone
+does not publish an SDK package.
 
-Target URL: `https://zhivex.github.io/zhivex-ai-sdk-py/`. A target URL is not evidence
-of a successful deployment; use the Pages deployment run and a reachable page.
+## Publication boundary
 
-For a local deployment rehearsal:
-
-```bash
-.venv/bin/python scripts/publish_docs.py
-```
-
-This validates and creates an ephemeral Git commit without pushing. The explicit
-`--push` flag archives the site; CI additionally uploads and deploys the Pages
-artifact. The archive push never uses force and fails on a concurrent update.
-
-To document a new release, update `published.json` only after verifying its actual
-PyPI version, SHA256 and source revision. Rebuild and review the guides against
-that wheel before invoking the manual publication. Existing version content is
-retained, so a new release cannot silently relabel earlier evidence.
-
-Stack documentation: [MkDocs configuration](https://www.mkdocs.org/user-guide/configuration/)
-and [static deployment](https://www.mkdocs.org/user-guide/deploying-your-docs/).
-
-## Initial validation (2026-09-05)
-
-Published 0.23.0: 206/206 Stable root symbols documented, 8 namespace reference
-pages, 7 Python blocks compiled and public-import checked, one isolated mock-agent
-execution and one compile-only live example. A separate candidate build passed.
-The browser check verified home/navigation, version selector and search for
-`run_agent`, including navigation to its reference anchor with no horizontal
-overflow or reported browser errors. The publisher dry run built the complete
-archive without pushing. Evidence: [documentation validation](validation/2026-09-05-documentation.json).
+The portal integration is [sdk-page PR #2](https://github.com/Zhivex/sdk-page/pull/2).
+This repository does not maintain a parallel MkDocs site or documentation deployment
+workflow. Do not dispatch the historical GitHub Pages publisher from an older
+branch. Any earlier repository Pages configuration is unused by this flow.

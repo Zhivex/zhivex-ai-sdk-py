@@ -18,7 +18,6 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTRAS_IMPORTS = {
-    "docs": ["mkdocs"],
     "realtime": ["websockets"],
     "postgres": ["asyncpg"],
     "mcp": ["mcp"],
@@ -777,7 +776,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-sdist", action="store_true", help="Skip installing the source distribution.")
     parser.add_argument(
         "--extras",
-        default="postgres,mcp,api,a2a,ag-ui,otel,docx,realtime,docs",
+        default="postgres,mcp,api,a2a,ag-ui,otel,docx,realtime",
         help="Comma-separated optional extras to install and import-check.",
     )
     parser.add_argument(
