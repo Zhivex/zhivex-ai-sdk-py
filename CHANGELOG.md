@@ -39,6 +39,8 @@ Related documents:
 
 ### Changed
 
+- Extracted private OpenAI-compatible Responses normalization with characterization fixtures, preserving public exports and response shapes.
+
 - Release smoke workflows now validate sanitized certification evidence before publication, and records older than 30 days automatically become `stale` instead of retaining `release-certified` status.
 - Portable certification smokes now cover generation, streaming, structured output, and an agent tool loop with synthetic markers; unavailable Azure or Vertex credentials remain explicit blockers instead of changing the Tier-1 contract.
 - Second-cohort smokes now execute streaming and structured output instead of inferring those operations from a flag. Required, blocked, failed, and unsupported operations are retained independently, including partial vLLM results and `portable-retrieval=unsupported` for Qwen, Kimi, and DeepSeek.

@@ -51,7 +51,7 @@ test-cov:
 	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
 
 lint:
-	$(PYTHON) -m ruff check src/zhivex_ai/providers/openai_compat.py src/zhivex_ai/providers/_payload.py src/zhivex_ai/providers/_url_security.py --extend-select I,B,ASYNC,SIM101,SIM103,SIM114
+	$(PYTHON) -m ruff check src/zhivex_ai/providers/openai_compat.py src/zhivex_ai/providers/_openai_responses_normalization.py src/zhivex_ai/providers/_payload.py src/zhivex_ai/providers/_url_security.py --extend-select I,B,ASYNC,SIM101,SIM103,SIM114
 	$(PYTHON) -m ruff check src tests examples
 
 typecheck: public-stub-check
