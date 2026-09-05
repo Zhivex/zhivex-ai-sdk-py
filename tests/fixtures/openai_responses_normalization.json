@@ -1,0 +1,6735 @@
+{
+  "source_commit": "67f56fc4a0a28a453129b51936cb4e91f81591c8",
+  "cases": [
+    {
+      "name": "openai-0",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "synthetic",
+                "annotations": []
+              },
+              {
+                "type": "output_image",
+                "b64_json": "YWJj",
+                "output_format": "jpg"
+              },
+              {
+                "type": "image",
+                "image_url": "https://example.com/image"
+              },
+              {
+                "type": "unknown"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "text",
+            "text": "synthetic",
+            "provider_metadata": {
+              "type": "output_text",
+              "text": "synthetic",
+              "annotations": []
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/jpeg;base64,YWJj",
+            "media_type": "image/jpeg",
+            "provider_metadata": {
+              "type": "output_image",
+              "b64_json": "YWJj",
+              "output_format": "jpg"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image",
+              "image_url": "https://example.com/image"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-1",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "text": "synthetic"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "text": "synthetic"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-2",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program",
+            "code": "pass"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "program",
+              "code": "pass"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-3",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program_output",
+            "output": "ok"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "program_output",
+              "output": "ok"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-4",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "{\"key\":1}",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": 1
+              },
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-5",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "[1,2]",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": [
+                  1,
+                  2
+                ]
+              },
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-6",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "invalid",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": "invalid"
+              },
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-7",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": null,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {},
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-8",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": 7,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": 7
+              },
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-9",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": {
+              "key": true
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": true
+              },
+              "provider_metadata": {
+                "provider": "openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-10",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "img",
+            "result": "YWJj",
+            "output_format": "png"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/png;base64,YWJj",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image_generation_call",
+              "id": "img",
+              "result": "YWJj",
+              "output_format": "png"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "img",
+              "name": "image_generation",
+              "input": {},
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "img",
+                "result": "YWJj",
+                "output_format": "png",
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-11",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "code",
+            "code": "print(1)",
+            "status": "completed",
+            "outputs": [
+              {
+                "type": "logs",
+                "logs": "1"
+              },
+              {
+                "type": "image",
+                "url": "https://example.com/image"
+              },
+              null
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "generated-code",
+            "code": "print(1)",
+            "language": "python"
+          },
+          {
+            "type": "code-result",
+            "output": "1",
+            "outcome": "completed",
+            "provider_metadata": {}
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "image",
+              "url": "https://example.com/image"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "code",
+              "name": "code_interpreter",
+              "input": {},
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "code",
+                "code": "print(1)",
+                "status": "completed",
+                "outputs": [
+                  {
+                    "type": "logs",
+                    "logs": "1"
+                  },
+                  {
+                    "type": "image",
+                    "url": "https://example.com/image"
+                  },
+                  null
+                ],
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-12",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "image_url": "https://example.com/image"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "image_url": "https://example.com/image"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "image_url": "https://example.com/image"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-13",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "file_id": "file"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": null,
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": "file",
+            "file_uri": null,
+            "url": null,
+            "title": null,
+            "context": null,
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "file_id": "file"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "file_id": "file"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-14",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "results": [
+              {
+                "text": "synthetic",
+                "filename": "fixture.txt"
+              },
+              null,
+              {}
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": "synthetic",
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": null,
+            "file_uri": null,
+            "url": null,
+            "title": "fixture.txt",
+            "context": "fixture.txt",
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "text": "synthetic",
+              "filename": "fixture.txt"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "file_search_call",
+              "name": "file_search",
+              "input": {},
+              "provider_metadata": {
+                "type": "file_search_call",
+                "results": [
+                  {
+                    "text": "synthetic",
+                    "filename": "fixture.txt"
+                  },
+                  null,
+                  {}
+                ],
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-15",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "apply_patch_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "apply_patch",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "apply_patch_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "apply_patch_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-16",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "code_interpreter",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-17",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-18",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-19",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "file_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "file_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-20",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-21",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_generation",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-22",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "local_shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "local_shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "local_shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "local_shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-23",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "mcp_call",
+              "id": "hosted",
+              "arguments": "",
+              "name": "",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": null,
+              "status": null
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-24",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-25",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "tool_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "tool_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "tool_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "tool_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-26",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_extractor_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_extractor",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_extractor_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_extractor_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-27",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-28",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_image_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search_image",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_image_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_image_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-29",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "future_call",
+            "input": {
+              "value": 1
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "future_call",
+              "name": "future",
+              "input": {
+                "value": 1
+              },
+              "provider_metadata": {
+                "type": "future_call",
+                "input": {
+                  "value": 1
+                },
+                "provider_managed": true,
+                "item_type": "future_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-30",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "unknown"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-31",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_request",
+            "id": "approval",
+            "arguments": "{}",
+            "name": "lookup",
+            "server_label": "fixture"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "mcp_approval_request",
+              "id": "approval",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "fixture"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-32",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_response",
+            "approval_request_id": "approval",
+            "approve": true,
+            "reason": "synthetic"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "mcp_approval_response",
+              "approval_request_id": "approval",
+              "approve": true,
+              "id": null,
+              "reason": "synthetic"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-33",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "name": "lookup",
+            "arguments": "{}",
+            "output": "synthetic",
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "mcp_call",
+              "id": "",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": "synthetic",
+              "status": "completed"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "openai-34",
+      "provider": "openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_list_tools",
+            "tools": [
+              {
+                "name": "lookup"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "openai",
+            "data": {
+              "type": "mcp_list_tools",
+              "id": null,
+              "server_label": null,
+              "tools": [
+                {
+                  "name": "lookup"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-0",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "synthetic",
+                "annotations": []
+              },
+              {
+                "type": "output_image",
+                "b64_json": "YWJj",
+                "output_format": "jpg"
+              },
+              {
+                "type": "image",
+                "image_url": "https://example.com/image"
+              },
+              {
+                "type": "unknown"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "text",
+            "text": "synthetic",
+            "provider_metadata": {
+              "type": "output_text",
+              "text": "synthetic",
+              "annotations": []
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/jpeg;base64,YWJj",
+            "media_type": "image/jpeg",
+            "provider_metadata": {
+              "type": "output_image",
+              "b64_json": "YWJj",
+              "output_format": "jpg"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image",
+              "image_url": "https://example.com/image"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-1",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "text": "synthetic"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "text": "synthetic"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-2",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program",
+            "code": "pass"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "program",
+              "code": "pass"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-3",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program_output",
+            "output": "ok"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "program_output",
+              "output": "ok"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-4",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "{\"key\":1}",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": 1
+              },
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-5",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "[1,2]",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": [
+                  1,
+                  2
+                ]
+              },
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-6",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "invalid",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": "invalid"
+              },
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-7",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": null,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {},
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-8",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": 7,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": 7
+              },
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-9",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": {
+              "key": true
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": true
+              },
+              "provider_metadata": {
+                "provider": "azure-openai",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-10",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "img",
+            "result": "YWJj",
+            "output_format": "png"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/png;base64,YWJj",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image_generation_call",
+              "id": "img",
+              "result": "YWJj",
+              "output_format": "png"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "img",
+              "name": "image_generation",
+              "input": {},
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "img",
+                "result": "YWJj",
+                "output_format": "png",
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-11",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "code",
+            "code": "print(1)",
+            "status": "completed",
+            "outputs": [
+              {
+                "type": "logs",
+                "logs": "1"
+              },
+              {
+                "type": "image",
+                "url": "https://example.com/image"
+              },
+              null
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "generated-code",
+            "code": "print(1)",
+            "language": "python"
+          },
+          {
+            "type": "code-result",
+            "output": "1",
+            "outcome": "completed",
+            "provider_metadata": {}
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "image",
+              "url": "https://example.com/image"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "code",
+              "name": "code_interpreter",
+              "input": {},
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "code",
+                "code": "print(1)",
+                "status": "completed",
+                "outputs": [
+                  {
+                    "type": "logs",
+                    "logs": "1"
+                  },
+                  {
+                    "type": "image",
+                    "url": "https://example.com/image"
+                  },
+                  null
+                ],
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-12",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "image_url": "https://example.com/image"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "image_url": "https://example.com/image"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "image_url": "https://example.com/image"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-13",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "file_id": "file"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": null,
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": "file",
+            "file_uri": null,
+            "url": null,
+            "title": null,
+            "context": null,
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "file_id": "file"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "file_id": "file"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-14",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "results": [
+              {
+                "text": "synthetic",
+                "filename": "fixture.txt"
+              },
+              null,
+              {}
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": "synthetic",
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": null,
+            "file_uri": null,
+            "url": null,
+            "title": "fixture.txt",
+            "context": "fixture.txt",
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "text": "synthetic",
+              "filename": "fixture.txt"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "file_search_call",
+              "name": "file_search",
+              "input": {},
+              "provider_metadata": {
+                "type": "file_search_call",
+                "results": [
+                  {
+                    "text": "synthetic",
+                    "filename": "fixture.txt"
+                  },
+                  null,
+                  {}
+                ],
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-15",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "apply_patch_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "apply_patch",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "apply_patch_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "apply_patch_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-16",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "code_interpreter",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-17",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-18",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-19",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "file_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "file_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-20",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-21",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_generation",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-22",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "local_shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "local_shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "local_shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "local_shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-23",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "mcp_call",
+              "id": "hosted",
+              "arguments": "",
+              "name": "",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": null,
+              "status": null
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-24",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-25",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "tool_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "tool_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "tool_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "tool_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-26",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_extractor_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_extractor",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_extractor_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_extractor_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-27",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-28",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_image_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search_image",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_image_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_image_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-29",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "future_call",
+            "input": {
+              "value": 1
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "future_call",
+              "name": "future",
+              "input": {
+                "value": 1
+              },
+              "provider_metadata": {
+                "type": "future_call",
+                "input": {
+                  "value": 1
+                },
+                "provider_managed": true,
+                "item_type": "future_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-30",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "unknown"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-31",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_request",
+            "id": "approval",
+            "arguments": "{}",
+            "name": "lookup",
+            "server_label": "fixture"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "mcp_approval_request",
+              "id": "approval",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "fixture"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-32",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_response",
+            "approval_request_id": "approval",
+            "approve": true,
+            "reason": "synthetic"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "mcp_approval_response",
+              "approval_request_id": "approval",
+              "approve": true,
+              "id": null,
+              "reason": "synthetic"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-33",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "name": "lookup",
+            "arguments": "{}",
+            "output": "synthetic",
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "mcp_call",
+              "id": "",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": "synthetic",
+              "status": "completed"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "azure-openai-34",
+      "provider": "azure-openai",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_list_tools",
+            "tools": [
+              {
+                "name": "lookup"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "azure-openai",
+            "data": {
+              "type": "mcp_list_tools",
+              "id": null,
+              "server_label": null,
+              "tools": [
+                {
+                  "name": "lookup"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-0",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "synthetic",
+                "annotations": []
+              },
+              {
+                "type": "output_image",
+                "b64_json": "YWJj",
+                "output_format": "jpg"
+              },
+              {
+                "type": "image",
+                "image_url": "https://example.com/image"
+              },
+              {
+                "type": "unknown"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "text",
+            "text": "synthetic",
+            "provider_metadata": {
+              "type": "output_text",
+              "text": "synthetic",
+              "annotations": []
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/jpeg;base64,YWJj",
+            "media_type": "image/jpeg",
+            "provider_metadata": {
+              "type": "output_image",
+              "b64_json": "YWJj",
+              "output_format": "jpg"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image",
+              "image_url": "https://example.com/image"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-1",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "text": "synthetic"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "text": "synthetic"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-2",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program",
+            "code": "pass"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "program",
+              "code": "pass"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-3",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "program_output",
+            "output": "ok"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "program_output",
+              "output": "ok"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-4",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "{\"key\":1}",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": 1
+              },
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-5",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "[1,2]",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": [
+                  1,
+                  2
+                ]
+              },
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-6",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": "invalid",
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": "invalid"
+              },
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-7",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": null,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {},
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-8",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": 7,
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "value": 7
+              },
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-9",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "function_call",
+            "id": "item",
+            "call_id": "call",
+            "name": "lookup",
+            "arguments": {
+              "key": true
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "call",
+              "name": "lookup",
+              "input": {
+                "key": true
+              },
+              "provider_metadata": {
+                "provider": "qwen",
+                "response_item_id": "item",
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-10",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "img",
+            "result": "YWJj",
+            "output_format": "png"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "data:image/png;base64,YWJj",
+            "media_type": "image/png",
+            "provider_metadata": {
+              "type": "image_generation_call",
+              "id": "img",
+              "result": "YWJj",
+              "output_format": "png"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "img",
+              "name": "image_generation",
+              "input": {},
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "img",
+                "result": "YWJj",
+                "output_format": "png",
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-11",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "code",
+            "code": "print(1)",
+            "status": "completed",
+            "outputs": [
+              {
+                "type": "logs",
+                "logs": "1"
+              },
+              {
+                "type": "image",
+                "url": "https://example.com/image"
+              },
+              null
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "generated-code",
+            "code": "print(1)",
+            "language": "python"
+          },
+          {
+            "type": "code-result",
+            "output": "1",
+            "outcome": "completed",
+            "provider_metadata": {}
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "image",
+              "url": "https://example.com/image"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "code",
+              "name": "code_interpreter",
+              "input": {},
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "code",
+                "code": "print(1)",
+                "status": "completed",
+                "outputs": [
+                  {
+                    "type": "logs",
+                    "logs": "1"
+                  },
+                  {
+                    "type": "image",
+                    "url": "https://example.com/image"
+                  },
+                  null
+                ],
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-12",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "image_url": "https://example.com/image"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "image",
+            "image": "https://example.com/image",
+            "media_type": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "image_url": "https://example.com/image"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "image_url": "https://example.com/image"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-13",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "output": {
+              "file_id": "file"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": null,
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": "file",
+            "file_uri": null,
+            "url": null,
+            "title": null,
+            "context": null,
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "type": "computer_call_output",
+              "output": {
+                "file_id": "file"
+              }
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "computer_call_output",
+              "name": "computer_use",
+              "input": {},
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "output": {
+                  "file_id": "file"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-14",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "results": [
+              {
+                "text": "synthetic",
+                "filename": "fixture.txt"
+              },
+              null,
+              {}
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "file",
+            "data": null,
+            "text": "synthetic",
+            "document_content": null,
+            "media_type": null,
+            "filename": null,
+            "file_id": null,
+            "file_uri": null,
+            "url": null,
+            "title": "fixture.txt",
+            "context": "fixture.txt",
+            "citations_enabled": null,
+            "cache_control": null,
+            "provider_metadata": {
+              "text": "synthetic",
+              "filename": "fixture.txt"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "file_search_call",
+              "name": "file_search",
+              "input": {},
+              "provider_metadata": {
+                "type": "file_search_call",
+                "results": [
+                  {
+                    "text": "synthetic",
+                    "filename": "fixture.txt"
+                  },
+                  null,
+                  {}
+                ],
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-15",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "apply_patch_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "apply_patch",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "apply_patch_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "apply_patch_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-16",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "code_interpreter_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "code_interpreter",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "code_interpreter_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "code_interpreter_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-17",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-18",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "computer_call_output",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "computer_use",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "computer_call_output",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "computer_call_output"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-19",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "file_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "file_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "file_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "file_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-20",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-21",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "image_generation_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "image_generation",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "image_generation_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "image_generation_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-22",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "local_shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "local_shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "local_shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "local_shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-23",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "mcp_call",
+              "id": "hosted",
+              "arguments": "",
+              "name": "",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": null,
+              "status": null
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-24",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "shell_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "shell",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "shell_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "shell_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-25",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "tool_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "tool_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "tool_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "tool_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-26",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_extractor_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_extractor",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_extractor_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_extractor_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-27",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-28",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "web_search_image_call",
+            "id": "hosted",
+            "action": {
+              "key": "synthetic"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "hosted",
+              "name": "web_search_image",
+              "input": {
+                "key": "synthetic"
+              },
+              "provider_metadata": {
+                "type": "web_search_image_call",
+                "id": "hosted",
+                "action": {
+                  "key": "synthetic"
+                },
+                "provider_managed": true,
+                "item_type": "web_search_image_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-29",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "future_call",
+            "input": {
+              "value": 1
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "tool-call",
+            "tool_call": {
+              "id": "future_call",
+              "name": "future",
+              "input": {
+                "value": 1
+              },
+              "provider_metadata": {
+                "type": "future_call",
+                "input": {
+                  "value": 1
+                },
+                "provider_managed": true,
+                "item_type": "future_call"
+              }
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-30",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "unknown"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-31",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_request",
+            "id": "approval",
+            "arguments": "{}",
+            "name": "lookup",
+            "server_label": "fixture"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "mcp_approval_request",
+              "id": "approval",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "fixture"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-32",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_approval_response",
+            "approval_request_id": "approval",
+            "approve": true,
+            "reason": "synthetic"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "mcp_approval_response",
+              "approval_request_id": "approval",
+              "approve": true,
+              "id": null,
+              "reason": "synthetic"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-33",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_call",
+            "name": "lookup",
+            "arguments": "{}",
+            "output": "synthetic",
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "mcp_call",
+              "id": "",
+              "arguments": "{}",
+              "name": "lookup",
+              "server_label": "",
+              "approval_request_id": null,
+              "error": null,
+              "output": "synthetic",
+              "status": "completed"
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "qwen-34",
+      "provider": "qwen",
+      "payload": {
+        "id": "response",
+        "status": "completed",
+        "output": [
+          {
+            "type": "mcp_list_tools",
+            "tools": [
+              {
+                "name": "lookup"
+              }
+            ]
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "response_id": "response"
+            }
+          },
+          {
+            "type": "provider-data",
+            "provider": "qwen",
+            "data": {
+              "type": "mcp_list_tools",
+              "id": null,
+              "server_label": null,
+              "tools": [
+                {
+                  "name": "lookup"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      },
+      "finish": [
+        "stop",
+        "completed"
+      ]
+    },
+    {
+      "name": "status-None",
+      "provider": "openai",
+      "payload": {
+        "status": null,
+        "output": [],
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": []
+      },
+      "usage": null,
+      "finish": [
+        null,
+        null
+      ]
+    },
+    {
+      "name": "status-failed",
+      "provider": "openai",
+      "payload": {
+        "status": "failed",
+        "output": [],
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": []
+      },
+      "usage": null,
+      "finish": [
+        "error",
+        "failed"
+      ]
+    },
+    {
+      "name": "status-incomplete",
+      "provider": "openai",
+      "payload": {
+        "status": "incomplete",
+        "output": [],
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": []
+      },
+      "usage": null,
+      "finish": [
+        "unknown",
+        "max_output_tokens"
+      ]
+    },
+    {
+      "name": "status-cancelled",
+      "provider": "openai",
+      "payload": {
+        "status": "cancelled",
+        "output": [],
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": []
+      },
+      "usage": null,
+      "finish": [
+        "unknown",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "status-in_progress",
+      "provider": "openai",
+      "payload": {
+        "status": "in_progress",
+        "output": [],
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "parts": []
+      },
+      "usage": null,
+      "finish": [
+        "unknown",
+        "in_progress"
+      ]
+    }
+  ]
+}
