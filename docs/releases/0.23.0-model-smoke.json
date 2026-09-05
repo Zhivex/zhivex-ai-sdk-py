@@ -1,0 +1,146 @@
+{
+  "package_version": "0.23.0",
+  "timestamp": "2026-09-05T17:28:49.809237+00:00",
+  "artifact": "zhivex_ai_sdk-0.23.0-py3-none-any.whl",
+  "sha256": "088b2243c734b69bc3b237d87d43436e4b8d4be2e1d0cbcde9b322d30e615a7e",
+  "installed_package": true,
+  "results": [
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "operation": "generation",
+      "status": "passed"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "operation": "streaming",
+      "status": "passed"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "operation": "structured-output",
+      "status": "passed"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5-1",
+      "operation": "generation",
+      "status": "passed"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5-1",
+      "operation": "streaming",
+      "status": "passed"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5-1",
+      "operation": "structured-output",
+      "status": "passed"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-mythos-5-1",
+      "operation": "generation",
+      "detail": "API returned model not found for this credential; model access not confirmed.",
+      "status": "unavailable",
+      "error_type": "ProviderHTTPError",
+      "http_status": 404
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "operation": "generation",
+      "status": "passed"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "operation": "streaming",
+      "status": "passed"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "operation": "structured-output",
+      "status": "passed"
+    },
+    {
+      "provider": "qwen",
+      "model": "qwen3.8-max-0902",
+      "operation": "generation",
+      "status": "passed"
+    },
+    {
+      "provider": "qwen",
+      "model": "qwen3.8-max-0902",
+      "operation": "streaming",
+      "status": "passed"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "operation": "generation",
+      "status": "passed"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "operation": "streaming",
+      "status": "passed"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "operation": "structured-output",
+      "status": "passed"
+    },
+    {
+      "provider": "qwen",
+      "model": "qwen3.8-max-0902",
+      "operation": "structured-output",
+      "status": "passed"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "operation": "vision-base64",
+      "status": "passed"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5-1",
+      "operation": "agent-tool",
+      "status": "passed"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "operation": "agent-tool",
+      "status": "passed"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "operation": "agent-tool",
+      "status": "passed"
+    },
+    {
+      "provider": "qwen",
+      "model": "qwen3.8-max-0902",
+      "operation": "agent-tool",
+      "status": "passed"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "operation": "agent-tool",
+      "status": "passed"
+    }
+  ],
+  "candidate_working_tree": "dirty",
+  "evidence_scope": "local installed candidate wheel; not a tagged release"
+}

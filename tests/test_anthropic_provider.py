@@ -130,6 +130,32 @@ class AnthropicProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(structured.object["answer"], "portable json")
         self.assertEqual(requests[1]["output_config"]["format"]["type"], "json_schema")
 
+    async def test_structured_format_omits_unsupported_name_in_generate_and_stream(self) -> None:
+        requests = []
+
+        async def fetch(url, **kwargs):
+            body = kwargs["json_body"]
+            requests.append(body)
+            self.assertEqual(set(body["output_config"]["format"]), {"type", "schema"})
+            if kwargs.get("stream"):
+                return FakeResponse(
+                    status_code=200,
+                    body_text='event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                )
+            return FakeResponse(status_code=200, payload={"content": [], "stop_reason": "end_turn"})
+
+        model = create_anthropic(api_key="test", fetch=fetch)("claude-fable-5-1")
+        for name in (None, "custom_response"):
+            config = StructuredOutputConfig(
+                schema={"type": "object", "properties": {}, "additionalProperties": False},
+                mode="native",
+                name=name,
+            )
+            await generate_text(model=model, prompt="test", structured_output=config)
+            async with stream_text(model=model, prompt="test", structured_output=config) as result:
+                await result.collect()
+        self.assertEqual(len(requests), 4)
+
     async def test_anthropic_portable_grounded_generation_is_supported(self) -> None:
         async def fetch(
             url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout_ms: int | None, stream: bool = False

@@ -849,7 +849,7 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
 
 def _qwen_reasoning_options(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
     if input.reasoning is None:
-        if model_id.strip().lower() == "qwen3.8-max" and (
+        if model_id.strip().lower() in {"qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"} and (
             input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
         ):
             # Qwen3.8-Max reasons at xhigh by default, while forced tool choice
@@ -1067,6 +1067,15 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         **(_qwen_reasoning_options(model_id, input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
+    if provider_name in {"openai", "azure-openai"} and model_id.startswith("gpt-6-astra"):
+        unsupported = {key for key in ("temperature", "top_p", "top_logprobs", "prompt_cache_retention") if body.get(key) is not None}
+        if "message.output_text.logprobs" in (body.get("include") or []):
+            unsupported.add("message.output_text.logprobs")
+        if unsupported:
+            raise UnsupportedFeatureError("GPT-6 Astra does not support: " + ", ".join(sorted(unsupported)))
+        reasoning = body.get("reasoning") or {}
+        if isinstance(reasoning, dict) and reasoning.get("effort") not in {None, "low", "medium", "high", "xhigh", "max"}:
+            raise UnsupportedFeatureError("GPT-6 Astra reasoning effort must be low, medium, high, xhigh, or max.")
     return drop_none(body)
 
 

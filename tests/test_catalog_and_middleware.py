@@ -585,7 +585,16 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(entries), 100)
         self.assertTrue(all(entry.source_urls for entry in entries))
-        self.assertTrue(all(entry.verified_at == "2026-08-29" for entry in entries))
+        reviewed = {
+            ("openai", "gpt-6-astra"), ("azure-openai", "gpt-6-astra"),
+            ("anthropic", "claude-fable-5-1"), ("anthropic", "claude-mythos-5-1"),
+            ("anthropic", "claude-sonnet-5"), ("gemini", "gemini-3.8-flash"),
+            ("vertex", "gemini-3.8-flash"), ("qwen", "qwen3.8-max-0902"),
+            ("deepseek", "deepseek-v4-flash-vision-exp"),
+        }
+        for entry in entries:
+            expected_date = "2026-09-05" if (entry.provider, entry.model_id) in reviewed else "2026-08-29"
+            self.assertEqual(entry.verified_at, expected_date)
         self.assertTrue(all(entry.capabilities is not None for entry in entries))
         self.assertTrue(all(entry.cost_per_1k_tokens is None for entry in entries))
         self.assertGreater(sum(entry.pricing is not None for entry in entries), 0)

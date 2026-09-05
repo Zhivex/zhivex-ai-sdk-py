@@ -106,3 +106,7 @@ Other providers remain available, but they should be treated according to the su
 - Every user-visible change should appear in [CHANGELOG.md](./CHANGELOG.md).
 - Changes to stable APIs require migration guidance.
 - Deprecations should be documented before removal.
+
+## September 5, 2026 model refresh
+
+The catalog and offline tests cover GPT-6 Astra on OpenAI/Azure Responses, Claude Fable 5.1 and restricted-access Mythos 5.1, Gemini 3.8 Flash on Gemini/Vertex, and Qwen3.8-Max-0902 with its documented dated alias. Older IDs stay distinct. DeepSeek's new `deepseek-v4-flash-vision-exp` adds an explicitly Experimental user-image path; the Stable DeepSeek text models continue to reject images. Files, Responses, and other DeepSeek endpoints remain outside this adapter's contract. See [the dated source review](./docs/MODEL_REFRESH_2026_09.md) for exact capabilities, limitations, prices, and unavailable evidence. Offline tests are not live certification.

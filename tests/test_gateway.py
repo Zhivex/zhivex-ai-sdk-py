@@ -925,9 +925,13 @@ class GatewayTests(IsolatedAsyncioTestCase):
             result.route_decision.target_evidence[1].capabilities["structured_output"]
         )
 
+    @patch("zhivex_ai.catalog.date")
     async def test_gateway_uses_source_backed_catalog_pricing_and_exposes_provenance(
-        self,
+        self, mock_date,
     ) -> None:
+        from datetime import date
+        mock_date.today.return_value = date(2026, 8, 15)
+        mock_date.fromisoformat.side_effect = date.fromisoformat
         model = RecordingModel()
         catalog = create_model_catalog(
             [

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 import re
@@ -18,6 +18,7 @@ from ..schema import create_schema_adapter
 from ..types import (
     AgentCapabilities,
     GenerateResult,
+    ImagePart,
     LanguageModel,
     ModelCapabilities,
     ModelGenerateInput,
@@ -157,6 +158,23 @@ def _to_chat_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
         content = _message_text(message)
         if content is not None:
             payload["content"] = content
+        if any(isinstance(part, ImagePart) for part in message.parts):
+            if message.role != "user":
+                raise UnsupportedFeatureError("DeepSeek vision accepts images only in user messages.")
+            blocks: list[dict[str, Any]] = []
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    blocks.append({"type": "text", "text": part.text})
+                elif isinstance(part, ImagePart):
+                    url = part.image
+                    if url and not urlparse(url).scheme:
+                        url = f"data:{part.media_type or 'image/png'};base64,{url}"
+                    if not url:
+                        raise ValidationError("DeepSeek images require a URL or base64 data.")
+                    if not url.startswith("data:") and (urlparse(url).scheme not in {"http", "https"} or len(url) > 8192):
+                        raise ValidationError("DeepSeek image URLs must use HTTP(S) and contain at most 8192 characters.")
+                    blocks.append({"type": "image_url", "image_url": {"url": url}})
+            payload["content"] = blocks
 
         tool_calls = [part.tool_call for part in message.parts if isinstance(part, ToolCallPart)]
         if tool_calls:
@@ -720,6 +738,7 @@ def create_deepseek(
             api_key=resolved_key,
             base_url=resolved_base_url,
             fetch=requester,
+            capabilities=replace(DEEPSEEK_CHAT_CAPABILITIES, vision=model_id == "deepseek-v4-flash-vision-exp"),
         ),
     )
     return create_provider_bundle(

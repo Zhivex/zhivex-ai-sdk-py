@@ -87,3 +87,11 @@ Experimental APIs are intended for evaluation. They should be consumed behind an
 ## Current maturity target
 
 This policy governs the current `Beta` phase of the SDK. The goal is to keep the documented stable surface predictable while release evidence is captured from built artifacts before a future stable release.
+
+## Unreleased resource lifecycle additions
+
+`HTTPTransport` and `aclose_default_clients` are additive Stable root exports. Default HTTP pools are owned by the running event loop and request timeouts no longer create additional pools. Applications must close the default pool before closing its event loop, or use an application-owned `HTTPTransport` lifespan. Borrowed httpx clients remain caller-owned.
+
+Built-in text/object/agent stream results add `aclose()` and async context management. Full replay remains the default; `stream_buffer_size` opts into bounded event retention with an explicit `ValidationError` on overrun. Existing `collect()` output and single-subscriber detachment semantics are preserved. Internal persistence extraction keeps the original `zhivex_ai` and `zhivex_ai.agent` names available.
+
+The September model refresh adds distinct API IDs, not replacements for previous IDs. Claude Fable/Mythos 5.1 forced tool selection and GPT-6 Astra unsupported sampling/reasoning options now fail before dispatch. Gemini 3.8 Flash rejects `minimal` thinking. The Qwen September snapshot retains the same operation-aware routing as Qwen3.8-Max. DeepSeek vision remains model-specific Experimental support.

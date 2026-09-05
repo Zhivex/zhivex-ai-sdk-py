@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterable
 from typing import Any, Literal, cast
 
+from ._streaming import Broadcast, DEFAULT_STREAM_BUFFER_SIZE, OwnedStream
 from .errors import ParseError, UnsupportedFeatureError
 from .generate_text import generate_text, stream_text
 from .messages import create_text_message
@@ -18,6 +19,7 @@ from .types import (
     StreamObjectPartialEvent,
     StreamTextDeltaEvent,
     StructuredOutputConfig,
+    StreamTextResult,
 )
 
 ObjectMode = Literal["native", "prompted"]
@@ -127,23 +129,20 @@ def _parse_partial_object(text: str) -> Any | None:
         return None
 
 
-class _StreamObjectResult:
-    def __init__(self, task: asyncio.Task[GenerateObjectOutput], events: list[ObjectStreamEvent]) -> None:
-        self._task = task
-        self._events = events
+class _StreamObjectResult(OwnedStream[GenerateObjectOutput]):
+    def __init__(self, task: asyncio.Task[GenerateObjectOutput], broadcast: Broadcast[ObjectStreamEvent], upstream: StreamTextResult) -> None:
+        self._runner = task
+        self._broadcast = broadcast
+        self._upstream = upstream
+
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            await self._upstream.aclose()
 
     def event_stream(self) -> AsyncIterable[ObjectStreamEvent]:
-        async def generator() -> AsyncIterable[ObjectStreamEvent]:
-            index = 0
-            while not self._task.done() or index < len(self._events):
-                while index < len(self._events):
-                    item = self._events[index]
-                    index += 1
-                    yield item
-                if not self._task.done():
-                    await asyncio.sleep(0)
-
-        return generator()
+        return self._broadcast.stream()
 
     def text_stream(self) -> AsyncIterable[str]:
         async def generator() -> AsyncIterable[str]:
@@ -162,7 +161,7 @@ class _StreamObjectResult:
         return generator()
 
     async def collect(self) -> GenerateObjectOutput:
-        return await self._task
+        return await self._runner
 
 
 async def generate_object(
@@ -220,6 +219,7 @@ def stream_object(
     mode: str = "auto",
     schema_name: str | None = None,
     schema_description: str | None = None,
+    stream_buffer_size: int | None = DEFAULT_STREAM_BUFFER_SIZE,
     **kwargs: Any,
 ) -> _StreamObjectResult:
     object_mode = _resolve_object_mode(mode, model.capabilities.structured_output)
@@ -234,41 +234,46 @@ def stream_object(
         if object_mode == "native"
         else None
     )
+    broadcast = Broadcast[ObjectStreamEvent](max_events=stream_buffer_size)
     text_result = stream_text(
         model=model,
         prompt=prompt,
         messages=messages,
         system=system,
         structured_output=structured_output,
+        stream_buffer_size=stream_buffer_size,
         **kwargs,
     )
-    events: list[ObjectStreamEvent] = []
 
     async def runner() -> GenerateObjectOutput:
-        text_buffer = ""
-        last_partial: Any = None
-        async for event in text_result.event_stream():
-            events.append(event)
-            if isinstance(event, StreamTextDeltaEvent):
-                text_buffer += event.text_delta
-                events.append(StreamObjectDeltaEvent(text_delta=event.text_delta, partial_text=text_buffer))
-                partial = _parse_partial_object(text_buffer)
-                if partial is not None and partial != last_partial:
-                    last_partial = partial
-                    events.append(StreamObjectPartialEvent(partial_object=partial))
-        final = await text_result.collect()
-        obj = _parse_object(final.text, schema)
-        events.append(StreamObjectCompleteEvent(object=obj))
-        return GenerateObjectOutput(
-            text=final.text,
-            finish_reason=final.finish_reason,
-            provider_finish_reason=final.provider_finish_reason,
-            usage=final.usage,
-            steps=final.steps,
-            messages=final.messages,
-            tool_results=final.tool_results,
-            object=obj,
-            object_mode=object_mode,
-        )
+        try:
+            text_buffer = ""
+            last_partial: Any = None
+            async for event in text_result.event_stream():
+                await broadcast.publish(event)
+                if isinstance(event, StreamTextDeltaEvent):
+                    text_buffer += event.text_delta
+                    await broadcast.publish(StreamObjectDeltaEvent(text_delta=event.text_delta, partial_text=text_buffer))
+                    partial = _parse_partial_object(text_buffer)
+                    if partial is not None and partial != last_partial:
+                        last_partial = partial
+                        await broadcast.publish(StreamObjectPartialEvent(partial_object=partial))
+            final = await text_result.collect()
+            obj = _parse_object(final.text, schema)
+            await broadcast.publish(StreamObjectCompleteEvent(object=obj))
+            return GenerateObjectOutput(
+                text=final.text,
+                finish_reason=final.finish_reason,
+                provider_finish_reason=final.provider_finish_reason,
+                usage=final.usage,
+                steps=final.steps,
+                messages=final.messages,
+                tool_results=final.tool_results,
+                object=obj,
+                object_mode=object_mode,
+            )
+        finally:
+            await text_result.aclose()
+            await broadcast.close()
 
-    return _StreamObjectResult(asyncio.create_task(runner()), events)
+    return _StreamObjectResult(asyncio.create_task(runner()), broadcast, text_result)

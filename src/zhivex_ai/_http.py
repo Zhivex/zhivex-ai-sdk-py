@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 import httpx
 
-_DEFAULT_CLIENTS: dict[float | None, httpx.AsyncClient] = {}
+_LOOP_CLIENT_ATTRIBUTE = "_zhivex_ai_default_http_client"
 DEFAULT_TIMEOUT_MS = 300_000
 DEFAULT_MAX_BUFFERED_RESPONSE_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_STREAM_CACHE_BYTES = 8 * 1024 * 1024
@@ -148,11 +149,12 @@ def _build_request_kwargs(json_body: dict[str, Any] | None, body: Any) -> dict[s
 
 
 def _shared_client(timeout: float | None) -> httpx.AsyncClient:
-    client = _DEFAULT_CLIENTS.get(timeout)
+    loop = asyncio.get_running_loop()
+    client = getattr(loop, _LOOP_CLIENT_ATTRIBUTE, None)
     if client is not None and not getattr(client, "is_closed", False):
         return client
     client = httpx.AsyncClient(timeout=timeout)
-    _DEFAULT_CLIENTS[timeout] = client
+    setattr(loop, _LOOP_CLIENT_ATTRIBUTE, client)
     return client
 
 
@@ -195,10 +197,67 @@ async def _read_limited_body(response: Any, *, max_bytes: int, label: str) -> by
 
 
 async def aclose_default_clients() -> None:
-    clients = list(_DEFAULT_CLIENTS.values())
-    _DEFAULT_CLIENTS.clear()
-    for client in clients:
+    """Close the calling event loop's default HTTP pool before loop shutdown."""
+    loop = asyncio.get_running_loop()
+    client = getattr(loop, _LOOP_CLIENT_ATTRIBUTE, None)
+    if client is not None:
+        delattr(loop, _LOOP_CLIENT_ATTRIBUTE)
+    if client is not None:
         await client.aclose()
+
+
+class HTTPTransport:
+    """An application-owned Fetcher with one connection pool and explicit shutdown.
+
+    Pass this object as ``fetch=transport`` to provider factories. Create one
+    per application lifespan/event loop and close it after in-flight work ends.
+    A supplied httpx client is borrowed and remains owned by the caller.
+    """
+
+    def __init__(self, *, client: httpx.AsyncClient | None = None) -> None:
+        self._client = client
+        self._owns_client = client is None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+
+    def _get_client(self) -> httpx.AsyncClient:
+        from .errors import ConfigurationError
+
+        loop = asyncio.get_running_loop()
+        if self._closed:
+            raise ConfigurationError("HTTPTransport is closed.")
+        if self._loop is not None and self._loop is not loop:
+            raise ConfigurationError("HTTPTransport cannot be shared across event loops.")
+        self._loop = loop
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_MS / 1000)
+        return self._client
+
+    async def __call__(
+        self, url: str, *, method: str = "POST", headers: dict[str, str],
+        json_body: dict[str, Any] | None = None, body: Any = None,
+        timeout_ms: int | None, stream: bool = False,
+    ) -> ResponseLike:
+        return await _fetch_with_client(
+            self._get_client(), url, method=method, headers=headers,
+            json_body=json_body, body=body, timeout_ms=timeout_ms, stream=stream,
+        )
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        if self._client is not None:
+            self._get_client()  # Reject closing an active pool from another loop.
+        self._closed = True
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> Self:
+        self._get_client()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
 
 
 async def default_fetch(
@@ -214,7 +273,19 @@ async def default_fetch(
     effective_timeout_ms = DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms
     timeout = effective_timeout_ms / 1000
     client = _shared_client(timeout)
-    request = client.build_request(method, url, headers=headers, **_build_request_kwargs(json_body, body))
+    return await _fetch_with_client(
+        client, url, method=method, headers=headers, json_body=json_body,
+        body=body, timeout_ms=timeout_ms, stream=stream,
+    )
+
+
+async def _fetch_with_client(
+    client: httpx.AsyncClient, url: str, *, method: str,
+    headers: dict[str, str], json_body: dict[str, Any] | None, body: Any,
+    timeout_ms: int | None, stream: bool,
+) -> ResponseLike:
+    timeout = (DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms) / 1000
+    request = client.build_request(method, url, headers=headers, timeout=timeout, **_build_request_kwargs(json_body, body))
     # Always keep the transport in streaming mode. For non-streaming SDK calls
     # we consume it below with an incremental cap instead of allowing httpx to
     # buffer an unbounded response before the SDK can inspect its size.

@@ -849,15 +849,25 @@ def _merge_tool_payloads(
     return merged or None, options
 
 
+def _validate_model_tool_choice(model_id: str, choice: Any) -> None:
+    if not model_id.startswith(("claude-fable-5-1", "claude-mythos-5-1")):
+        return
+    kind = choice.get("type") if isinstance(choice, dict) else choice
+    if kind is not None and kind != "auto" and kind != "none":
+        raise UnsupportedFeatureError(f'Provider "anthropic" model "{model_id}" only supports auto or none tool choice.')
+
+
 def _map_tool_choice(
     tool_choice: str | ToolChoiceName | None,
     *,
     manual_extended_thinking: bool = False,
+    model_id: str = "",
 ) -> dict[str, Any] | None:
     if tool_choice is None or tool_choice == "auto":
         return None
     if tool_choice == "none":
         return {"type": "none"}
+    _validate_model_tool_choice(model_id, tool_choice)
     if manual_extended_thinking:
         raise UnsupportedFeatureError(
             'Provider "anthropic" only supports "tool_choice=auto" or "tool_choice=none" when manual extended thinking is enabled.'
@@ -905,7 +915,6 @@ def _map_structured_output(input: ModelGenerateInput) -> dict[str, Any] | None:
     return {
         "format": {
             "type": "json_schema",
-            "name": input.structured_output.name or "response",
             "schema": _anthropic_schema(input.structured_output.schema),
         }
     }
@@ -1421,6 +1430,7 @@ class AnthropicCountTokensClient(_AnthropicBase, CountTokensClient):
         _validate_mid_conversation_system_messages(built_messages, model_id)
         _validate_assistant_prefill(built_messages, model_id)
         extracted_options, request_betas, mcp_beta = _extract_provider_options(provider_options)
+        _validate_model_tool_choice(model_id, extracted_options.get("tool_choice"))
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(tools))
         body_tools, extracted_options = _merge_tool_payloads(
             _map_tools(tools),
@@ -1487,6 +1497,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
+        _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
@@ -1511,6 +1522,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                 "tool_choice": _map_tool_choice(
                     input.tool_choice,
                     manual_extended_thinking=manual_extended_thinking,
+                    model_id=self.model_id,
                 ),
                 "temperature": input.temperature,
                 "max_tokens": input.max_tokens or 1024,
@@ -1560,6 +1572,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
+        _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
         body_tools, provider_options = _merge_tool_payloads(
             _map_tools(input.tools),
@@ -1596,6 +1609,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                         "tool_choice": _map_tool_choice(
                             input.tool_choice,
                             manual_extended_thinking=manual_extended_thinking,
+                            model_id=self.model_id,
                         ),
                         "temperature": input.temperature,
                         "max_tokens": input.max_tokens or 1024,
@@ -1760,6 +1774,7 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
+        _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
         body_tools, remaining_options = _merge_tool_payloads([web_search_tool], remaining_options)
         _validate_model_specific_tools(self.model_id, body_tools)

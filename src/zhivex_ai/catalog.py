@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 from datetime import date
 from typing import Iterable, Literal, Sequence
 
@@ -457,6 +457,7 @@ def _entry(
     max_tool_calls_per_turn: int | None = None,
     parallel_tool_calls: bool | None = None,
     structured_output: bool | None = None,
+    verified_at: str = _VERIFIED_AT,
 ) -> ModelCatalogEntry:
     return ModelCatalogEntry(
         provider=provider,
@@ -473,7 +474,7 @@ def _entry(
         structured_output=structured_output,
         capabilities=capabilities,
         pricing=pricing,
-        verified_at=_VERIFIED_AT,
+        verified_at=verified_at,
         replacement_model_id=replacement_model_id,
     )
 
@@ -498,6 +499,82 @@ def _usd(
 
 default_model_catalog = create_model_catalog(
     [
+        _entry(
+            "deepseek", "deepseek-v4-flash-vision-exp",
+            recommended_for=("reasoning", "tools", "vision"),
+            availability="preview",
+            source_urls=("https://api-docs.deepseek.com/guides/vision/",),
+            capabilities=replace(_DEEPSEEK_LANGUAGE, vision=True),
+            verified_at="2026-09-05",
+        ),
+        _entry(
+            "openai",
+            "gpt-6-astra",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_OPENAI_LANGUAGE,
+            availability="stable",
+            source_urls=("https://developers.openai.com/api/docs/models/gpt-6-astra",),
+            verified_at="2026-09-05",
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-6-astra",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_OPENAI_LANGUAGE,
+            availability="stable",
+            source_urls=("https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses",),
+            verified_at="2026-09-05",
+        ),
+        _entry(
+            "anthropic",
+            "claude-fable-5-1",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_ANTHROPIC_LANGUAGE,
+            availability="stable",
+            source_urls=("https://platform.claude.com/docs/en/models/fable-5-1/overview",),
+            verified_at="2026-09-05",
+            pricing=_usd(10, 50, "https://platform.claude.com/docs/en/models/fable-5-1/overview"),
+        ),
+        _entry(
+            "anthropic",
+            "claude-mythos-5-1",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_ANTHROPIC_LANGUAGE,
+            availability="limited",
+            source_urls=("https://platform.claude.com/docs/en/release-notes/overview",),
+            verified_at="2026-09-05",
+            pricing=_usd(10, 50, "https://platform.claude.com/docs/en/release-notes/overview"),
+        ),
+        _entry(
+            "gemini",
+            "gemini-3.8-flash",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=("https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",),
+            verified_at="2026-09-05",
+            pricing=_usd(0.75, 3.75, "https://ai.google.dev/gemini-api/docs/latest-model", effective_from="2026-09-02", effective_until="2026-12-31"),
+        ),
+        _entry(
+            "vertex",
+            "gemini-3.8-flash",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash",),
+            verified_at="2026-09-05",
+        ),
+        _entry(
+            "qwen",
+            "qwen3.8-max-0902",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_QWEN_LANGUAGE,
+            availability="stable",
+            source_urls=("https://www.alibabacloud.com/help/en/model-studio/newly-released-models",),
+            verified_at="2026-09-05",
+            aliases=("qwen3.8-max-2026-09-02",),
+            regions=("intl",),
+        ),
         # OpenAI: aliases are limited to provider-declared moving aliases.
         _entry(
             "openai",
@@ -811,15 +888,15 @@ default_model_catalog = create_model_catalog(
         _entry(
             "anthropic",
             "claude-sonnet-5",
+            verified_at="2026-09-05",
             recommended_for=("chat", "reasoning", "tools", "vision"),
             source_urls=_ANTHROPIC_MODELS,
             capabilities=_ANTHROPIC_LANGUAGE,
             pricing=_usd(
                 2,
                 10,
-                _ANTHROPIC_PRICING,
-                effective_from="2026-08-01",
-                effective_until="2026-08-31",
+                "https://platform.claude.com/docs/en/models/sonnet-5/overview",
+                effective_from="2026-09-05",
             ),
         ),
         _entry(
