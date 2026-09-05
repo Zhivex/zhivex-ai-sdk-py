@@ -184,8 +184,8 @@ def build(args: argparse.Namespace) -> Path:
             "theme": {
                 "name": "mkdocs",
                 "highlightjs": False,
-                "color_mode": "auto",
-                "user_color_mode_toggle": True,
+                "color_mode": "light",
+                "user_color_mode_toggle": False,
                 "navigation_depth": 2,
             },
             "plugins": ["search"],
