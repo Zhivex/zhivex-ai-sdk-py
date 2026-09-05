@@ -1,9 +1,9 @@
 # HU14–17 implementation evidence
 
 Date: 2026-09-05. Implementation commit: `77d48824f484a75786036dfa29c02bb9f569d5ed`.
-Branch: `feat/py-adoption-evidence`. Evidence is local; push was rejected by the
-automatic approval reviewer. No PR, remote CI, merge, portal deployment or new
-package publication is claimed.
+Branch: `feat/py-adoption-evidence`. Published for review in [PR #41](https://github.com/Zhivex/zhivex-ai-sdk-py/pull/41).
+The reports below record local validation; remote CI is tracked separately on the
+PR. No merge, portal deployment or new package publication is claimed.
 
 Candidate wheel version remains 0.23.0 and is **not** the published PyPI artifact.
 SHA256: `3990a493cd778465fbadddce5fbca6679b936d53ca2fe9a5bfa45c2bedabd38e`.
@@ -55,5 +55,5 @@ one tool request in its initial step. Its smoke rejects tool-error completion.
 - **HU18–20:** not implemented in this block. HU18 depends on HU14 acceptance;
   HU19 also needs partners and HU20 needs the broader certification/adoption evidence.
 
-The workflow is committed but has not run remotely. The next authorized publishing
-step is pushing this branch, creating a PR and checking its actual CI results.
+The workflow runs on PR #41. Its remote conclusion and the required review must
+be checked on the current PR head before merge; local success does not replace them.
