@@ -186,6 +186,7 @@ files = [
   "src/zhivex_ai/providers/meta.py",
   "src/zhivex_ai/providers/openai.py",
   "src/zhivex_ai/providers/openai_compat.py",
+  "src/zhivex_ai/providers/_openai_responses_normalization.py",
   "src/zhivex_ai/providers/_payload.py",
   "src/zhivex_ai/providers/_url_security.py",
   "src/zhivex_ai/providers/bedrock.py",
