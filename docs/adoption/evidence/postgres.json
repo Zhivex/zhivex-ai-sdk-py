@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "sdk_version": "0.23.0",
+  "wheel_sha256": "3990a493cd778465fbadddce5fbca6679b936d53ca2fe9a5bfa45c2bedabd38e",
+  "backend": "postgres",
+  "provider_mode": "deterministic",
+  "restart": "separate_processes",
+  "first_response_seconds": 4.267,
+  "total_seconds": 7.578,
+  "human_timing": "not_measured"
+}
