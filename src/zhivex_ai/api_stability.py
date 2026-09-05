@@ -67,6 +67,8 @@ STABLE_EXPORTS = frozenset(
         "GatewayObjectResponse",
         "GatewayResponse",
         "HTTPResponse",
+        "HTTPTransport",
+        "aclose_default_clients",
         "PendingApproval",
         "ProviderHTTPError",
         "ToolExecutionOutcomeUnknown",
@@ -715,6 +717,7 @@ STABLE_EXPORTS = STABLE_EXPORTS | _WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 BETA_EXPORTS = BETA_EXPORTS - _WORKFLOW_STABLE_EXPORTS - {"JsonValue"}
 
 _CATEGORY_BY_MODULE = {
+    "_http": "transport",
     "agent": "agent",
     "agent_evaluation": "agent",
     "agent_state": "agent",

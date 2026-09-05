@@ -594,7 +594,7 @@ def _is_gemini_3_pro_model(model_id: str) -> bool:
     return _is_gemini_3_model(model_id) and "pro" in model_id
 
 
-_GEMINI_FIXED_SAMPLING_MODELS = frozenset({"gemini-3.6-flash", "gemini-3.5-flash-lite"})
+_GEMINI_FIXED_SAMPLING_MODELS = frozenset({"gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"})
 _GEMINI_DEPRECATED_SAMPLING_KEYS = frozenset(
     {"temperature", "top_p", "topP", "top_k", "topK", "candidate_count", "candidateCount"}
 )
@@ -613,6 +613,12 @@ def _validate_latest_gemini_request(
         )
     provider_options = dict(input.provider_options or {})
     generation_config = provider_options.get("generationConfig") or provider_options.get("generation_config") or {}
+    if model_id == "gemini-3.8-flash" and isinstance(generation_config, dict):
+        thinking = generation_config.get("thinkingConfig") or generation_config.get("thinking_config") or {}
+        if isinstance(thinking, dict):
+            level = thinking.get("thinkingLevel", thinking.get("thinking_level"))
+            if (level is not None and str(level).lower() not in {"low", "medium", "high"}) or "thinkingBudget" in thinking or "thinking_budget" in thinking:
+                raise UnsupportedFeatureError("Gemini 3.8 Flash requires low, medium, or high thinking level without a token budget.")
     configured_sampling = set(_GEMINI_DEPRECATED_SAMPLING_KEYS.intersection(provider_options))
     if isinstance(generation_config, dict):
         configured_sampling.update(_GEMINI_DEPRECATED_SAMPLING_KEYS.intersection(generation_config))
@@ -645,9 +651,9 @@ def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] |
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".')
         if input.reasoning.effort == "max":
             raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=max".')
-        if input.reasoning.effort == "minimal" and _is_gemini_3_pro_model(model_id):
+        if input.reasoning.effort == "minimal" and (_is_gemini_3_pro_model(model_id) or model_id == "gemini-3.8-flash"):
             raise UnsupportedFeatureError(
-                'Provider "gemini" does not support "reasoning.effort=minimal" for Gemini 3 Pro models.'
+                'Provider "gemini" does not support "reasoning.effort=minimal" for Gemini 3 Pro or Gemini 3.8 Flash models.'
             )
         return {"thinkingLevel": input.reasoning.effort} if input.reasoning.effort is not None else None
     if input.reasoning.effort is not None:

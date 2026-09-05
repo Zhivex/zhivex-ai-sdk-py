@@ -1,0 +1,29 @@
+# Model source review — September 5, 2026
+
+This review updates the existing providers from official documentation. Catalog availability describes the upstream model; SDK stability and exact-artifact live certification remain separate. New catalog entries are source references, with request behavior covered offline in `tests/test_model_refresh.py`. Credentialed candidate-wheel evidence is recorded in [0.23.0-model-smoke.json](releases/0.23.0-model-smoke.json): Astra, Fable 5.1, Gemini 3.8 Flash, Qwen3.8-Max-0902 and DeepSeek vision passed generation, streaming, structured output and agent tools; DeepSeek also passed a synthetic base64 image check. Updated Anthropic and Google credentials passed. Mythos 5.1 returned model-not-found (404) for the tested credential; its access remains unconfirmed. Azure and Vertex were not credentialed. These local results do not certify a clean tagged release.
+
+| Provider | Added API ID | Integration boundary |
+| --- | --- | --- |
+| OpenAI | `gpt-6-astra` | Portable generation and tools use Responses. Reject unsupported sampling, cache-retention, and reasoning-effort fields before dispatch. |
+| Azure OpenAI | `gpt-6-astra` | Deployment reference through Azure Responses; the application supplies an available deployment and region. |
+| Anthropic | `claude-fable-5-1` | Adaptive thinking; tool choice supports `auto`/`none`, not forced calls. |
+| Anthropic | `claude-mythos-5-1` | Same new request restrictions; restricted access, catalog availability `limited`. |
+| Gemini / Vertex | `gemini-3.8-flash` | GenerateContent/streaming, structured output and tools; reasoning supports low/medium/high, not minimal. |
+| Qwen | `qwen3.8-max-0902` | Distinct snapshot with alias `qwen3.8-max-2026-09-02`; retains operation-aware Responses/Chat Completions routing. Singapore/international availability is verified. |
+| DeepSeek | `deepseek-v4-flash-vision-exp` | Upstream Experimental, catalog `preview`: image URL/base64 `ImagePart` in user messages. Standard V4 IDs remain text-only. Files, raw Responses and new native endpoints are outside this change. |
+
+## Sources and pricing decisions
+
+- [OpenAI Astra model card](https://developers.openai.com/api/docs/models/gpt-6-astra) and [migration guide](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra): Responses is required for tools. Prices vary with prompt length and processing tier, so this refresh leaves its scalar catalog price unknown. Applications with cost ceilings must provide reviewed rates. Do not substitute a cheaper short-context price for all requests.
+- [Azure Responses documentation](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses): lists the Astra deployment version. Azure availability/prices are not inferred from the direct OpenAI route.
+- [Anthropic September release notes](https://platform.claude.com/docs/en/release-notes/overview) and [Fable 5.1 card](https://platform.claude.com/docs/en/models/fable-5-1/overview): released September 1; Fable/Mythos input/output rates are $10/$50 per million tokens. Cache-specific prices are outside the catalog's input/output routing estimate. Thinking-block replay requires an unchanged preceding conversation; applications using dynamic instructions, summary rewriting or model handoffs must follow the provider's migration guidance. No automatic history rewrite or beta binding override is added.
+- [Sonnet 5 card](https://platform.claude.com/docs/en/models/sonnet-5/overview): current input/output rates are $2/$10 per million tokens. Replaces the outdated August-only price window with a review effective September 5; no future expiry is invented.
+- [Gemini release notes](https://ai.google.dev/gemini-api/docs/changelog), [3.8 model card](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash), [latest guide](https://ai.google.dev/gemini-api/docs/latest-model), and [Google Cloud model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash): September 2 release. Direct Gemini introductory input/output rates are $0.75/$3.75 per million through December 31, 2026. The catalog fails closed after that date pending review; it does not silently carry promotional pricing forward. Vertex prices remain application-owned.
+- [Qwen lifecycle table](https://www.alibabacloud.com/help/en/model-studio/newly-released-models): verifies the September 2 snapshot and exact alias. Regional/tiered prices remain application-owned. The moving `qwen3.8-max` ID is not repurposed as the new snapshot.
+- [DeepSeek first-call guide](https://api-docs.deepseek.com/), [vision guide](https://api-docs.deepseek.com/guides/vision/) and [pricing](https://api-docs.deepseek.com/quick_start/pricing/): verifies the Experimental vision ID and user-image wire format. Peak/off-peak prices are not flattened into a universal rate. The stable API IDs still resolve upstream to the July/August V4 revisions.
+
+## Existing models and limits of this review
+
+Kimi K3 was already present; its [official announcement](https://forum.moonshot.ai/t/kimi-k3-is-here-our-most-capable-model/480) matches the existing direct route. The Meta model documentation at [dev.meta.ai](https://dev.meta.ai/docs/models) did not expose a readable model list during this review, so no new direct Meta IDs or voice support are inferred from announcements. Existing Muse Spark support remains unchanged. Adding a direct model never certifies a different hosted provider, Bedrock adapter, or vLLM deployment.
+
+Only newly reviewed entries receive the September 5 verification date. Unchanged catalog entries retain their earlier review timestamps. Run `make catalog-freshness-check` before adopting budgeted routes, or `.venv/bin/python scripts/check_catalog_freshness.py --as-of 2026-12-15` to inspect a reproducible future window. Alerts report source URLs and do not update prices automatically.

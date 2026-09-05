@@ -1161,7 +1161,7 @@ def create_responses_app(
         effective_limits = replace(
             effective_limits, max_request_bytes=max_request_bytes
         )
-    app = FastAPI(title="Zhivex Responses Host", version="0.22.0")
+    app = FastAPI(title="Zhivex Responses Host", version="0.23.0")
     _install_responses_routes(
         app,
         host=ResponsesAgentHost(
@@ -1219,7 +1219,7 @@ def create_agent_playground_app(
         effective_limits = replace(
             effective_limits, max_request_bytes=max_request_bytes
         )
-    app = FastAPI(title="Zhivex Agent Playground", version="0.22.0")
+    app = FastAPI(title="Zhivex Agent Playground", version="0.23.0")
     _install_responses_routes(
         app,
         host=ResponsesAgentHost(

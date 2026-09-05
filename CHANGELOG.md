@@ -19,25 +19,30 @@ Related documents:
 
 ## Unreleased
 
+## 0.23.0
+
 ### Added
 
-- None.
+- Stable `HTTPTransport` and `aclose_default_clients` lifecycle APIs, plus explicit close/context management for built-in text, object, and agent streams.
+- Optional `stream_buffer_size` retention limits with explicit consumer-overrun errors and a shared queue-free broadcaster. Full replay remains the default.
+- Catalog references and offline request tests for GPT-6 Astra on OpenAI/Azure, Claude Fable/Mythos 5.1, Gemini 3.8 Flash on Gemini/Vertex, and Qwen3.8-Max-0902.
+- Experimental DeepSeek V4 Flash Vision image URL/base64 inputs in user messages; standard V4 models remain text-only.
+- `make catalog-freshness-check` for deterministic upcoming/expired pricing audits.
 
 ### Changed
 
-- None.
+- Prepared package version `0.23.0`; the distribution remains Beta.
+
+- Extracted agent memory/checkpoint persistence into an internal module while preserving public imports; expanded Mypy to cover HTTP, SSE, catalog, persistence, and all provider adapters without skipped provider imports.
+- Updated Sonnet 5 pricing from its current official model card and recorded Gemini 3.8 introductory price expiry. GPT-6 Astra tiered prices remain application-owned.
 
 ### Fixed
 
-- None.
-
-### Deprecated
-
-- None.
-
-### Removed
-
-- None.
+- Anthropic native structured output omits the unsupported `output_config.format.name` field, preventing HTTP 400 responses from the Messages API.
+- Stream shutdown joins upstream work, including immediate object-stream cancellation; object event consumers now wait for notifications instead of busy polling.
+- HTTP pools are scoped to event loops, with per-request timeouts rather than a retained pool for each timeout value.
+- Gateway pricing tests use a fixed date and cover effective-window boundaries.
+- Reject incompatible Astra, Fable/Mythos 5.1, and Gemini 3.8 reasoning/tool options before dispatch; preserve operation-aware Qwen routing for the new snapshot.
 
 ## 0.22.0
 

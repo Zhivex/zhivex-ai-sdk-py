@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     )
 
 _MODULE_EXPORTS = {
+    "_http": ("HTTPTransport", "aclose_default_clients"),
     "agent": (
         "Agent",
         "AgentCancellationToken",

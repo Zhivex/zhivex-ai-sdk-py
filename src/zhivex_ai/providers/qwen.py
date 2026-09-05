@@ -152,7 +152,7 @@ def _infer_qwen_media_type(url: str | None) -> str:
 
 
 def _is_qwen_38_max(model_id: str) -> bool:
-    return model_id.strip().lower() == QWEN_38_MAX_MODEL
+    return model_id.strip().lower() in {QWEN_38_MAX_MODEL, "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"}
 
 
 def _qwen_chat_headers(api_key: str) -> dict[str, str]:

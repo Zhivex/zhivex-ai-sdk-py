@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._http import (
+    HTTPTransport as HTTPTransport,
+    aclose_default_clients as aclose_default_clients,
+)
+
 from .agent import (
     Agent as Agent,
     AgentCancellationToken as AgentCancellationToken,

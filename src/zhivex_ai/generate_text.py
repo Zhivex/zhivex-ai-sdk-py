@@ -4,10 +4,10 @@ import asyncio
 import inspect
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, cast
 
+from ._streaming import Broadcast, DEFAULT_STREAM_BUFFER_SIZE, OwnedStream
 from .errors import (
     ParseError,
     ToolExecutionOutcomeUnknown,
@@ -598,51 +598,8 @@ async def generate_text(
     )
 
 
-@dataclass
-class _Broadcast:
-    history: list[StreamEvent]
-    done: bool = False
-    error: Exception | None = None
-    subscribers: list[asyncio.Queue[StreamEvent | None]] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        self.subscribers = []
-
-    async def publish(self, event: StreamEvent) -> None:
-        self.history.append(event)
-        for queue in list(self.subscribers):
-            await queue.put(event)
-
-    async def close(self) -> None:
-        self.done = True
-        for queue in list(self.subscribers):
-            await queue.put(None)
-
-    def stream(self) -> AsyncIterable[StreamEvent]:
-        async def generator() -> AsyncIterable[StreamEvent]:
-            queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
-            cursor = 0
-            self.subscribers.append(queue)
-            try:
-                while True:
-                    while cursor < len(self.history):
-                        event = self.history[cursor]
-                        cursor += 1
-                        yield event
-                    if self.done:
-                        return
-                    item = await queue.get()
-                    if item is None:
-                        return
-            finally:
-                if queue in self.subscribers:
-                    self.subscribers.remove(queue)
-
-        return generator()
-
-
-class _StreamTextResult:
-    def __init__(self, runner: asyncio.Task[GenerateTextOutput], broadcast: _Broadcast) -> None:
+class _StreamTextResult(OwnedStream[GenerateTextOutput]):
+    def __init__(self, runner: asyncio.Task[GenerateTextOutput], broadcast: Broadcast[StreamEvent]) -> None:
         self._runner = runner
         self._broadcast = broadcast
 
@@ -680,6 +637,7 @@ def stream_text(
     timeout_ms: int | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stream_buffer_size: int | None = DEFAULT_STREAM_BUFFER_SIZE,
     on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> _StreamTextResult:
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
@@ -696,7 +654,7 @@ def stream_text(
 
     steps_limit = max(1, max_steps or 1)
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
-    broadcast = _Broadcast(history=[])
+    broadcast = Broadcast[StreamEvent](max_events=stream_buffer_size)
 
     async def runner() -> GenerateTextOutput:
         all_messages = list(base_messages)

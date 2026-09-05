@@ -35,6 +35,7 @@ Existing top-level Beta and Experimental imports remain available for compatibil
 These APIs are the supported public contract for application code and production integrations:
 
 - Provider factories: `create_openai`, `create_anthropic`, `create_azure_openai`, `create_gemini`, `create_vertex`, `create_qwen`, `create_kimi`, `create_deepseek`, `create_meta`, `create_vllm`
+- HTTP lifecycle: `HTTPTransport`, `aclose_default_clients`
 - Text generation: `generate_text`, `stream_text`
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
@@ -145,3 +146,11 @@ Meta Model API is tier-1 for the Stable `create_meta(...)` factory and Standard 
 vLLM is included in the tier-1 set for the SDK primitives backed by its OpenAI-compatible server: text generation, streaming, structured output/tools, embeddings, transcription, and realtime ASR. The guarantee is model/task-dependent: vLLM must be serving compatible generation, embedding, or ASR models for those surfaces to work, and vLLM custom endpoints such as tokenize, rerank, classify, and score are outside the stable SDK surface.
 
 Other providers remain useful, but they should be evaluated with the support matrix and the stability level of the specific feature area in mind.
+
+## Streaming resource ownership
+
+Built-in `StreamTextResult`, `StreamObjectResult`, and `AgentStreamResult` results expose `aclose()` and async context management. Closing a result cancels and joins its producer; closing a single event iterator only detaches that consumer. The Experimental live-agent result uses the same ownership helper and retains its Experimental classification.
+
+`stream_buffer_size` accepts a positive event count or `None`. Stable defaults preserve full history (`None`). Set a finite limit, such as 4096, for request-owned production streams. Consumers whose cursor has been evicted raise `ValidationError`, including late subscribers requesting unavailable history. There is no silent event loss. `collect()` retains its final-result contract independently of subscriber retention. A limit bounds retained event count, not individual payload bytes or final output size.
+
+DeepSeek's `deepseek-v4-flash-vision-exp` is an upstream Experimental model tracked as `preview` in the catalog. Its tested image path accepts user `ImagePart` URL/base64 inputs only. This does not promote vision to the Stable Tier-1 DeepSeek cohort or add Files, Responses, audio, or other native endpoints.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.22.0"
+version = "0.23.0"
 description = "Provider-portable Python runtime for building reliable AI agents"
 readme = "README.md"
 license = { text = "MIT" }
@@ -133,6 +133,12 @@ python_version = "3.11"
 files = [
   "src/zhivex_ai/__init__.py",
   "src/zhivex_ai/_serde.py",
+  "src/zhivex_ai/_http.py",
+  "src/zhivex_ai/_sse.py",
+  "src/zhivex_ai/_streaming.py",
+  "src/zhivex_ai/_agent_persistence.py",
+  "src/zhivex_ai/catalog.py",
+  "src/zhivex_ai/embed.py",
   "src/zhivex_ai/api_stability.py",
   "src/zhivex_ai/agent.py",
   "src/zhivex_ai/agent_evaluation.py",
@@ -175,6 +181,12 @@ files = [
   "src/zhivex_ai/providers/kimi.py",
   "src/zhivex_ai/providers/meta.py",
   "src/zhivex_ai/providers/openai.py",
+  "src/zhivex_ai/providers/openai_compat.py",
+  "src/zhivex_ai/providers/_payload.py",
+  "src/zhivex_ai/providers/_url_security.py",
+  "src/zhivex_ai/providers/bedrock.py",
+  "src/zhivex_ai/providers/ollama.py",
+  "src/zhivex_ai/providers/openrouter.py",
   "src/zhivex_ai/providers/qwen.py",
   "src/zhivex_ai/providers/vertex.py",
   "src/zhivex_ai/providers/vllm.py",
@@ -186,7 +198,3 @@ check_untyped_defs = true
 disallow_untyped_defs = false
 warn_return_any = false
 warn_unused_configs = true
-
-[[tool.mypy.overrides]]
-module = "zhivex_ai.providers.*"
-follow_imports = "skip"

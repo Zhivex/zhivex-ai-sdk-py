@@ -17,6 +17,8 @@ from zhivex_ai.workflows import __all__ as WORKFLOW_EXPORTS
 
 
 DOCUMENTED_STABLE_EXPORTS = {
+    "HTTPTransport",
+    "aclose_default_clients",
     "AgentCheckpoint",
     "AgentTrace",
     "EmbedOutput",
@@ -161,7 +163,7 @@ WORKFLOW_STABLE_EXPORTS = {
 }
 DOCUMENTED_STABLE_EXPORTS |= WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 
-COMPATIBILITY_ROOT_EXPORTS_SHA256 = "21de785e153879814a2b578a76ef1aaad99f08af0c220677d87c88b2df003dd2"
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "deb06b95a40a64967058ee7ca8690354f4d8504f62e94b22b527bb1e23172cd7"
 
 
 class PublicContractTests(TestCase):
@@ -274,7 +276,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.22.0"', pyproject)
+        self.assertIn('version = "0.23.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

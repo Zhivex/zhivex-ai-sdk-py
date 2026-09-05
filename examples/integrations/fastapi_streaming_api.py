@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import math
+from contextlib import asynccontextmanager
 from typing import Any
 
+from anyio import CancelScope
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from zhivex_ai import (
     ConfigurationError,
+    aclose_default_clients,
     ParseError,
     ProviderHTTPError,
     UnsupportedFeatureError,
@@ -19,7 +22,15 @@ from zhivex_ai import (
     to_ui_message_stream_response,
 )
 
-app = FastAPI(title="Zhivex AI SDK FastAPI Streaming Example")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        yield
+    finally:
+        await aclose_default_clients()
+
+
+app = FastAPI(title="Zhivex AI SDK FastAPI Streaming Example", lifespan=lifespan)
 
 
 class StreamRequest(BaseModel):
@@ -50,9 +61,19 @@ def _http_exception_from_sdk_error(error: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Internal server error.")
 
 
-def _to_fastapi_stream(response: Any) -> StreamingResponse:
+def _to_fastapi_stream(response: Any, result: Any) -> StreamingResponse:
+    async def body():
+        try:
+            async for chunk in response.body:
+                yield chunk
+        finally:
+            # Starlette cancels the response scope on disconnect. Shield cleanup
+            # so provider shutdown can finish inside that cancelled scope.
+            with CancelScope(shield=True):
+                await result.aclose()
+
     return StreamingResponse(
-        response.body,
+        body(),
         status_code=response.status_code,
         headers=response.headers,
         media_type=response.headers.get("content-type"),
@@ -68,8 +89,9 @@ async def stream_chat(request: StreamRequest) -> StreamingResponse:
             prompt=request.prompt,
             system=request.system,
             timeout_ms=request.timeout_ms,
+            stream_buffer_size=4096,
         )
-        return _to_fastapi_stream(to_text_stream_response(result))
+        return _to_fastapi_stream(to_text_stream_response(result), result)
     except Exception as error:
         raise _http_exception_from_sdk_error(error) from error
 
@@ -83,8 +105,9 @@ async def stream_chat_ui(request: StreamRequest) -> StreamingResponse:
             prompt=request.prompt,
             system=request.system,
             timeout_ms=request.timeout_ms,
+            stream_buffer_size=4096,
         )
-        return _to_fastapi_stream(to_ui_message_stream_response(result))
+        return _to_fastapi_stream(to_ui_message_stream_response(result), result)
     except Exception as error:
         raise _http_exception_from_sdk_error(error) from error
 

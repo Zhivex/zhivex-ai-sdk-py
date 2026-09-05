@@ -85,8 +85,8 @@ class FakeAsyncClient:
         FakeAsyncClient.last_instance = self
         FakeAsyncClient.instances.append(self)
 
-    def build_request(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, object]):
-        self.request = {"method": method, "url": url, "headers": headers, "json": json}
+    def build_request(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, object], timeout: float | None = None):
+        self.request = {"method": method, "url": url, "headers": headers, "json": json, "timeout": timeout}
         return self.request
 
     async def send(self, request, *, stream: bool = False):

@@ -79,6 +79,14 @@ The SDK already exposes transport helpers that map cleanly to FastAPI:
 
 The streaming example adapts those helpers into `fastapi.responses.StreamingResponse` so the API layer stays thin.
 
+### Stream and HTTP shutdown
+
+For request-owned streams, use `async with stream_text(..., stream_buffer_size=4096) as result`, or call `await result.aclose()` in the response generator's `finally` block. Closing only `result.text_stream()` or `result.event_stream()` does not stop shared production. The same explicit ownership applies to `stream_object` and `stream_agent`. Finite retention bounds event count; enforce model token/output limits separately. Consumers falling behind the retained history receive `ValidationError`; use durable application storage for unlimited replay.
+
+For reusable connections, own one `HTTPTransport` per application lifespan and event loop, pass it through provider `fetch=`, and close it after in-flight streams end. An injected httpx client is borrowed. Without an owned transport, `await aclose_default_clients()` closes the current loop's default pool during application shutdown. Request timeouts are applied independently on each request while sharing that pool.
+
+Run `make catalog-freshness-check` to detect prices expiring within 30 days. The command exits nonzero for upcoming or expired prices; `--as-of YYYY-MM-DD` makes audits reproducible. It does not fetch or invent replacement prices. Reviewed GPT-6 Astra pricing is tiered, so default catalog pricing stays unknown; configure reviewed application rates before imposing a cost ceiling on that route.
+
 ## Gateway APIs
 
 When you want fallback routing in the API layer:

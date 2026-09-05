@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 RELEASE_ARTIFACT_FLAGS ?=
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile catalog-freshness-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
 	uv venv .venv
@@ -60,6 +60,9 @@ smoke-agents:
 
 compile:
 	$(PYTHON) -m compileall src tests examples
+
+catalog-freshness-check:
+	$(PYTHON) scripts/check_catalog_freshness.py
 
 support-matrix-check:
 	$(PYTHON) scripts/generate_support_matrix.py --check-readme
