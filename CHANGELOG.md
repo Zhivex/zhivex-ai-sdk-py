@@ -19,6 +19,42 @@ Related documents:
 
 ## Unreleased
 
+### Dependency compatibility
+
+- Added uv.lock, locked development/CI installs, and isolated minimum-core, minimum-extras, and latest dependency tests on Python 3.11.
+- Moved websockets to the Experimental realtime extra; install `zhivex-ai-sdk[realtime]` for the default websocket transport.
+- Added httpx2 to development tools and raised pytest-asyncio to a pytest-9-compatible floor.
+- Enabled scoped import, bugbear, async, and simplification lint rules for shared provider modules without changing exports.
+- Bound current certification to the published 0.23.0 wheel hash and source revision; retained 0.22.0 evidence only as history. Local evidence also expires after 30 days.
+
+
+### Added
+
+- Added a versioned, fail-closed Tier-1 provider certification contract with strict JSON Schema validation, exact-wheel/source/workflow identity, per-target operations, sanitized diagnostics, and deterministic reports.
+- Added a generated provider certification matrix that separates source-contract, installed-wheel, and live evidence while keeping Meta Standard, Meta Contributor, and vLLM deployment targets distinct.
+- Added HU7 per-target exact-wheel policies and a protected manual workflow for the first Stable cohort: OpenAI, Anthropic, Azure OpenAI, Gemini, and Vertex.
+- Added HU8 per-target exact-wheel policies for Qwen, Kimi/Moonshot, DeepSeek, Meta Standard, and a concrete vLLM deployment. The protected manual workflow now covers the complete ten-provider Tier-1 roster without conflating Meta Contributor with Meta Standard.
+
+### Changed
+
+- Release smoke workflows now validate sanitized certification evidence before publication, and records older than 30 days automatically become `stale` instead of retaining `release-certified` status.
+- Portable certification smokes now cover generation, streaming, structured output, and an agent tool loop with synthetic markers; unavailable Azure or Vertex credentials remain explicit blockers instead of changing the Tier-1 contract.
+- Second-cohort smokes now execute streaming and structured output instead of inferring those operations from a flag. Required, blocked, failed, and unsupported operations are retained independently, including partial vLLM results and `portable-retrieval=unsupported` for Qwen, Kimi, and DeepSeek.
+- The HU8 vLLM deployment now pins `Qwen/Qwen2.5-1.5B-Instruct` and documents the required Hermes automatic-tool parser flags. Its exact-wheel local run passes generation, streaming, structured output, portable retrieval, and the agent tool loop while remaining `integration-only` until the protected workflow runs.
+
+### Fixed
+
+- Fixed a live-certification false positive where Qwen, Kimi, DeepSeek, or vLLM could report portable operations without dispatching their streaming and structured-output canaries.
+
+### Deprecated
+
+- None.
+
+### Removed
+
+- None.
+
+
 ## 0.23.0
 
 ### Added

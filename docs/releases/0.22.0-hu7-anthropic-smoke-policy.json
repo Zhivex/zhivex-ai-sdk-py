@@ -1,0 +1,19 @@
+{
+  "artifact_sha256": "5e016ec99aa254f074b8b14292d1ee7f4d181168ddaae8c7b57b80c4af89116e",
+  "package_version": "0.22.0",
+  "require_artifact_sha256": true,
+  "require_installed_package": true,
+  "required_providers": {
+    "anthropic": {
+      "model": "claude-sonnet-5",
+      "operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    }
+  },
+  "schema_version": 1,
+  "source_revision": "742f11c981e361479c0ff1762bef2b6620622c17"
+}

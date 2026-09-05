@@ -1,0 +1,50 @@
+{
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.23.0-py3-none-any.whl",
+    "installation_status": "passed",
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.23.0",
+    "sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+    "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+  },
+  "recorded_at": "2026-09-05T18:51:39.596587Z",
+  "run_status": "failed",
+  "schema_version": 1,
+  "targets": [
+    {
+      "diagnostic_code": "VERTEX_CREDENTIALS_UNAVAILABLE",
+      "diagnostic_fingerprint": null,
+      "model": "gemini-3.8-flash",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "blocked"
+        },
+        {
+          "name": "generation",
+          "status": "blocked"
+        },
+        {
+          "name": "streaming",
+          "status": "blocked"
+        },
+        {
+          "name": "structured-output",
+          "status": "blocked"
+        }
+      ],
+      "provider": "vertex",
+      "result": "blocked",
+      "surface": "standard",
+      "target_id": "vertex-standard"
+    }
+  ],
+  "workflow": {
+    "name": "Local provider smoke",
+    "platform": "local",
+    "repository": null,
+    "run_attempt": null,
+    "run_id": null
+  }
+}

@@ -1,11 +1,10 @@
 PYTHON := .venv/bin/python
 RELEASE_ARTIFACT_FLAGS ?=
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile catalog-freshness-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile lock-check catalog-freshness-check certification-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
 
 dev:
-	uv venv .venv
-	uv pip install -e '.[dev]'
+	uv sync --locked --all-extras
 
 test:
 	$(PYTHON) -m pytest -q
@@ -29,7 +28,7 @@ test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
 
 test-agents:
-	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_dx_guardrails.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
+	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_persistence_compatibility.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_dx_guardrails.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
 
 test-evals:
 	$(PYTHON) -m pytest tests/test_agent_evaluation.py tests/test_cli.py -q
@@ -38,12 +37,13 @@ test-docs:
 	$(PYTHON) -m pytest tests/test_docs_onboarding.py tests/test_operations_docs.py -q
 
 test-release:
-	$(PYTHON) -m pytest tests/test_release_artifacts.py tests/test_live_smoke.py -q
+	$(PYTHON) -m pytest tests/test_release_artifacts.py tests/test_live_smoke.py tests/test_provider_certification.py -q
 
 test-cov:
 	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
 
 lint:
+	$(PYTHON) -m ruff check src/zhivex_ai/providers/openai_compat.py src/zhivex_ai/providers/_payload.py src/zhivex_ai/providers/_url_security.py --extend-select I,B,ASYNC,SIM101,SIM103,SIM114
 	$(PYTHON) -m ruff check src tests examples
 
 typecheck: public-stub-check
@@ -64,15 +64,21 @@ compile:
 catalog-freshness-check:
 	$(PYTHON) scripts/check_catalog_freshness.py
 
+certification-check:
+	$(PYTHON) scripts/verify_provider_certification.py --check-schema
+
 support-matrix-check:
-	$(PYTHON) scripts/generate_support_matrix.py --check-readme
+	$(PYTHON) scripts/generate_support_matrix.py --check-docs
 
 security-check:
 	$(PYTHON) -m pip check
 	$(PYTHON) scripts/audit_dependencies.py
 	$(PYTHON) -m pip_audit --local --skip-editable
 
-check: compile lint typecheck support-matrix-check test-cov
+lock-check:
+	uv lock --check
+
+check: lock-check compile lint typecheck certification-check support-matrix-check test-cov
 
 build:
 	rm -rf dist build

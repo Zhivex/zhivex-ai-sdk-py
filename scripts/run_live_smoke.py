@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 _USE_INSTALLED_PACKAGE = os.getenv("ZHIVEX_SMOKE_USE_INSTALLED", "").strip().lower() in {"1", "true", "yes", "on"}
 if not _USE_INSTALLED_PACKAGE and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -48,6 +50,13 @@ from zhivex_ai import (  # noqa: E402
     tool,
     transcribe_audio,
     stream_text,
+)
+from scripts.provider_certification import (  # noqa: E402
+    ArtifactEvidence,
+    CertificationEvidence,
+    OperationEvidence,
+    TargetEvidence,
+    WorkflowEvidence,
 )
 
 
@@ -90,10 +99,17 @@ class _AgentSmokeInput(BaseModel):
     nonce: str
 
 
-class _MetaStructuredSmokeOutput(BaseModel):
+class _PortableStructuredSmokeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nonce: str
+
+
+class _ProviderOperationError(RuntimeError):
+    def __init__(self, *, completed_operations: set[str], cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.completed_operations = frozenset(completed_operations)
+        self.cause = cause
 
 
 def _source_package_version() -> str:
@@ -138,6 +154,18 @@ def _load_release_smoke_policy() -> dict[str, Any] | None:
         raise ValueError("Release smoke policy must be a schema_version 1 JSON object.")
     if not isinstance(payload.get("package_version"), str):
         raise ValueError("Release smoke policy package_version must be a string.")
+    expected_sha256 = payload.get("artifact_sha256")
+    if expected_sha256 is not None and (
+        not isinstance(expected_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+    ):
+        raise ValueError("Release smoke policy artifact_sha256 must be a lowercase SHA256.")
+    source_revision = payload.get("source_revision")
+    if source_revision is not None and (
+        not isinstance(source_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", source_revision)
+    ):
+        raise ValueError("Release smoke policy source_revision must be a lowercase commit SHA.")
     providers = payload.get("required_providers")
     if not isinstance(providers, dict) or not providers:
         raise ValueError("Release smoke policy required_providers must be a non-empty object.")
@@ -152,6 +180,21 @@ def _load_release_smoke_policy() -> dict[str, Any] | None:
             raise ValueError(
                 f'Release smoke provider "{provider}" has unknown operations: '
                 f"{', '.join(sorted(unknown_operations))}."
+            )
+        unsupported_operations = requirement.get("unsupported_operations", [])
+        if not isinstance(unsupported_operations, list):
+            raise ValueError(
+                f'Release smoke provider "{provider}" unsupported_operations must be a list.'
+            )
+        unknown_unsupported = set(unsupported_operations) - _RELEASE_SMOKE_OPERATIONS
+        if unknown_unsupported:
+            raise ValueError(
+                f'Release smoke provider "{provider}" has unknown unsupported operations: '
+                f"{', '.join(sorted(unknown_unsupported))}."
+            )
+        if set(operations) & set(unsupported_operations):
+            raise ValueError(
+                f'Release smoke provider "{provider}" cannot require and mark the same operation unsupported.'
             )
         model = requirement.get("model")
         if model is not None and (not isinstance(model, str) or not model.strip()):
@@ -193,6 +236,18 @@ def _validate_release_smoke_configuration(
         "ZHIVEX_SMOKE_META_CERTIFICATION"
     ):
         raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_META_CERTIFICATION=1.")
+    portable_operations = {
+        str(operation)
+        for provider, requirement in policy["required_providers"].items()
+        if provider != "meta"
+        for operation in requirement["operations"]
+    }
+    if portable_operations & {"streaming", "structured-output"} and not _enabled(
+        "ZHIVEX_SMOKE_PORTABLE_CERTIFICATION"
+    ):
+        raise ValueError(
+            "Release smoke policy requires ZHIVEX_SMOKE_PORTABLE_CERTIFICATION=1."
+        )
     for provider, requirement in policy["required_providers"].items():
         expected_model = requirement.get("model")
         if expected_model is None:
@@ -208,6 +263,11 @@ def _validate_release_smoke_configuration(
     artifact = _release_artifact_details()
     if policy.get("require_artifact_sha256") and artifact is None:
         raise ValueError("Release smoke policy requires ZHIVEX_SMOKE_ARTIFACT_PATH.")
+    expected_sha256 = policy.get("artifact_sha256")
+    if expected_sha256 is not None and (
+        artifact is None or artifact["sha256"] != expected_sha256
+    ):
+        raise ValueError("Release smoke artifact SHA256 does not match the policy.")
 
 
 def _operations_for_outcome(provider: str, *, agent_ran: bool) -> set[str]:
@@ -216,6 +276,10 @@ def _operations_for_outcome(provider: str, *, agent_ran: bool) -> set[str]:
         operations.add("agent-tool")
     if provider == "meta" and _enabled("ZHIVEX_SMOKE_META_CERTIFICATION"):
         operations.update({"streaming", "structured-output", "portable-retrieval"})
+    elif _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION"):
+        operations.update({"streaming", "structured-output"})
+        if provider == "vllm":
+            operations.add("portable-retrieval")
     return operations
 
 
@@ -234,10 +298,20 @@ def _source_revision() -> str:
     return process.stdout.strip() if process.returncode == 0 else "unavailable"
 
 
+def _certification_target(provider: str, model: str) -> tuple[str, str]:
+    if provider == "meta" and model == "muse-spark-1.2-contributor":
+        return ("meta-contributor", "contributor")
+    if provider == "vllm":
+        return ("vllm-deployment", "deployment")
+    return (f"{provider}-standard", "standard")
+
+
 def _write_release_smoke_evidence(
     *,
     policy: dict[str, Any] | None,
     executed_operations: dict[str, set[str]],
+    blocked_providers: set[str] | dict[str, str] | None = None,
+    failed_providers: set[str] | dict[str, str] | None = None,
     failures: int,
 ) -> None:
     raw_path = os.getenv("ZHIVEX_SMOKE_EVIDENCE_PATH")
@@ -246,23 +320,105 @@ def _write_release_smoke_evidence(
     evidence_path = Path(raw_path)
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
     artifact = _release_artifact_details()
-    payload = {
-        "schema_version": 1,
-        "status": "passed" if failures == 0 else "failed",
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "package_version": _observed_package_version(),
-        "source_revision": _source_revision(),
-        "artifact": artifact,
-        "policy_package_version": policy.get("package_version") if policy else None,
-        "providers": {
-            provider: {
-                "model": os.getenv(_PROVIDER_MODEL_ENV[provider]),
-                "operations": sorted(operations),
-            }
-            for provider, operations in sorted(executed_operations.items())
-        },
-    }
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", "utf-8")
+    source_revision = (
+        str(policy["source_revision"])
+        if policy is not None and policy.get("source_revision") is not None
+        else _source_revision()
+    )
+    artifact_evidence = (
+        ArtifactEvidence(
+            kind="wheel",
+            package_version=_observed_package_version(),
+            source_revision=source_revision,
+            installation_status="passed",
+            filename=artifact["filename"],
+            sha256=artifact["sha256"],
+        )
+        if artifact is not None
+        else ArtifactEvidence(
+            kind="source",
+            package_version=_observed_package_version(),
+            source_revision=source_revision,
+            installation_status="not-applicable",
+        )
+    )
+    github_repository = os.getenv("GITHUB_REPOSITORY")
+    github_run_id = os.getenv("GITHUB_RUN_ID")
+    github_run_attempt = os.getenv("GITHUB_RUN_ATTEMPT")
+    if github_repository and github_run_id and github_run_attempt:
+        workflow = WorkflowEvidence(
+            platform="github-actions",
+            name=os.getenv("GITHUB_WORKFLOW", "Provider release smoke"),
+            repository=github_repository,
+            run_id=int(github_run_id),
+            run_attempt=int(github_run_attempt),
+        )
+    else:
+        workflow = WorkflowEvidence(platform="local", name="Local provider smoke")
+
+    blocked = set(blocked_providers or ())
+    failed = set(failed_providers or ())
+    providers = set(executed_operations) | blocked | failed
+    if policy is not None:
+        providers.update(str(provider) for provider in policy.get("required_providers", {}))
+    targets: list[TargetEvidence] = []
+    for provider in sorted(providers):
+        model = os.getenv(_PROVIDER_MODEL_ENV[provider]) or "unconfigured"
+        target_id, surface = _certification_target(provider, model)
+        if provider in failed:
+            result = "failed"
+            diagnostic_code = (
+                failed_providers.get(provider, "PROVIDER_EXECUTION_FAILED")
+                if isinstance(failed_providers, dict)
+                else "PROVIDER_EXECUTION_FAILED"
+            )
+        elif provider in blocked or provider not in executed_operations:
+            result = "blocked"
+            diagnostic_code = (
+                blocked_providers.get(provider, _blocked_diagnostic_code(provider))
+                if isinstance(blocked_providers, dict)
+                else _blocked_diagnostic_code(provider)
+            )
+        else:
+            result = "passed"
+            diagnostic_code = None
+        operation_status = "passed" if result == "passed" else result
+        operations = {
+            operation: "passed"
+            for operation in sorted(executed_operations.get(provider, set()))
+        }
+        if policy is not None:
+            requirement = policy.get("required_providers", {}).get(provider, {})
+            for operation in requirement.get("operations", []):
+                operations.setdefault(operation, operation_status)
+            for operation in requirement.get("unsupported_operations", []):
+                operations[operation] = "unsupported"
+        targets.append(
+            TargetEvidence(
+                target_id=target_id,
+                provider=provider,
+                surface=surface,
+                model=model,
+                result=result,
+                operations=[
+                    OperationEvidence(name=operation, status=status)
+                    for operation, status in sorted(operations.items())
+                ],
+                diagnostic_code=diagnostic_code,
+            )
+        )
+    evidence = CertificationEvidence(
+        schema_version=1,
+        run_status="passed" if failures == 0 else "failed",
+        recorded_at=datetime.now(timezone.utc),
+        artifact=artifact_evidence,
+        workflow=workflow,
+        targets=targets,
+    )
+    evidence_path.write_text(
+        json.dumps(evidence.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
 
 
 def _load_dotenv_if_available() -> None:
@@ -349,6 +505,67 @@ def _safe_error_message(error: BaseException) -> str:
     return _URL_RE.sub(redact_url, message)
 
 
+def _failure_diagnostic_code(provider: str, error: BaseException) -> str:
+    response_body = str(getattr(error, "response_body", "") or "").lower()
+    status = getattr(error, "status", None)
+    if provider == "anthropic" and "anthropic-workspace-id is required" in response_body:
+        return "ANTHROPIC_WORKSPACE_ID_REQUIRED"
+    if provider == "gemini" and "api key not valid" in response_body:
+        return "GEMINI_API_KEY_INVALID"
+    if status in {401, 403}:
+        return "PROVIDER_AUTHENTICATION_FAILED"
+    if status == 404:
+        return "PROVIDER_MODEL_UNAVAILABLE"
+    if status == 429:
+        return "PROVIDER_RATE_LIMITED"
+    if isinstance(status, int) and status >= 500:
+        return "PROVIDER_UNAVAILABLE"
+    if provider == "vllm":
+        current: BaseException | None = error
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if type(current).__name__ in {
+                "ConnectError",
+                "ConnectTimeout",
+                "NetworkError",
+                "NetworkTimeout",
+            }:
+                return "VLLM_DEPLOYMENT_UNAVAILABLE"
+            current = current.__cause__ or current.__context__
+    return "PROVIDER_EXECUTION_FAILED"
+
+
+def _blocked_diagnostic_code(provider: str) -> str:
+    if provider == "azure-openai":
+        return "AZURE_CREDENTIALS_UNAVAILABLE"
+    if provider == "vertex":
+        return "VERTEX_CREDENTIALS_UNAVAILABLE"
+    if provider == "qwen":
+        return "QWEN_CREDENTIALS_UNAVAILABLE"
+    if provider == "kimi":
+        return "KIMI_CREDENTIALS_UNAVAILABLE"
+    if provider == "deepseek":
+        return "DEEPSEEK_CREDENTIALS_UNAVAILABLE"
+    if provider == "meta":
+        return "META_CREDENTIALS_UNAVAILABLE"
+    if provider == "vllm":
+        return "VLLM_DEPLOYMENT_UNAVAILABLE"
+    return "PROVIDER_NOT_EXECUTED"
+
+
+def _is_external_blocker(diagnostic_code: str) -> bool:
+    return diagnostic_code in {
+        "ANTHROPIC_WORKSPACE_ID_REQUIRED",
+        "GEMINI_API_KEY_INVALID",
+        "PROVIDER_AUTHENTICATION_FAILED",
+        "PROVIDER_MODEL_UNAVAILABLE",
+        "PROVIDER_RATE_LIMITED",
+        "PROVIDER_UNAVAILABLE",
+        "VLLM_DEPLOYMENT_UNAVAILABLE",
+    }
+
+
 async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
     nonce = "zhivex-agent-smoke"
     executions: list[dict[str, str]] = []
@@ -389,7 +606,7 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
             else _openai_smoke_reasoning(model.model_id)
             if provider == "openai"
             else ReasoningConfig(effort="low")
-            if provider == "meta"
+            if provider == "meta" or (provider in {"gemini", "vertex"} and model.model_id.startswith("gemini-3.8"))
             else None
         ),
         max_retries=1,
@@ -398,13 +615,93 @@ async def _run_agent_tool_smoke(*, provider: str, model: LanguageModel) -> None:
     )
     matching_results = [item for item in result.tool_results if item.tool_name == "validate_agent_smoke"]
     if executions != [{"nonce": nonce}]:
-        raise RuntimeError(f"agent tool executed with unexpected inputs or count: {executions!r}")
+        raise RuntimeError("agent tool executed with unexpected inputs or count")
     if len(matching_results) != 1 or matching_results[0].is_error:
         raise RuntimeError("agent smoke did not return exactly one successful local tool result")
     if matching_results[0].output != {"nonce": nonce, "validated": True}:
-        raise RuntimeError(f"agent smoke returned an unexpected tool result: {matching_results[0].output!r}")
+        raise RuntimeError("agent smoke returned an unexpected tool result")
     if not _matches_smoke_token(result.text, "AGENT_SMOKE_OK"):
-        raise RuntimeError(f"agent smoke returned unexpected final text: {result.text!r}")
+        raise RuntimeError("agent smoke returned unexpected final text")
+
+
+async def _run_portable_certification(
+    *,
+    provider: str,
+    model: LanguageModel,
+    reasoning: ReasoningConfig | None = None,
+    structured_max_tokens: int | None = 512,
+    completed_operations: set[str] | None = None,
+) -> None:
+    marker = provider.replace("-", "_")
+    stream_token = f"ZHIVEX_{marker.upper()}_STREAM_OK"
+    structured_nonce = f"zhivex-{marker}-structured-smoke"
+    streamed = await stream_text(
+        model=model,
+        prompt=f"Reply with exactly {stream_token}.",
+        reasoning=reasoning,
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    ).collect()
+    if not _matches_smoke_token(streamed.text, stream_token):
+        raise RuntimeError(f"{provider} streaming smoke returned unexpected text")
+    if completed_operations is not None:
+        completed_operations.add("streaming")
+
+    structured = await generate_object(
+        model=model,
+        prompt=(
+            "Return only JSON with the exact shape "
+            f'{{"nonce":"{structured_nonce}"}}.'
+        ),
+        schema=_PortableStructuredSmokeOutput,
+        schema_name=f"{marker}_release_smoke",
+        reasoning=reasoning,
+        max_tokens=structured_max_tokens,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if structured.object.nonce != structured_nonce:
+        raise RuntimeError(f"{provider} structured-output smoke returned unexpected data")
+    if completed_operations is not None:
+        completed_operations.add("structured-output")
+
+
+async def _run_portable_retrieval_certification(
+    *,
+    provider: str,
+    model: LanguageModel,
+    reasoning: ReasoningConfig | None = None,
+    completed_operations: set[str] | None = None,
+) -> None:
+    marker = provider.replace("-", "_")
+    retrieval_token = f"ZHIVEX_{marker.upper()}_RETRIEVAL_OK"
+    retrieval = await generate_text(
+        model=model,
+        prompt=f"Using only the supplied release document, reply with exactly {retrieval_token}.",
+        retrieval=PortableRetrievalConfig(
+            documents=[
+                PortableDocument(
+                    document_id=f"{marker}-release-smoke",
+                    title="Release certification marker",
+                    text=f"The exact required reply is {retrieval_token}.",
+                )
+            ],
+            max_documents=1,
+            max_document_chars=256,
+        ),
+        reasoning=reasoning,
+        max_tokens=512,
+        max_retries=1,
+        retry_backoff_ms=250,
+        timeout_ms=20_000,
+    )
+    if not _matches_smoke_token(retrieval.text, retrieval_token):
+        raise RuntimeError(f"{provider} retrieval smoke returned unexpected text")
+    if completed_operations is not None:
+        completed_operations.add("portable-retrieval")
 
 
 async def _run_openai() -> tuple[str, bool, str, bool]:
@@ -423,11 +720,23 @@ async def _run_openai() -> tuple[str, bool, str, bool]:
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(result.text, "OPENAI_SMOKE_OK."):
-        raise RuntimeError(f"unexpected response: {result.text!r}")
+        raise RuntimeError("OpenAI generation smoke returned unexpected text")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(
+            provider="openai",
+            model=language_model,
+            reasoning=_openai_smoke_reasoning(model),
+        )
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="openai", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("openai", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -442,20 +751,25 @@ async def _run_gemini() -> tuple[str, bool, str, bool]:
         )
     provider = create_gemini()
     language_model = provider(model)
+    reasoning = ReasoningConfig(effort="low") if model.startswith("gemini-3.8") else None
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly GEMINI_SMOKE_OK.",
-        max_tokens=256,
+        max_tokens=512,
+        reasoning=reasoning,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(result.text, "GEMINI_SMOKE_OK."):
-        raise RuntimeError(f"unexpected response: {result.text!r}")
-    token_count = await provider.tokens().count(model_id=model, prompt="smoke")
-    if token_count.total_tokens is None or token_count.total_tokens <= 0:
-        raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
+        raise RuntimeError("Gemini generation smoke returned unexpected text")
     media_details = []
+    # Token counting is a separate native API, outside the portable certification contract.
+    if not _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION"):
+        token_count = await provider.tokens().count(model_id=model, prompt="smoke")
+        if token_count.total_tokens is None or token_count.total_tokens <= 0:
+            raise RuntimeError("Gemini token count smoke returned an invalid count")
+        media_details.append(f"tokens={token_count.total_tokens}")
     if _enabled("ZHIVEX_SMOKE_GOOGLE_MEDIA"):
         image_model = os.getenv("ZHIVEX_SMOKE_GEMINI_IMAGE_MODEL")
         video_model = os.getenv("ZHIVEX_SMOKE_GEMINI_VIDEO_MODEL")
@@ -475,12 +789,16 @@ async def _run_gemini() -> tuple[str, bool, str, bool]:
             if not media.media:
                 raise RuntimeError("Gemini media smoke returned no media")
             media_details.append(f"media={media_model}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(provider="gemini", model=language_model, reasoning=reasoning)
+        media_details.append("portable-certification=ok")
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="gemini", model=language_model)
         media_details.append("agent-tool=ok")
     suffix = f", {', '.join(media_details)}" if media_details else ""
-    return ("gemini", True, f"ok: {model}, tokens={token_count.total_tokens}{suffix}", agent_ran)
+    return ("gemini", True, f"ok: {model}{suffix}", agent_ran)
 
 
 async def _run_anthropic() -> tuple[str, bool, str, bool]:
@@ -498,14 +816,22 @@ async def _run_anthropic() -> tuple[str, bool, str, bool]:
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(result.text, "ANTHROPIC_SMOKE_OK."):
-        raise RuntimeError(f"unexpected response: {result.text!r}")
+        raise RuntimeError("Anthropic generation smoke returned unexpected text")
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
         raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(provider="anthropic", model=language_model)
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="anthropic", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("anthropic", True, f"ok: {model}, tokens={token_count.total_tokens}{suffix}", agent_ran)
 
 
@@ -531,11 +857,19 @@ async def _run_azure_openai() -> tuple[str, bool, str, bool]:
         timeout_ms=20_000,
     )
     if result.text.strip() != "AZURE_OPENAI_SMOKE_OK.":
-        raise RuntimeError(f"unexpected response: {result.text!r}")
+        raise RuntimeError("Azure OpenAI generation smoke returned unexpected text")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(provider="azure-openai", model=language_model)
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="azure-openai", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("azure-openai", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -562,7 +896,7 @@ async def _run_vertex() -> tuple[str, bool, str, bool]:
         timeout_ms=20_000,
     )
     if result.text.strip() != "VERTEX_SMOKE_OK.":
-        raise RuntimeError(f"unexpected response: {result.text!r}")
+        raise RuntimeError("Vertex generation smoke returned unexpected text")
     token_count = await provider.tokens().count(model_id=model, prompt="smoke")
     if token_count.total_tokens is None or token_count.total_tokens <= 0:
         raise RuntimeError(f"unexpected token count: {token_count.total_tokens!r}")
@@ -586,6 +920,10 @@ async def _run_vertex() -> tuple[str, bool, str, bool]:
             if not media.media:
                 raise RuntimeError("Vertex media smoke returned no media")
             media_details.append(f"media={media_model}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(provider="vertex", model=language_model)
+        media_details.append("portable-certification=ok")
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="vertex", model=language_model)
@@ -651,6 +989,15 @@ async def _run_qwen() -> tuple[str, bool, str, bool]:
         raise RuntimeError(f"unexpected response: {result.text!r}")
 
     details = [f"ok: {model}", f"region={region}"]
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(
+            provider="qwen",
+            model=language_model,
+            reasoning=ReasoningConfig(effort="none"),
+            structured_max_tokens=None,
+        )
+        details.append("portable-certification=ok")
     embedding_model = os.getenv("ZHIVEX_SMOKE_QWEN_EMBEDDING_MODEL")
     if embedding_model:
         embedding = await embed(
@@ -725,12 +1072,20 @@ async def _run_kimi() -> tuple[str, bool, str, bool]:
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
-    if result.text.strip() != "KIMI_SMOKE_OK.":
+    if not _matches_smoke_token(result.text, "KIMI_SMOKE_OK."):
         raise RuntimeError(f"unexpected response: {result.text!r}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(provider="kimi", model=language_model)
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="kimi", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("kimi", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -758,10 +1113,22 @@ async def _run_deepseek() -> tuple[str, bool, str, bool]:
     )
     if not _matches_smoke_token(result.text, "DEEPSEEK_SMOKE_OK"):
         raise RuntimeError(f"unexpected response: {result.text!r}")
+    certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+    if certification_ran:
+        await _run_portable_certification(
+            provider="deepseek",
+            model=language_model,
+            reasoning=ReasoningConfig(effort="none"),
+        )
     agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
     if agent_ran:
         await _run_agent_tool_smoke(provider="deepseek", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+    if agent_ran:
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("deepseek", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -776,12 +1143,12 @@ async def _run_meta_portable_certification(*, model: LanguageModel) -> None:
         timeout_ms=20_000,
     ).collect()
     if not _matches_smoke_token(streamed.text, "META_STREAM_SMOKE_OK"):
-        raise RuntimeError(f"Meta streaming smoke returned unexpected text: {streamed.text!r}")
+        raise RuntimeError("Meta streaming smoke returned unexpected text")
 
     structured = await generate_object(
         model=model,
         prompt='Return only JSON with the exact shape {"nonce":"meta-structured-smoke"}.',
-        schema=_MetaStructuredSmokeOutput,
+        schema=_PortableStructuredSmokeOutput,
         schema_name="meta_release_smoke",
         reasoning=ReasoningConfig(effort="low"),
         max_tokens=512,
@@ -790,9 +1157,7 @@ async def _run_meta_portable_certification(*, model: LanguageModel) -> None:
         timeout_ms=20_000,
     )
     if structured.object.nonce != "meta-structured-smoke":
-        raise RuntimeError(
-            f"Meta structured-output smoke returned unexpected nonce: {structured.object.nonce!r}"
-        )
+        raise RuntimeError("Meta structured-output smoke returned unexpected data")
 
     retrieval = await generate_text(
         model=model,
@@ -815,7 +1180,7 @@ async def _run_meta_portable_certification(*, model: LanguageModel) -> None:
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(retrieval.text, "META_RETRIEVAL_SMOKE_OK"):
-        raise RuntimeError(f"Meta retrieval smoke returned unexpected text: {retrieval.text!r}")
+        raise RuntimeError("Meta retrieval smoke returned unexpected text")
 
 
 async def _run_meta() -> tuple[str, bool, str, bool]:
@@ -841,7 +1206,7 @@ async def _run_meta() -> tuple[str, bool, str, bool]:
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(result.text, "META_SMOKE_OK"):
-        raise RuntimeError(f"unexpected response: {result.text!r}")
+        raise RuntimeError("Meta generation smoke returned unexpected text")
     certification_ran = _enabled("ZHIVEX_SMOKE_META_CERTIFICATION")
     if certification_ran:
         await _run_meta_portable_certification(model=language_model)
@@ -863,22 +1228,49 @@ async def _run_vllm() -> tuple[str, bool, str, bool]:
     api_key = os.getenv("ZHIVEX_SMOKE_VLLM_API_KEY") or os.getenv("VLLM_API_KEY")
     if not model:
         return ("vllm", False, "skip: set ZHIVEX_SMOKE_VLLM_MODEL", False)
-    provider = create_vllm(api_key=api_key, base_url=base_url)
-    language_model = provider(model)
-    result = await generate_text(
-        model=language_model,
-        prompt="Reply with exactly VLLM_SMOKE_OK.",
-        max_tokens=20,
-        max_retries=1,
-        retry_backoff_ms=250,
-        timeout_ms=20_000,
-    )
-    if result.text.strip() != "VLLM_SMOKE_OK.":
-        raise RuntimeError(f"unexpected response: {result.text!r}")
-    agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
+    completed_operations: set[str] = set()
+    try:
+        provider = create_vllm(api_key=api_key, base_url=base_url)
+        language_model = provider(model)
+        result = await generate_text(
+            model=language_model,
+            prompt="Reply with exactly VLLM_SMOKE_OK.",
+            max_tokens=20,
+            max_retries=1,
+            retry_backoff_ms=250,
+            timeout_ms=20_000,
+        )
+        if not _matches_smoke_token(result.text, "VLLM_SMOKE_OK."):
+            raise RuntimeError("vLLM generation smoke returned unexpected text")
+        completed_operations.add("generation")
+        certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
+        if certification_ran:
+            await _run_portable_certification(
+                provider="vllm",
+                model=language_model,
+                completed_operations=completed_operations,
+            )
+            await _run_portable_retrieval_certification(
+                provider="vllm",
+                model=language_model,
+                completed_operations=completed_operations,
+            )
+        agent_ran = _enabled("ZHIVEX_SMOKE_AGENTS")
+        if agent_ran:
+            await _run_agent_tool_smoke(provider="vllm", model=language_model)
+            completed_operations.add("agent-tool")
+    except Exception as error:
+        raise _ProviderOperationError(
+            completed_operations=completed_operations,
+            cause=error,
+        ) from error
+    details = []
+    if certification_ran:
+        details.append("portable-certification=ok")
+        details.append("portable-retrieval=ok")
     if agent_ran:
-        await _run_agent_tool_smoke(provider="vllm", model=language_model)
-    suffix = ", agent-tool=ok" if agent_ran else ""
+        details.append("agent-tool=ok")
+    suffix = f", {', '.join(details)}" if details else ""
     return ("vllm", True, f"ok: {model}{suffix}", agent_ran)
 
 
@@ -922,8 +1314,10 @@ async def main() -> int:
     executed_providers: set[str] = set()
     agent_executed_providers: set[str] = set()
     executed_operations: dict[str, set[str]] = {}
+    blocked_providers: dict[str, str] = {}
+    failed_providers: dict[str, str] = {}
     for check in checks:
-        provider_name = check.__name__.replace("_run_", "")
+        provider_name = check.__name__.removeprefix("_run_").replace("_", "-")
         try:
             provider, ran, message, agent_ran = await check()
             print(f"[{provider}] {message}")
@@ -936,9 +1330,22 @@ async def main() -> int:
                 if agent_ran:
                     agent_executed_providers.add(provider)
                 continue
+            blocked_providers[provider] = _blocked_diagnostic_code(provider)
         except Exception as error:
             failures += 1
-            print(f"[{provider_name}] fail: {_safe_error_message(error)}")
+            completed_operations = getattr(error, "completed_operations", ())
+            if completed_operations:
+                executed_operations[provider_name] = set(completed_operations)
+            diagnostic_error = getattr(error, "cause", error)
+            diagnostic_code = _failure_diagnostic_code(provider_name, diagnostic_error)
+            if _is_external_blocker(diagnostic_code):
+                blocked_providers[provider_name] = diagnostic_code
+            else:
+                failed_providers[provider_name] = diagnostic_code
+            if _enabled("ZHIVEX_SMOKE_SANITIZED_DIAGNOSTICS"):
+                print(f"[{provider_name}] fail: PROVIDER_EXECUTION_FAILED")
+            else:
+                print(f"[{provider_name}] fail: {_safe_error_message(diagnostic_error)}")
     if strict and selected is not None:
         missing_provider_smokes = selected - executed_providers
         if missing_provider_smokes:
@@ -977,6 +1384,8 @@ async def main() -> int:
         _write_release_smoke_evidence(
             policy=policy,
             executed_operations=executed_operations,
+            blocked_providers=blocked_providers,
+            failed_providers=failed_providers,
             failures=failures,
         )
     except (OSError, ValueError) as error:

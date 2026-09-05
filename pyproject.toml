@@ -27,12 +27,15 @@ authors = [
 ]
 dependencies = [
   "httpx>=0.27.0",
-  "pydantic>=2.8.0",
-  "websockets>=15.0.1"
+  "pydantic>=2.8.0"
 ]
 
 [project.optional-dependencies]
+realtime = [
+  "websockets>=15.0.1"
+]
 dev = [
+  "httpx2>=2.12.0",
   "build>=1.2.0",
   "click>=8.3.3",
   "cryptography>=50.0.0",
@@ -42,7 +45,7 @@ dev = [
   "python-docx>=1.1.0",
   "python-dotenv>=1.2.2",
   "pytest>=9.0.3",
-  "pytest-asyncio>=0.23.0",
+  "pytest-asyncio>=1.4.0",
   "pytest-cov>=5.0.0",
   "ruff>=0.6.0",
   "setuptools>=83.0.0",
@@ -117,6 +120,7 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = ["error:Using .httpx. with .starlette.testclient. is deprecated"]
 
 [tool.ruff]
 target-version = "py311"
@@ -198,3 +202,6 @@ check_untyped_defs = true
 disallow_untyped_defs = false
 warn_return_any = false
 warn_unused_configs = true
+
+[tool.uv]
+required-version = ">=0.12.4"

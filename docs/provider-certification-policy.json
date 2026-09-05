@@ -1,0 +1,182 @@
+{
+  "evidence_files": [
+    "docs/releases/0.23.0-hu7-openai-certification.json",
+    "docs/releases/0.23.0-hu7-anthropic-certification.json",
+    "docs/releases/0.23.0-hu7-azure-openai-certification.json",
+    "docs/releases/0.23.0-hu7-gemini-certification.json",
+    "docs/releases/0.23.0-hu7-vertex-certification.json",
+    "docs/releases/0.23.0-hu8-qwen-certification.json",
+    "docs/releases/0.23.0-hu8-kimi-certification.json",
+    "docs/releases/0.23.0-hu8-deepseek-certification.json",
+    "docs/releases/0.23.0-hu8-meta-certification.json",
+    "docs/releases/0.23.0-hu8-vllm-certification.json",
+    "docs/releases/0.23.0-contributor-certification.json"
+  ],
+  "future_tolerance_minutes": 5,
+  "max_age_days": 30,
+  "schema_version": 1,
+  "targets": [
+    {
+      "expected_model": "gpt-5.6-luna",
+      "id": "openai-standard",
+      "provider": "openai",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    },
+    {
+      "expected_model": "claude-fable-5-1",
+      "id": "anthropic-standard",
+      "provider": "anthropic",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    },
+    {
+      "id": "azure-openai-standard",
+      "provider": "azure-openai",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    },
+    {
+      "expected_model": "gemini-3.8-flash",
+      "id": "gemini-standard",
+      "provider": "gemini",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    },
+    {
+      "expected_model": "gemini-3.8-flash",
+      "id": "vertex-standard",
+      "provider": "vertex",
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    },
+    {
+      "expected_model": "qwen3.8-max-0902",
+      "id": "qwen-standard",
+      "provider": "qwen",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "kimi-k3",
+      "id": "kimi-standard",
+      "provider": "kimi",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "deepseek-v4-flash",
+      "id": "deepseek-standard",
+      "provider": "deepseek",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true,
+      "unsupported_operations": [
+        "portable-retrieval"
+      ]
+    },
+    {
+      "expected_model": "muse-spark-1.2",
+      "id": "meta-standard",
+      "provider": "meta",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "standard",
+      "tier1": true
+    },
+    {
+      "id": "vllm-deployment",
+      "provider": "vllm",
+      "required_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ],
+      "stability": "stable",
+      "surface": "deployment",
+      "tier1": true
+    },
+    {
+      "expected_model": "muse-spark-1.2-contributor",
+      "id": "meta-contributor",
+      "provider": "meta",
+      "stability": "beta",
+      "surface": "contributor",
+      "tier1": false
+    }
+  ],
+  "expected_artifact": {
+    "package_version": "0.23.0",
+    "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b",
+    "sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464"
+  }
+}

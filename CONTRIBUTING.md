@@ -61,3 +61,7 @@ Optional live smoke runs require configured credentials:
 ```bash
 ZHIVEX_SMOKE_PROVIDERS=openai make smoke
 ```
+
+## Dependency compatibility update
+
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.

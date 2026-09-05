@@ -418,7 +418,8 @@ class ReleaseArtifactToolingTests(TestCase):
         for workflow in [ci, publish, test_publish]:
             self.assertIn("persist-credentials: false", workflow)
         self.assertIn("make PYTHON=python security-check", ci)
-        self.assertEqual(ci.count('"setuptools>=83.0.0"'), 3)
+        self.assertGreaterEqual(ci.count("uv sync --locked"), 3)
+        self.assertIn("minimum-core, minimum-extras, latest", ci)
         self.assertIn('"setuptools>=83.0.0"', publish)
         self.assertIn('"setuptools>=83.0.0"', test_publish)
         for workflow, environment in [(publish, "pypi"), (test_publish, "testpypi")]:
@@ -452,6 +453,102 @@ class ReleaseArtifactToolingTests(TestCase):
                 workflow,
             )
             self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)
+
+    def test_hu7_and_hu8_provider_certification_workflow_is_exact_artifact_and_protected(
+        self,
+    ) -> None:
+        workflow = (ROOT / ".github/workflows/provider-certification.yml").read_text("utf-8")
+        expected_sha256 = "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464"
+        expected_revision = "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+        providers = ("openai", "anthropic", "azure-openai", "gemini", "vertex")
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("environment: provider-certification", workflow)
+        self.assertIn("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION: \"1\"", workflow)
+        self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
+        self.assertIn("ZHIVEX_SMOKE_SANITIZED_DIAGNOSTICS: \"1\"", workflow)
+        self.assertIn("zhivex-ai-sdk==0.23.0", workflow)
+        self.assertIn(expected_sha256, workflow)
+        self.assertIn("retention-days: 30", workflow)
+        self.assertNotIn("id-token: write", workflow)
+        action_refs = re.findall(r"uses:\s+[^@\s]+@([^\s#]+)", workflow)
+        self.assertTrue(action_refs)
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs))
+        for provider in providers:
+            policy = json.loads(
+                (ROOT / f"docs/releases/0.23.0-hu7-{provider}-smoke-policy.json").read_text(
+                    "utf-8"
+                )
+            )
+            self.assertEqual(policy["artifact_sha256"], expected_sha256)
+            self.assertEqual(policy["source_revision"], expected_revision)
+            self.assertTrue(policy["require_installed_package"])
+            self.assertEqual(
+                set(policy["required_providers"][provider]["operations"]),
+                {"generation", "streaming", "structured-output", "agent-tool"},
+            )
+
+        hu8_targets = {
+            "qwen": (
+                "qwen3.8-max-0902",
+                {"generation", "streaming", "structured-output", "agent-tool"},
+                {"portable-retrieval"},
+            ),
+            "kimi": (
+                "kimi-k3",
+                {"generation", "streaming", "structured-output", "agent-tool"},
+                {"portable-retrieval"},
+            ),
+            "deepseek": (
+                "deepseek-v4-flash",
+                {"generation", "streaming", "structured-output", "agent-tool"},
+                {"portable-retrieval"},
+            ),
+            "meta": (
+                "muse-spark-1.2",
+                {
+                    "generation",
+                    "streaming",
+                    "structured-output",
+                    "portable-retrieval",
+                    "agent-tool",
+                },
+                set(),
+            ),
+            "vllm": (
+                "Qwen/Qwen2.5-1.5B-Instruct",
+                {
+                    "generation",
+                    "streaming",
+                    "structured-output",
+                    "portable-retrieval",
+                    "agent-tool",
+                },
+                set(),
+            ),
+        }
+        for provider, (model, operations, unsupported) in hu8_targets.items():
+            policy = json.loads(
+                (ROOT / f"docs/releases/0.23.0-hu8-{provider}-smoke-policy.json").read_text(
+                    "utf-8"
+                )
+            )
+            requirement = policy["required_providers"][provider]
+            self.assertEqual(policy["artifact_sha256"], expected_sha256)
+            self.assertEqual(policy["source_revision"], expected_revision)
+            self.assertEqual(requirement["model"], model)
+            self.assertEqual(set(requirement["operations"]), operations)
+            self.assertEqual(set(requirement.get("unsupported_operations", [])), unsupported)
+
+        for name in (
+            "ZHIVEX_CERT_QWEN_API_KEY",
+            "ZHIVEX_CERT_MOONSHOT_API_KEY",
+            "ZHIVEX_CERT_DEEPSEEK_API_KEY",
+            "ZHIVEX_CERT_MODEL_API_KEY",
+            "ZHIVEX_CERT_VLLM_BASE_URL",
+            "ZHIVEX_CERT_VLLM_MODEL",
+        ):
+            self.assertIn(name, workflow)
 
         policy = json.loads(
             (ROOT / "docs/releases/0.23.0-smoke-policy.json").read_text("utf-8")

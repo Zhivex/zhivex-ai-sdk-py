@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-05T18:15:14.927784+00:00",
+  "run_status": "passed",
+  "artifact": {
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.23.0",
+    "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b",
+    "installation_status": "passed",
+    "filename": "zhivex_ai_sdk-0.23.0-py3-none-any.whl",
+    "sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464"
+  },
+  "workflow": {
+    "platform": "github-actions",
+    "name": "Publish PyPI",
+    "repository": "Zhivex/zhivex-ai-sdk-py",
+    "run_id": 33983320649,
+    "run_attempt": 1
+  },
+  "targets": [
+    {
+      "target_id": "meta-contributor",
+      "provider": "meta",
+      "surface": "contributor",
+      "model": "muse-spark-1.2-contributor",
+      "result": "passed",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "passed"
+        },
+        {
+          "name": "generation",
+          "status": "passed"
+        },
+        {
+          "name": "portable-retrieval",
+          "status": "passed"
+        },
+        {
+          "name": "streaming",
+          "status": "passed"
+        },
+        {
+          "name": "structured-output",
+          "status": "passed"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+  "package_version": "0.23.0",
+  "require_artifact_sha256": true,
+  "require_installed_package": true,
+  "required_providers": {
+    "openai": {
+      "model": "gpt-5.6-luna",
+      "operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool"
+      ]
+    }
+  },
+  "schema_version": 1,
+  "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+}

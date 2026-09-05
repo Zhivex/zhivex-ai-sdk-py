@@ -26,6 +26,30 @@ Provider capability and live certification are deliberately separate:
 
 The current Tier-1 roster is a contract-supported classification. It must not be described as release-certified unless matching evidence exists for the exact release being discussed.
 
+<!-- BEGIN GENERATED PROVIDER CERTIFICATION -->
+## Current provider certification
+
+This table is generated from the versioned certification policy and validated evidence records.
+Contract tests, installed-wheel execution, and live certification are separate evidence layers.
+A passed exact-artifact live record remains current for 30 days; older records are shown as `stale`.
+Missing, blocked, failed, unsupported, local-only, or malformed evidence never produces `release-certified` status.
+Meta Standard and Meta Contributor are independent targets; Contributor cannot certify the Stable Standard route.
+
+| Provider | Target | Surface | Model | Source tests | Installed wheel | Live | Recorded at | Operations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| openai | openai-standard | standard | gpt-5.6-luna | contract-supported | passed | integration-only | 2026-09-05T18:50:48.041672+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
+| anthropic | anthropic-standard | standard | claude-fable-5-1 | contract-supported | passed | integration-only | 2026-09-05T18:51:08.221408+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
+| azure-openai | azure-openai-standard | standard | unconfigured | contract-supported | passed | blocked | 2026-09-05T18:51:08.545930+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
+| gemini | gemini-standard | standard | gemini-3.8-flash | contract-supported | passed | blocked | 2026-09-05T18:57:24.043231+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
+| vertex | vertex-standard | standard | gemini-3.8-flash | contract-supported | passed | blocked | 2026-09-05T18:51:39.596587+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
+| qwen | qwen-standard | standard | qwen3.8-max-0902 | contract-supported | passed | integration-only | 2026-09-05T18:51:47.345485+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
+| kimi | kimi-standard | standard | kimi-k3 | contract-supported | passed | blocked | 2026-09-05T18:51:47.623477+00:00 | agent-tool=blocked, generation=blocked, portable-retrieval=unsupported, streaming=blocked, structured-output=blocked |
+| deepseek | deepseek-standard | standard | deepseek-v4-flash | contract-supported | passed | integration-only | 2026-09-05T18:51:52.053643+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
+| meta | meta-standard | standard | muse-spark-1.2 | contract-supported | passed | integration-only | 2026-09-05T18:52:04.774757+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
+| vllm | vllm-deployment | deployment | Qwen/Qwen2.5-1.5B-Instruct | contract-supported | passed | blocked | 2026-09-05T18:52:05.069155+00:00 | agent-tool=blocked, generation=blocked, portable-retrieval=blocked, streaming=blocked, structured-output=blocked |
+| meta | meta-contributor | contributor | muse-spark-1.2-contributor | beta-contract | passed | certified | 2026-09-05T18:15:14.927784+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
+<!-- END GENERATED PROVIDER CERTIFICATION -->
+
 ## Support expectations
 
 - The latest beta release line is the primary target for fixes, documentation updates, and examples.
@@ -110,3 +134,7 @@ Other providers remain available, but they should be treated according to the su
 ## September 5, 2026 model refresh
 
 The catalog and offline tests cover GPT-6 Astra on OpenAI/Azure Responses, Claude Fable 5.1 and restricted-access Mythos 5.1, Gemini 3.8 Flash on Gemini/Vertex, and Qwen3.8-Max-0902 with its documented dated alias. Older IDs stay distinct. DeepSeek's new `deepseek-v4-flash-vision-exp` adds an explicitly Experimental user-image path; the Stable DeepSeek text models continue to reject images. Files, Responses, and other DeepSeek endpoints remain outside this adapter's contract. See [the dated source review](./docs/MODEL_REFRESH_2026_09.md) for exact capabilities, limitations, prices, and unavailable evidence. Offline tests are not live certification.
+
+## Dependency compatibility update
+
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.

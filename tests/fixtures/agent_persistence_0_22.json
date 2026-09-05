@@ -1,0 +1,71 @@
+{
+  "checkpoint": {
+    "agent_name": "compat-agent",
+    "is_final": false,
+    "request": {
+      "max_retries": null,
+      "max_tokens": 32,
+      "messages": [
+        {
+          "parts": [
+            {
+              "provider_metadata": {},
+              "text": "Remember project Apollo.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "provider_options": null,
+      "reasoning": null,
+      "retry_backoff_ms": null,
+      "structured_output": null,
+      "temperature": null,
+      "timeout_ms": null,
+      "tool_choice": null,
+      "tools": {}
+    },
+    "response": {
+      "finish_reason": "stop",
+      "message": {
+        "parts": [
+          {
+            "provider_metadata": {},
+            "text": "ACK",
+            "type": "text"
+          }
+        ],
+        "role": "assistant"
+      },
+      "messages": null,
+      "provider_finish_reason": null,
+      "raw_response": null,
+      "text": "ACK",
+      "usage": null
+    },
+    "run_id": "run-compat",
+    "saved_at_ms": 1234,
+    "session_id": "session-compat",
+    "step_index": 2
+  },
+  "memory": {
+    "messages": [
+      {
+        "parts": [
+          {
+            "provider_metadata": {},
+            "text": "Remember project Apollo.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "metadata": {
+      "fixture": true
+    },
+    "summary": "Apollo checkpoint"
+  },
+  "source_package_version": "0.22.0"
+}

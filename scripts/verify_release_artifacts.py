@@ -18,6 +18,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTRAS_IMPORTS = {
+    "realtime": ["websockets"],
     "postgres": ["asyncpg"],
     "mcp": ["mcp"],
     "api": ["fastapi", "uvicorn"],
@@ -142,6 +143,8 @@ def _smoke_code(expected_version: str) -> str:
     return textwrap.dedent(
         f"""
         import asyncio
+        import importlib.util
+        assert importlib.util.find_spec("websockets") is None, "core unexpectedly installs websockets"
         from dataclasses import dataclass
         from importlib import metadata, resources
 
@@ -773,7 +776,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-sdist", action="store_true", help="Skip installing the source distribution.")
     parser.add_argument(
         "--extras",
-        default="postgres,mcp,api,a2a,ag-ui,otel,docx",
+        default="postgres,mcp,api,a2a,ag-ui,otel,docx,realtime",
         help="Comma-separated optional extras to install and import-check.",
     )
     parser.add_argument(

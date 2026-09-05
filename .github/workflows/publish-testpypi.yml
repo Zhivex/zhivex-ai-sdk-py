@@ -106,11 +106,23 @@ jobs:
       - name: Run protected agent-first provider smoke
         run: python scripts/run_live_smoke.py
 
+      - name: Validate exact-artifact certification evidence
+        run: >-
+          python scripts/verify_provider_certification.py
+          --policy docs/provider-release-canary-policy.json
+          --evidence release-smoke-evidence.json
+          --check-schema
+          --require-target openai-standard
+          --require-target meta-contributor
+          --report release-certification-report.json
+
       - name: Upload exact-artifact smoke evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-smoke-evidence
-          path: release-smoke-evidence.json
+          path: |
+            release-smoke-evidence.json
+            release-certification-report.json
           if-no-files-found: error
           retention-days: 30
 

@@ -69,7 +69,13 @@ class DocsOnboardingTests(TestCase):
         smoke_source = (ROOT / "scripts/run_live_smoke.py").read_text("utf-8")
         env_example = (ROOT / ".env.example").read_text("utf-8")
         names = sorted(set(re.findall(r'os\.getenv\("([A-Z0-9_]+)"', smoke_source)))
-        ignored = {"PATH"}
+        ignored = {
+            "GITHUB_REPOSITORY",
+            "GITHUB_RUN_ATTEMPT",
+            "GITHUB_RUN_ID",
+            "GITHUB_WORKFLOW",
+            "PATH",
+        }
         missing = [name for name in names if name not in ignored and f"{name}=" not in env_example]
         self.assertEqual(missing, [])
 

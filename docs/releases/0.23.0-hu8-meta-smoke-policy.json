@@ -1,0 +1,20 @@
+{
+  "artifact_sha256": "ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464",
+  "package_version": "0.23.0",
+  "require_artifact_sha256": true,
+  "require_installed_package": true,
+  "required_providers": {
+    "meta": {
+      "model": "muse-spark-1.2",
+      "operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "portable-retrieval",
+        "agent-tool"
+      ]
+    }
+  },
+  "schema_version": 1,
+  "source_revision": "b129bb5a4741dc0bc235b3b7749d647195758f7b"
+}
