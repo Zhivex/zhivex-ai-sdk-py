@@ -228,7 +228,7 @@ Built-in run stores claim `idempotency_key` atomically. A concurrent duplicate r
 
 Checkpoint persistence removes remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. Checkpoints can still contain prompts, generated text, and non-secret tool data; apply your retention and tenant-isolation policy accordingly.
 
-SQLite and in-memory stores are excellent for local development and tests and remain beta. Use Postgres stores for production backend persistence.
+SQLite and in-memory stores have Stable contracts. SQLite supports single-host persistence; InMemory supports process-local tests and demos. Use Postgres for shared backend persistence. See [storage guarantees](./agents/durable-state.md#local-storage-guarantees).
 
 See [Durable Agent State](./agents/durable-state.md) for concrete store setup.
 

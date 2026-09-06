@@ -8,7 +8,7 @@
 
 The Stable gateway preserves an explicit primary target and ranks fallbacks. Before this decision, fallback scoring inferred quality and speed from model-name substrings such as `pro`, `flash`, and `lite`. `GatewayConfig.model_catalog` influenced budget resolution but not the routing decision, so application-maintained capability and availability metadata could not act as the configured source of truth.
 
-The model-catalog helpers remain Beta. The gateway configuration and response are Stable, so the change must be additive and must not silently reorder primary targets or remove the legacy behavior for callers that have not adopted a catalog.
+At the time of this decision the model-catalog helpers were Beta. The subsequent local persistence/catalog promotion makes the application-owned schema and lookup contract Stable; the maintained default snapshot remains Beta. The gateway configuration and response are Stable, so the change must be additive and must not silently reorder primary targets or remove the legacy behavior for callers that have not adopted a catalog.
 
 ## Decision
 

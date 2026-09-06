@@ -88,7 +88,7 @@
       "documented": "yes",
       "offline_tested": "yes",
       "live_smoked": "n/a",
-      "stability": "stable for Postgres/run-state/replay; beta for local stores"
+      "stability": "Stable for Postgres/run-state/replay and local stores within documented deployment limits"
     },
     {
       "area": "Durable human approvals",

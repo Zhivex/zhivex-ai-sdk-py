@@ -17,6 +17,29 @@ from zhivex_ai.workflows import __all__ as WORKFLOW_EXPORTS
 
 
 DOCUMENTED_STABLE_EXPORTS = {
+    "AgentCapabilities",
+    "AgentMemoryState",
+    "AgentSupportTier",
+    "CatalogProviderId",
+    "InMemoryAgentRunStore",
+    "ModelApiSurface",
+    "ModelAvailability",
+    "ModelCapabilities",
+    "ModelCatalog",
+    "ModelCatalogEntry",
+    "ModelPricing",
+    "ModelSupportEvidence",
+    "RecommendedUse",
+    "SQLiteAgentRunStore",
+    "SummaryConfig",
+    "create_in_memory_agent_memory_store",
+    "create_in_memory_agent_run_store",
+    "create_in_memory_checkpoint_store",
+    "create_model_catalog",
+    "create_sqlite_agent_memory_store",
+    "create_sqlite_agent_run_store",
+    "create_sqlite_checkpoint_store",
+
     "HTTPTransport",
     "aclose_default_clients",
     "AgentCheckpoint",
@@ -163,7 +186,7 @@ WORKFLOW_STABLE_EXPORTS = {
 }
 DOCUMENTED_STABLE_EXPORTS |= WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 
-COMPATIBILITY_ROOT_EXPORTS_SHA256 = "deb06b95a40a64967058ee7ca8690354f4d8504f62e94b22b527bb1e23172cd7"
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "cd0492db34a342394b1b15cae5384c34d869eeec2289bbaa72ce6625c43863ae"
 
 
 class PublicContractTests(TestCase):
@@ -276,7 +299,7 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.23.0"', pyproject)
+        self.assertIn('version = "0.24.0"', pyproject)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

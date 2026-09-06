@@ -151,7 +151,43 @@ def _stable_dependency_violations(root_names: Iterable[str]) -> list[str]:
     return sorted(violations)
 
 
+LOCAL_PERSISTENCE_AND_CATALOG_EXPORTS = frozenset(
+    (
+        "AgentCapabilities",
+        "AgentMemoryState",
+        "AgentSupportTier",
+        "CatalogProviderId",
+        "InMemoryAgentRunStore",
+        "ModelApiSurface",
+        "ModelAvailability",
+        "ModelCapabilities",
+        "ModelCatalog",
+        "ModelCatalogEntry",
+        "ModelPricing",
+        "ModelSupportEvidence",
+        "RecommendedUse",
+        "SQLiteAgentRunStore",
+        "SummaryConfig",
+        "create_in_memory_agent_memory_store",
+        "create_in_memory_agent_run_store",
+        "create_in_memory_checkpoint_store",
+        "create_model_catalog",
+        "create_sqlite_agent_memory_store",
+        "create_sqlite_agent_run_store",
+        "create_sqlite_checkpoint_store",
+    )
+)
+
+
 class ApiStabilityTests(TestCase):
+    def test_local_persistence_and_catalog_have_stable_dependencies(self) -> None:
+        self.assertTrue(LOCAL_PERSISTENCE_AND_CATALOG_EXPORTS <= STABLE_EXPORTS)
+        self.assertEqual(_stable_dependency_violations(LOCAL_PERSISTENCE_AND_CATALOG_EXPORTS), [])
+
+    def test_dynamic_catalog_and_capability_discovery_remain_beta(self) -> None:
+        for name in ("default_model_catalog", "get_agent_capabilities", "get_agent_support_tier"):
+            self.assertEqual(API_STABILITY[name].level, "beta")
+
     def test_non_portable_provider_factories_are_experimental(self) -> None:
         factories = {"create_bedrock", "create_ollama", "create_openrouter"}
 

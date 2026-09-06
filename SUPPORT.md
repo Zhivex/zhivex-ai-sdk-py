@@ -138,3 +138,9 @@ The catalog and offline tests cover GPT-6 Astra on OpenAI/Azure Responses, Claud
 ## Dependency compatibility update
 
 Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
+
+## Stable local storage and reviewed catalogs
+
+Local agent run stores and memory/checkpoint factories have Stable contracts: InMemory for process-local tests/demos, SQLite for persistent files on a single host. Applications serialize session memory updates and reconcile external effects after failures. See [the storage guarantees](./docs/agents/durable-state.md#local-storage-guarantees).
+
+Application-owned `ModelCatalog` construction, lookup and metadata types are Stable. Pin reviewed entries and effective pricing windows for production routing. The maintained `default_model_catalog` snapshot and provider capability discovery remain Beta; metadata does not establish live certification.

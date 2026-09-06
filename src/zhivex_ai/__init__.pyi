@@ -171,8 +171,14 @@ from .audio import (
 )
 
 from .catalog import (
+    CatalogProviderId as CatalogProviderId,
+    ModelApiSurface as ModelApiSurface,
+    ModelAvailability as ModelAvailability,
     ModelCatalog as ModelCatalog,
     ModelCatalogEntry as ModelCatalogEntry,
+    ModelPricing as ModelPricing,
+    ModelSupportEvidence as ModelSupportEvidence,
+    RecommendedUse as RecommendedUse,
     create_model_catalog as create_model_catalog,
     default_model_catalog as default_model_catalog,
 )

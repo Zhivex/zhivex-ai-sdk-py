@@ -30,7 +30,7 @@ These areas define the Python product boundary and the path toward GA.
 | Meta Model API adapter | Yes: Stable `create_meta` + Standard `muse-spark-1.2` portable text/tools; native extras remain Beta | Yes | Yes | opt-in path; release certification pending exact artifact evidence | stable tier-1 scope with beta native extras |
 | Agent core runtime | Yes | Yes | Yes | provider-dependent | stable |
 | Typed agent DX (deps, outputs, hooks, middleware) | Yes | Yes | Yes | provider-dependent | stable |
-| Agent run stores and replay | Yes | Yes | Yes | N/A | stable for Postgres/run-state/replay; beta for local stores |
+| Agent run stores and replay | Yes | Yes | Yes | N/A | Stable for Postgres/run-state/replay and local stores within documented deployment limits |
 | Durable human approvals | Yes | Yes | Yes | provider-dependent | stable for local-tool pending approvals; beta for provider-managed approvals/UI chunks |
 | Production API and worker examples | Yes | Yes | Yes | optional | beta guidance |
 | Release install verification | Yes | Yes | Yes | N/A | beta release gate |

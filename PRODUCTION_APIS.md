@@ -174,3 +174,9 @@ The DBOS, Temporal, Prefect, and Restate adapter factories remain Beta and expos
 See [docs/WORKFLOWS.md](./docs/WORKFLOWS.md) for the complete Stable core and Beta named-engine boundary, and [`examples/agents/durable_graph_workflow.py`](./examples/agents/durable_graph_workflow.py) for an offline SQLite reconstruction/resume/fork example.
 
 The production agent example requires `ZHIVEX_AGENT_API_TOKEN`, `ZHIVEX_TENANT_ID`, and a server-owned `ZHIVEX_AGENT_MODEL`; it uses a fixed server-side Postgres table prefix, limits request bodies and Pydantic fields, and applies a small process-local rate limit. Put a distributed limiter at the API gateway when running more than one process or replica. Clients must send both `Authorization: Bearer ...` and the matching `X-Tenant-ID`; a user-controlled tenant header is not an authorization mechanism on its own, and clients do not select provider model IDs.
+
+## Stable local storage and reviewed catalogs
+
+Local agent run stores and memory/checkpoint factories have Stable contracts: InMemory for process-local tests/demos, SQLite for persistent files on a single host. Applications serialize session memory updates and reconcile external effects after failures. See [the storage guarantees](./docs/agents/durable-state.md#local-storage-guarantees).
+
+Application-owned `ModelCatalog` construction, lookup and metadata types are Stable. Pin reviewed entries and effective pricing windows for production routing. The maintained `default_model_catalog` snapshot and provider capability discovery remain Beta; metadata does not establish live certification.

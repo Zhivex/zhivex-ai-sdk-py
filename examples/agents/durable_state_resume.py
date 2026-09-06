@@ -1,3 +1,4 @@
+"""Stable single-host SQLite persistence; the offline model fixture is Beta."""
 from __future__ import annotations
 
 import asyncio

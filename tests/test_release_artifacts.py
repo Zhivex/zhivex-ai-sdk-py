@@ -22,6 +22,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseArtifactToolingTests(TestCase):
+    def test_current_release_policy_matches_package_and_workflows(self) -> None:
+        version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+        policy_path = f"docs/releases/{version}-smoke-policy.json"
+        policy = json.loads((ROOT / policy_path).read_text())
+        self.assertEqual(policy["package_version"], version)
+        self.assertTrue(policy["require_artifact_sha256"])
+        self.assertTrue(policy["require_installed_package"])
+        for name in ("publish-pypi.yml", "publish-testpypi.yml"):
+            self.assertIn(policy_path, (ROOT / ".github/workflows" / name).read_text())
+        self.assertTrue((ROOT / f"docs/releases/{version}.md").is_file())
+
     def test_ci_and_publish_workflows_provision_the_pinned_uv_release_dependency(self) -> None:
         setup_uv = (
             "uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d "
@@ -437,7 +448,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 workflow,
             )
             self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
-            self.assertIn("docs/releases/0.23.0-smoke-policy.json", workflow)
+            self.assertIn("docs/releases/0.24.0-smoke-policy.json", workflow)
             self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
             self.assertIn("release-smoke-evidence.json", workflow)
             self.assertIn("name: release-smoke-evidence", workflow)
@@ -551,7 +562,7 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(name, workflow)
 
         policy = json.loads(
-            (ROOT / "docs/releases/0.23.0-smoke-policy.json").read_text("utf-8")
+            (ROOT / "docs/releases/0.24.0-smoke-policy.json").read_text("utf-8")
         )
         self.assertEqual(
             policy["required_providers"]["openai"]["model"],
