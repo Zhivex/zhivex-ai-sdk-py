@@ -20,6 +20,16 @@ Related documents:
 
 ## Unreleased
 
+- None.
+
+## 0.24.0
+
+### Stable local persistence and catalog contracts
+
+- Promote InMemory/SQLite agent run stores, local memory/checkpoint factories, `AgentMemoryState`, and `SummaryConfig` to Stable with explicit single-host, session-write, and recovery boundaries. Existing calls and persisted formats remain compatible.
+- Promote `ModelCatalog`, `ModelCatalogEntry`, `create_model_catalog`, and their capability schemas to Stable. Export catalog metadata aliases and `ModelPricing` from `zhivex_ai` for supported typed construction.
+- Keep `default_model_catalog`, provider capability discovery, middleware, audio, and the distribution itself in Beta. No migration is required for existing callers.
+
 ### Adoption and observability
 
 - Fix durable human approval for Pydantic tool inputs by persisting JSON and revalidating the typed input on resume.

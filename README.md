@@ -106,7 +106,11 @@ Zhivex AI SDK is now published as a beta package with a documented stable surfac
 
 Production integrations should import supported APIs from `zhivex_ai`, prefer the documented stable surface and tier-1 providers, and isolate beta or experimental areas behind an application-owned service layer.
 
-For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, replay, approval resume, and the workflow orchestration core under `zhivex_ai.workflows`. Named DBOS/Temporal/Prefect/Restate adapter factories, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, packaged skills, trace artifacts, safety-policy helpers, and local agent run stores remain beta.
+For agent applications, the stable slice includes `Agent`, `AgentRunResult`, `AgentStreamResult`, local `tool(...)` definitions and execution types, `handoff_to(...)`, sessions, durable Postgres state, Stable local InMemory/SQLite stores, replay, approval resume, and the workflow orchestration core under `zhivex_ai.workflows`. Named DBOS/Temporal/Prefect/Restate adapter factories, native subagent tools such as `create_subagent_tool(...)`, evaluation trials/experiments, A2A/AG-UI/Responses hosting, the general CLI/playground, packaged skills, trace artifacts, and safety-policy helpers remain beta.
+
+### Stable application-owned catalogs
+
+Use `ModelCatalog`, `ModelCatalogEntry`, `ModelPricing`, and `create_model_catalog` from `zhivex_ai` for reviewed application metadata. The schema and lookup contract are Stable; `default_model_catalog` remains a Beta snapshot. See [the runnable catalog example](./examples/integrations/model_catalog.py). Local agent persistence is also Stable within its [single-host and concurrency boundaries](./docs/agents/durable-state.md#local-storage-guarantees). The distribution remains Beta.
 
 See [docs/SCOPE.md](./docs/SCOPE.md), [STABILITY.md](./STABILITY.md), [VERSIONING.md](./VERSIONING.md), [SUPPORT.md](./SUPPORT.md), and [CHANGELOG.md](./CHANGELOG.md) for the product boundary, public API expectations, support scope, and release communication.
 
@@ -1962,8 +1966,7 @@ MIT. See [LICENSE](./LICENSE).
 
 ## Next-release adoption work
 
-The candidate adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough-candidate),
+Version `0.24.0` adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough-candidate),
 [OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
-[reproducible performance evidence](docs/PERFORMANCE.md). These changes are not yet
-in published 0.23.0. The scaffold composes existing APIs and does not promote Beta
-storage, CLI or observability to Stable.
+[reproducible performance evidence](docs/PERFORMANCE.md). See the [0.24.0 release plan](docs/releases/0.24.0.md) for validation and publication status. The scaffold composes existing APIs. CLI and observability remain Beta; local
+storage is promoted separately under the guarantees documented above.

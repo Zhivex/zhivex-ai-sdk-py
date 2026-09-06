@@ -204,6 +204,21 @@ def _smoke_code(expected_version: str) -> str:
         assert "create_deepseek" in zhivex_ai.__all__
         assert "create_meta" in zhivex_ai.__all__
         assert "create_meta" in STABLE_EXPORTS
+        assert "ModelCatalog" in STABLE_EXPORTS
+        assert "ModelPricing" in STABLE_EXPORTS
+        assert "SQLiteAgentRunStore" in STABLE_EXPORTS
+        assert "create_sqlite_agent_memory_store" in STABLE_EXPORTS
+        assert "default_model_catalog" in BETA_EXPORTS
+        catalog = zhivex_ai.create_model_catalog([
+            zhivex_ai.ModelCatalogEntry(
+                provider="example", model_id="reviewed-v1", aliases=("reviewed",),
+                pricing=zhivex_ai.ModelPricing(
+                    currency="USD", source_url="https://example.com/pricing",
+                    input_per_1m_tokens=2,
+                ),
+            ),
+        ])
+        assert catalog.find("example", "reviewed").pricing.conservative_cost_per_1k_tokens() == 0.002
         assert "meta_hosted_tool" in BETA_EXPORTS
         assert "meta_tool_search_tool" in BETA_EXPORTS
         assert "meta_web_search_tool" in BETA_EXPORTS

@@ -28,7 +28,7 @@ test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
 
 test-agents:
-	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_persistence_compatibility.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_dx_guardrails.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
+	$(PYTHON) -m pytest tests/test_agent.py tests/test_agent_dx.py tests/test_agent_extensions.py tests/test_agent_persistence_compatibility.py tests/test_local_store_stable_contract.py tests/test_agent_evaluation.py tests/test_agent_safety_runtime.py tests/test_tool_dx_guardrails.py tests/test_tool_timeout_safety.py tests/test_postgres_agent_runtime.py tests/test_platform_parity.py tests/test_protocols.py tests/test_responses_host.py tests/test_workflow.py tests/test_workflow_graph.py tests/test_workflow_state.py tests/test_workflow_adapters.py tests/test_skills.py tests/test_skill_packages.py tests/contracts/test_agent_runtime_contracts.py -q
 
 test-evals:
 	$(PYTHON) -m pytest tests/test_agent_evaluation.py tests/test_cli.py -q

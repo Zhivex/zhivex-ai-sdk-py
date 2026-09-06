@@ -716,6 +716,35 @@ _WORKFLOW_STABLE_EXPORTS = frozenset(
 STABLE_EXPORTS = STABLE_EXPORTS | _WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 BETA_EXPORTS = BETA_EXPORTS - _WORKFLOW_STABLE_EXPORTS - {"JsonValue"}
 
+_LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS = frozenset(
+    (
+        "AgentCapabilities",
+        "AgentMemoryState",
+        "AgentSupportTier",
+        "CatalogProviderId",
+        "InMemoryAgentRunStore",
+        "ModelApiSurface",
+        "ModelAvailability",
+        "ModelCapabilities",
+        "ModelCatalog",
+        "ModelCatalogEntry",
+        "ModelPricing",
+        "ModelSupportEvidence",
+        "RecommendedUse",
+        "SQLiteAgentRunStore",
+        "SummaryConfig",
+        "create_in_memory_agent_memory_store",
+        "create_in_memory_agent_run_store",
+        "create_in_memory_checkpoint_store",
+        "create_model_catalog",
+        "create_sqlite_agent_memory_store",
+        "create_sqlite_agent_run_store",
+        "create_sqlite_checkpoint_store",
+    )
+)
+STABLE_EXPORTS = STABLE_EXPORTS | _LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS
+BETA_EXPORTS = BETA_EXPORTS - _LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS
+
 _CATEGORY_BY_MODULE = {
     "_http": "transport",
     "agent": "agent",

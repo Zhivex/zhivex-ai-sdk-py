@@ -27,7 +27,7 @@ memory = create_postgres_agent_memory_store(dsn)
 checkpoints = create_postgres_checkpoint_store(dsn)
 ```
 
-Use run stores when you need idempotency, cancellation-tree records, replay, audit snapshots, or pending approvals. SQLite and in-memory stores are beta/local development choices.
+Use run stores when you need idempotency, cancellation-tree records, replay, audit snapshots, or pending approvals. SQLite stores are Stable for single-host persistence; InMemory stores are Stable for process-local tests and demos. See [storage guarantees](./agents/durable-state.md#local-storage-guarantees).
 
 ## Approval Ownership
 

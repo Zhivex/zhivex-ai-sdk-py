@@ -29,7 +29,7 @@ checkpoints = create_postgres_checkpoint_store(dsn)
 runs = create_postgres_agent_run_store(dsn)
 ```
 
-Postgres run stores and the matching run-state serialization, replay, run-snapshot, cancellation, pending-approval, and approval-resume helpers are stable. In-memory and SQLite run stores remain beta/local-development choices.
+Postgres run stores and the matching run-state serialization, replay, run-snapshot, cancellation, pending-approval, and approval-resume helpers are stable. In-memory and SQLite run stores are also Stable within the local storage guarantees below.
 
 Built-in stores atomically claim `idempotency_key` before model execution. Concurrent retries reuse the original run and session identity instead of starting a second model loop. Custom stores used for idempotent execution must implement atomic `claim_idempotency_key(state)`; a lookup followed by a separate save is not sufficient.
 
@@ -48,3 +48,15 @@ Approval-resume claims deliberately have no automatic retry. If a worker dies af
 SQLite and Postgres enforce uniqueness for non-null idempotency keys. When opening an older development database, the SDK adds the revision/schema columns and unique index. If the existing data contains duplicate idempotency keys, initialization fails with a migration error so an operator can reconcile the duplicates explicitly.
 
 Checkpoint records and checkpoint events omit remote/MCP credentials, sensitive URL credentials/query parameters, provider options, and raw provider responses. They still retain application content needed for diagnostics and continuation, so production deployments must apply tenant isolation, access control, and retention limits.
+
+## Local storage guarantees
+
+The InMemory/SQLite run stores and local memory/checkpoint factories are Stable. Construct them through `zhivex_ai`; implementation-module imports are unsupported.
+
+- InMemory stores are intended for tests and one-process demos. State is lost on restart. Share one run-store instance within one event loop for atomic claims; memory/checkpoint objects may share nested mutable values with callers.
+- SQLite requires a persistent local database file on a single host. Create its parent directory before using memory/checkpoint factories. Each operation commits independently; the SDK does not transact together memory, checkpoints, run state, and external tool effects. SQLite lock timeouts and filesystem failures propagate; applications own backups and recovery. Network filesystems and distributed workers are outside this guarantee.
+- Run stores enforce optimistic revisions and atomic idempotency/approval claims. A stale save fails with `ValidationError`; a claimed approval cannot be executed through a second successful claim. Namespaces isolate SQLite run IDs and idempotency keys. Claiming an idempotency key is the deduplication operation; ordinary `save` is not a substitute.
+- Session memory saves replace the stored snapshot. Applications must serialize read/modify/write for the same session; there is no memory-store compare-and-swap. Checkpoints append records and select the latest by saved time and step index. Serialize writers and avoid identical ordering keys if deterministic latest selection matters.
+- Existing supported SQLite rows remain readable, including the pre-extraction 0.22.0 memory/checkpoint format. Incompatible run revisions/schema metadata fail closed. A crash after a tool effect may require reconciliation; a durable claim is not an exactly-once external-effect guarantee. Use application idempotency keys or an outbox for those effects.
+
+Use Postgres for shared workers and validate contention and recovery against the actual deployment database.
