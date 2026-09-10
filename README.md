@@ -16,6 +16,22 @@ The core product is deliberately small:
 
 Stable workflow orchestration, evaluation pipelines, protocol hosting, packaged skills, the general CLI/playground, and realtime voice are available, but they are optional extensions rather than prerequisites for building an agent. Named external-engine adapters remain Beta contracts owned by the application.
 
+## Install and start
+
+Requires Python 3.11 or newer:
+
+```bash
+python -m pip install zhivex-ai-sdk
+```
+
+The example below calls a real provider: set `OPENAI_API_KEY` in your environment;
+provider charges may apply. Follow the [quickstart](./docs/QUICKSTART.md) for the
+complete installation and verification flow.
+
+The package is **Beta**, with a documented Stable API surface. Check
+[stability](./STABILITY.md) and [production guidance](./PRODUCTION_APIS.md) when
+choosing APIs and providers.
+
 ## Documentation
 
 Read the [Python getting-started guide](https://sdk.zhivex.ai/doc/python/getting-started)
@@ -78,6 +94,18 @@ asyncio.run(main())
 The agent code uses the portable model contract while the application owns the tool and its data. Run the complete example with `.venv/bin/python examples/agents/quickstart_agent.py`. Switching to another portable provider changes provider construction and the model ID, not the agent runtime. Follow the [quickstart](./docs/QUICKSTART.md) for installation plus offline and live verification.
 
 For reproducible development and the minimum/latest dependency matrix, see [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md). Experimental websocket users should install `zhivex-ai-sdk[realtime]`; core installation no longer includes websockets.
+
+## Continue building
+
+| Goal | Guide |
+| --- | --- |
+| Run tools and approvals | [Agent examples](./examples/agents/) |
+| Operate production integrations | [Production guidance](./PRODUCTION_APIS.md) |
+| Inspect traces and operational evidence | [Observability](./docs/OBSERVABILITY.md) |
+| Check support and compatibility | [Support](./SUPPORT.md) |
+
+<details>
+<summary><strong>Full reference: resources, providers, capabilities, and development</strong></summary>
 
 ## Resource ownership
 
@@ -1970,3 +1998,5 @@ Version `0.24.0` adds Beta `zhivex init` and an [installed durable walkthrough](
 [OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
 [reproducible performance evidence](docs/PERFORMANCE.md). See the [0.24.0 release plan](docs/releases/0.24.0.md) for validation and publication status. The scaffold composes existing APIs. CLI and observability remain Beta; local
 storage is promoted separately under the guarantees documented above.
+
+</details>
