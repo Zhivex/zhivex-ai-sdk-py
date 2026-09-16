@@ -46,6 +46,18 @@ class ReleaseArtifactToolingTests(TestCase):
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text("utf-8")
         self.assertIn("make PYTHON=python security-check", ci_workflow)
 
+    def test_publish_gates_use_locked_all_extras_environment(self) -> None:
+        for name in ("publish-pypi.yml", "publish-testpypi.yml"):
+            workflow = (ROOT / ".github/workflows" / name).read_text("utf-8")
+            build_job = workflow.split("  live-agent-smoke:", 1)[0]
+            self.assertIn("uv sync --locked --all-extras --python 3.12", build_job)
+            self.assertIn(
+                "uv run --no-sync make PYTHON=python "
+                "RELEASE_ARTIFACT_FLAGS=--require-postgres-workflow-smoke release-check",
+                build_job,
+            )
+            self.assertNotIn("pip install --upgrade", build_job)
+
     def test_publish_workflows_use_metadata_25_compatible_publisher(self) -> None:
         publisher = (
             "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 "
@@ -431,8 +443,7 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("make PYTHON=python security-check", ci)
         self.assertGreaterEqual(ci.count("uv sync --locked"), 3)
         self.assertIn("minimum-core, minimum-extras, latest", ci)
-        self.assertIn('"setuptools>=83.0.0"', publish)
-        self.assertIn('"setuptools>=83.0.0"', test_publish)
+        self.assertIn("setuptools>=83.0.0", tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]["dev"])
         for workflow, environment in [(publish, "pypi"), (test_publish, "testpypi")]:
             self.assertIn("actions/upload-artifact@", workflow)
             self.assertIn("actions/download-artifact@", workflow)
@@ -463,7 +474,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 "make PYTHON=python RELEASE_ARTIFACT_FLAGS=--require-postgres-workflow-smoke release-check",
                 workflow,
             )
-            self.assertIn(".[dev,postgres,mcp,api,a2a,ag-ui,otel,docx]", workflow)
+            self.assertIn("uv sync --locked --all-extras --python 3.12", workflow)
 
     def test_hu7_and_hu8_provider_certification_workflow_is_exact_artifact_and_protected(
         self,

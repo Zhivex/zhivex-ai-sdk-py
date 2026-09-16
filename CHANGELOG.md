@@ -20,7 +20,9 @@ Related documents:
 
 ## Unreleased
 
-- None.
+### Fixed
+
+- Install locked dependencies with all extras in PyPI/TestPyPI build jobs and run release gates inside that environment. This includes `websockets` for Mypy after its move to the optional realtime extra, fixing the 0.24.0 publication build failure.
 
 ## 0.24.0
 
