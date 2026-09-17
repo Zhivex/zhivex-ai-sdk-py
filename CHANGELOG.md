@@ -20,11 +20,26 @@ Related documents:
 
 ## Unreleased
 
-### Fixed
+## 0.25.0
 
-- Install locked dependencies with all extras in PyPI/TestPyPI build jobs and run release gates inside that environment. This includes `websockets` for Mypy after its move to the optional realtime extra, fixing the 0.24.0 publication build failure.
+### Added
+
+- September 16 source-backed catalog/contracts for DeepSeek Flash V4.1, Meta Spark 1.3, GPT Image 2.5 Sunburst/Flare, Gemini 3.8 Live/Extended Thinking, Lyria 3.5, and GPT-Live 1. No model inherits prior release certification.
+- Beta native `provider.native.agent_sessions()` for OpenAI managed session creation, retrieval, listing, input/cancel events, SSE events, saved items and deletion; Experimental `provider.native.live()` for GPT-Live WebSocket startup, raw events, bounded finalization, WebRTC creation/fork, hangup and recordings.
+- Beta Anthropic `provider.native.messages().compact(...)` with signed-block preservation and automatic beta headers on normalized replay/streaming. Applications decide when to replace history.
+- Additive `ModelApiSurface="live"` and native support flags for Messages, managed Agent sessions, and GPT-Live.
+
+### Changed
+
+- DeepSeek recommends `deepseek-flash`; upstream redirects the deprecated Flash IDs to V4.1. Preserve requested IDs, enable user-image input, apply current V4.1 effort mapping, and validate effective top-p usage. Preserve V4 Pro's existing text contract.
+- Gemini 3.8 Live defaults to audio; reject unsupported thinking settings and blocking tools on Extended Thinking. Preserve simultaneous audio/tool events and avoid reporting completion while interaction status is IN_PROGRESS.
+
 
 ## 0.24.0
+
+### Release tooling
+
+- Install locked dependencies with all extras in PyPI/TestPyPI build jobs and run release gates inside that environment. This includes `websockets` for Mypy after its move to the optional realtime extra, fixing the 0.24.0 publication build failure.
 
 ### Stable local persistence and catalog contracts
 

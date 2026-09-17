@@ -206,3 +206,9 @@ No exporter is configured merely by importing the SDK. Approval tool execution
 currently occurs before the continuation runtime span; this recipe claims run/model
 correlation, not a dedicated resumed-tool span. Cross-process correlation requires
 the application to persist an approved trace context and restore/link it on resume.
+
+## Native session and model-refresh evidence
+
+GPT-Live uses cumulative `usage.seconds` snapshots; never sum them as deltas. Backend Responses token usage is separate. Only a `session.closed` event confirms finalization; `aclose()` merely releases the transport. Retain `started.session.id`, final reason and sanitized usage through an application-owned observer. Raw native events can contain prompts, tool results or secrets and must not be logged wholesale.
+
+OpenAI managed Agents session IDs are distinct from Zhivex `run_id`/`session_id`. Preserve the mapping in application state and recover via session retrieval and saved items after disconnection: the event stream does not replay missed events. DeepSeek telemetry preserves the caller's requested ID even when upstream serves a legacy Flash ID with V4.1. Old recorded evidence cannot certify that new behavior.

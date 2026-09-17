@@ -592,7 +592,17 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("vertex", "gemini-3.8-flash"), ("qwen", "qwen3.8-max-0902"),
             ("deepseek", "deepseek-v4-flash-vision-exp"),
         }
+        september_16 = {
+            ("deepseek", "deepseek-flash"), ("deepseek", "deepseek-v4-flash"),
+            ("deepseek", "deepseek-v4-flash-vision-exp"), ("meta", "muse-spark-1.3"),
+            ("openai", "gpt-image-2.5-sunburst"), ("openai", "gpt-image-2.5-flare"),
+            ("openai", "gpt-live-1"), ("gemini", "gemini-3.8-live"),
+            ("gemini", "gemini-3.8-live-extended-thinking"), ("gemini", "lyria-3.5"),
+        }
         for entry in entries:
+            if (entry.provider, entry.model_id) in september_16:
+                self.assertEqual(entry.verified_at, "2026-09-16")
+                continue
             expected_date = "2026-09-05" if (entry.provider, entry.model_id) in reviewed else "2026-08-29"
             self.assertEqual(entry.verified_at, expected_date)
         self.assertTrue(all(entry.capabilities is not None for entry in entries))

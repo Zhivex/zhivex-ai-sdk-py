@@ -42,7 +42,12 @@ from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_BETA_BASE_URL = "https://api.deepseek.com/beta"
-DEEPSEEK_CURRENT_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+DEEPSEEK_CURRENT_MODELS = ("deepseek-flash", "deepseek-v4-pro")
+# Provider-owned legacy routes now resolve upstream to V4.1 Flash. Preserve the
+# requested ID on the wire and in telemetry rather than rewriting user history.
+DEEPSEEK_VISION_MODELS = frozenset({
+    "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
+})
 DEEPSEEK_RETIRED_MODELS = frozenset({"deepseek-chat", "deepseek-reasoner"})
 
 DEEPSEEK_AGENT_CAPABILITIES = AgentCapabilities(
@@ -299,7 +304,13 @@ def _map_tool_choice(tool_choice: str | ToolChoiceName | None) -> str | dict[str
     }
 
 
-def _normalize_reasoning_effort(value: Any) -> str:
+def _normalize_reasoning_effort(value: Any, *, flash_v41: bool = False) -> str:
+    if flash_v41:
+        mapping = {"minimal": "low", "low": "low", "medium": "high",
+                   "high": "high", "xhigh": "high", "max": "max", "ultra": "max"}
+        if isinstance(value, str) and value in mapping:
+            return mapping[value]
+        raise UnsupportedFeatureError("Unsupported DeepSeek V4.1 reasoning effort.")
     if value in {"low", "medium", "high"}:
         return "high"
     if value in {"xhigh", "max"}:
@@ -320,11 +331,14 @@ def _validate_thinking_option(value: Any) -> dict[str, str]:
 def _resolve_thinking(
     input: ModelGenerateInput,
     provider_options: dict[str, Any],
+    *, flash_v41: bool = False,
 ) -> tuple[dict[str, str] | None, str | None, bool]:
     option_thinking = provider_options.pop("thinking", None)
     option_effort = provider_options.pop("reasoning_effort", None)
     option_tool_choice = provider_options.get("tool_choice")
-    option_sampling = _DEEPSEEK_SAMPLING_FIELDS.intersection(provider_options)
+    option_sampling = set(_DEEPSEEK_SAMPLING_FIELDS.intersection(provider_options))
+    if flash_v41:
+        option_sampling.discard("top_p")
 
     if input.reasoning is not None:
         if option_thinking is not None or option_effort is not None:
@@ -336,12 +350,12 @@ def _resolve_thinking(
             raise UnsupportedFeatureError('Provider "deepseek" does not support "reasoning.budgetTokens".')
         if input.reasoning.effort == "none":
             return {"type": "disabled"}, None, False
-        if input.reasoning.effort in {None, "minimal"}:
+        if input.reasoning.effort is None or (input.reasoning.effort == "minimal" and not flash_v41):
             raise UnsupportedFeatureError(
                 'Provider "deepseek" does not support reasoning effort "minimal"; '
                 "use low, medium, high, xhigh, max, or none."
             )
-        effort = _normalize_reasoning_effort(input.reasoning.effort)
+        effort = _normalize_reasoning_effort(input.reasoning.effort, flash_v41=flash_v41)
         return {"type": "enabled"}, effort, True
 
     if option_thinking is not None:
@@ -352,14 +366,14 @@ def _resolve_thinking(
                 'DeepSeek provider option "reasoning_effort" cannot be combined with thinking disabled.'
             )
         configured_effort = (
-            _normalize_reasoning_effort(option_effort)
+            _normalize_reasoning_effort(option_effort, flash_v41=flash_v41)
             if option_effort is not None
             else None
         )
         return thinking, configured_effort, enabled
 
     if option_effort is not None:
-        return {"type": "enabled"}, _normalize_reasoning_effort(option_effort), True
+        return {"type": "enabled"}, _normalize_reasoning_effort(option_effort, flash_v41=flash_v41), True
 
     # V4 defaults to thinking. Disable it implicitly when the caller requests a
     # setting that DeepSeek documents as incompatible with thinking mode, so the
@@ -426,9 +440,18 @@ def _chat_body(
     if input.tool_choice is not None and "tool_choice" in provider_options:
         raise ValidationError('Pass either tool_choice=... or provider_options={"tool_choice": ...}, not both.')
 
-    thinking, reasoning_effort, thinking_enabled = _resolve_thinking(input, provider_options)
+    if model_id in DEEPSEEK_VISION_MODELS and "top_p" in provider_options:
+        top_p = provider_options["top_p"]
+        if isinstance(top_p, bool) or not isinstance(top_p, (int, float)) or not 0.95 <= top_p <= 1:
+            raise ValidationError("DeepSeek V4.1 top_p must be between 0.95 and 1.")
+    thinking, reasoning_effort, thinking_enabled = _resolve_thinking(input, provider_options, flash_v41=model_id in DEEPSEEK_VISION_MODELS)
+    if model_id in DEEPSEEK_VISION_MODELS and not thinking_enabled and provider_options.get("top_p", 1) != 1:
+        raise UnsupportedFeatureError("DeepSeek V4.1 ignores custom top_p with thinking disabled.")
     if thinking_enabled:
-        incompatible = sorted(_DEEPSEEK_SAMPLING_FIELDS.intersection(provider_options))
+        sampling_fields = set(_DEEPSEEK_SAMPLING_FIELDS.intersection(provider_options))
+        if model_id in DEEPSEEK_VISION_MODELS:
+            sampling_fields.discard("top_p")
+        incompatible = sorted(sampling_fields)
         if input.temperature is not None:
             incompatible.insert(0, "temperature")
         if incompatible:
@@ -738,7 +761,7 @@ def create_deepseek(
             api_key=resolved_key,
             base_url=resolved_base_url,
             fetch=requester,
-            capabilities=replace(DEEPSEEK_CHAT_CAPABILITIES, vision=model_id == "deepseek-v4-flash-vision-exp"),
+            capabilities=replace(DEEPSEEK_CHAT_CAPABILITIES, vision=model_id in DEEPSEEK_VISION_MODELS),
         ),
     )
     return create_provider_bundle(

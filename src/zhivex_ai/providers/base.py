@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, TypeVar
 
+from ._native_sessions import AnthropicMessagesClient, OpenAIAgentSessionsClient, OpenAILiveClient
+
 from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
     AgentCapabilities,
@@ -67,6 +69,12 @@ class ProviderAdapter:
     conversations_client_factory: Callable[[], ConversationsClient] | None = None
     formulas_client_factory: Callable[[], FormulasClient] | None = None
     caches_client_factory: Callable[[], CachedContentsClient] | None = None
+    messages_client_factory: Callable[[], AnthropicMessagesClient] | None = None
+    agent_sessions_client_factory: Callable[[], OpenAIAgentSessionsClient] | None = None
+    live_client_factory: Callable[[], OpenAILiveClient] | None = None
+    _messages_client: AnthropicMessagesClient | None = field(default=None, init=False, repr=False)
+    _agent_sessions_client: OpenAIAgentSessionsClient | None = field(default=None, init=False, repr=False)
+    _live_client: OpenAILiveClient | None = field(default=None, init=False, repr=False)
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
     _embedding_model_cache: dict[str, EmbeddingModel] = field(default_factory=dict, init=False, repr=False)
     _transcription_model_cache: dict[str, TranscriptionModel] = field(default_factory=dict, init=False, repr=False)
@@ -89,6 +97,27 @@ class ProviderAdapter:
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
     _formulas_client: FormulasClient | None = field(default=None, init=False, repr=False)
     _caches_client: CachedContentsClient | None = field(default=None, init=False, repr=False)
+
+    def messages(self) -> AnthropicMessagesClient:
+        if self.messages_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose native Messages.')
+        if self._messages_client is None:
+            self._messages_client = self.messages_client_factory()
+        return self._messages_client
+
+    def agent_sessions(self) -> OpenAIAgentSessionsClient:
+        if self.agent_sessions_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose managed agent sessions.')
+        if self._agent_sessions_client is None:
+            self._agent_sessions_client = self.agent_sessions_client_factory()
+        return self._agent_sessions_client
+
+    def live(self) -> OpenAILiveClient:
+        if self.live_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose GPT-Live.')
+        if self._live_client is None:
+            self._live_client = self.live_client_factory()
+        return self._live_client
 
     def __call__(self, model_id: str) -> LanguageModel:
         return self.language_model(model_id)
@@ -528,6 +557,9 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         caches=adapter.caches_client_factory is not None,
         count_tokens=adapter.count_tokens_client_factory is not None,
         formulas=adapter.formulas_client_factory is not None,
+        messages=adapter.messages_client_factory is not None,
+        agent_sessions=adapter.agent_sessions_client_factory is not None,
+        live=adapter.live_client_factory is not None,
     )
 
 

@@ -180,3 +180,9 @@ The production agent example requires `ZHIVEX_AGENT_API_TOKEN`, `ZHIVEX_TENANT_I
 Local agent run stores and memory/checkpoint factories have Stable contracts: InMemory for process-local tests/demos, SQLite for persistent files on a single host. Applications serialize session memory updates and reconcile external effects after failures. See [the storage guarantees](./docs/agents/durable-state.md#local-storage-guarantees).
 
 Application-owned `ModelCatalog` construction, lookup and metadata types are Stable. Pin reviewed entries and effective pricing windows for production routing. The maintained `default_model_catalog` snapshot and provider capability discovery remain Beta; metadata does not establish live certification.
+
+## Native September extensions
+
+Keep managed OpenAI Agents and GPT-Live behind an application-owned API boundary. Use `provider.native.agent_sessions()` or `provider.native.live()`; never place a project API key in a browser. For WebRTC, the trusted backend calls `live().create(session=..., transport={"type": "webrtc", "sdp": offer})` and returns the provider's answer. Authorization, approval decisions, event persistence and reconciliation remain application responsibilities. These native create/input operations do not automatically retry, because delivery may already have caused work.
+
+For Anthropic on-demand compaction, retain full history until the response contains a non-null signed block. Replace only the summarized prefix, preserve the block and signature exactly, and retain the same system/tools when replaying thinking. The SDK does not compact `Agent` memory automatically. See [the full guide](docs/MODEL_REFRESH_2026_09_16.md).
