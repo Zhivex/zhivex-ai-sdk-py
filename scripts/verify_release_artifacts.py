@@ -149,6 +149,9 @@ def _smoke_code(expected_version: str) -> str:
         from importlib import metadata, resources
 
         import zhivex_ai
+        omni = zhivex_ai.create_qwen(api_key="artifact-test").native.language_model("qwen3.8-omni-flash")
+        assert omni.capabilities.files and omni.capabilities.audio_input
+        assert not omni.capabilities.audio_output and not omni.capabilities.structured_output
         from pydantic import BaseModel
         from zhivex_ai.api_stability import BETA_EXPORTS, STABLE_EXPORTS
         from zhivex_ai import (
@@ -169,6 +172,7 @@ def _smoke_code(expected_version: str) -> str:
             create_meta,
             create_model_catalog,
             create_openai,
+            create_qwen,
             create_text_message,
             generate_text,
             run_agent,

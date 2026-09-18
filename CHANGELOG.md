@@ -18,7 +18,21 @@ Related documents:
 - [SUPPORT.md](./SUPPORT.md)
 - [VERSIONING.md](./VERSIONING.md)
 
-## Unreleased
+## 0.25.0
+
+### Added
+
+- Native `qwen3.8-omni-flash` mixed image/audio/video input through Responses,
+  including streaming, spatial audio metadata, callable tools, web search, and
+  model-specific capability/catalog records. Reasoning token budgets route through Chat Completions;
+  thinking with web search transparently collects the provider-required stream.
+- Deterministic multimodal contract tests and an opt-in synthetic live smoke runner.
+
+### Changed
+
+- Omni rejects unsupported hosted tools, non-user media, output audio, and native
+  JSON Schema requests before sending; auto structured output uses prompting.
+
 
 ### Fixed
 

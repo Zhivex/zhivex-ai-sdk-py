@@ -161,3 +161,10 @@ DeepSeek's `deepseek-v4-flash-vision-exp` is an upstream Experimental model trac
 ## Dependency compatibility update
 
 Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
+
+## Qwen3.8 Omni Flash
+
+The model-specific native multimodal integration is Beta. Existing `create_qwen`,
+text/streaming, and agent contracts retain their classifications. Omni accepts mixed
+image/audio/video input and produces text, with callable tools and native web search.
+Native JSON Schema, speech output, and realtime are not claimed for this model.

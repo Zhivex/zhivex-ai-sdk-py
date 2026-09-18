@@ -1330,6 +1330,37 @@ asyncio.run(main())
 
 `create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"` and uses the current `/compatible-mode/v1/responses` path; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Existing DashScope domains remain supported, while a workspace-specific domain can be supplied with `base_url=...`; reserve `responses_base_url=...` for a gateway whose Responses root differs. GA `qwen3.8-max` uses Responses for text, streaming, images, reasoning, functions, and hosted tools. The adapter selects `/chat/completions` only for native JSON Schema output, `FilePart(url=..., media_type="video/mp4")` input, or a reasoning token budget; structured output is always sent with thinking disabled. The Token Plan's exact `qwen3.8-max-preview` ID remains separate from the GA pay-as-you-go model. Web Extractor must be registered together with Web Search, and explicit thinking cannot be combined with forced required/named tool choice. Singapore Batch currently supports the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases, so check regional model availability before submitting a batch.
 
+Qwen3.8 Omni Flash is available through `provider.native.language_model("qwen3.8-omni-flash")`.
+It accepts mixed text, `ImagePart`, and `FilePart` audio/video inputs and returns text.
+Media uses Responses (`input_audio.audio_url`, `input_video.video_url`), including streaming;
+`ReasoningConfig(budget_tokens=...)` selects Chat Completions. Hosted web search
+on that route uses `search_strategy="agent"` and streaming internally, including
+when called through `generate_text`; configured Responses search tools
+require effort-based reasoning. Use URL or base64
+`FilePart.data` with an explicit MIME type. Media belongs only in user messages.
+For spatial audio, set `FilePart.provider_metadata={"qwen": {"use_multichannel": True}}`.
+Use `ReasoningConfig(effort="none")` to disable default thinking. Callable tools and
+`qwen_web_search_tool()` are supported; other hosted tools, speech output, and realtime
+are outside this model's contract. `generate_object(mode="auto")` uses prompted JSON;
+`mode="native"` is unsupported because no native JSON Schema guarantee is documented.
+Omni's native multimodal extension remains Beta; model metadata and local smoke results
+are distinct from exact-wheel release certification. See the
+[official model guide](https://www.alibabacloud.com/help/en/model-studio/qwen-omni).
+
+```python
+from zhivex_ai import FilePart, ModelMessage, ReasoningConfig, TextPart, create_qwen, generate_text
+
+provider = create_qwen(region="intl")
+result = await generate_text(
+    model=provider.native.language_model("qwen3.8-omni-flash"),
+    messages=[ModelMessage(role="user", parts=[
+        TextPart(text="Summarize this recording."),
+        FilePart(url=audio_url, media_type="audio/wav"),
+    ])],
+    reasoning=ReasoningConfig(effort="low"),
+)
+```
+
 See `examples/text/qwen_native.py` for a fuller provider-specific example covering Qwen3.8 text/reasoning, JSON Schema output, optional video, hosted web search, embeddings, optional Qwen3-ASR, and optional Qwen3-TTS.
 
 Meta Model API usage:
@@ -1965,6 +1996,8 @@ or, for a permanent fix with the official python.org installer:
 MIT. See [LICENSE](./LICENSE).
 
 ## Next-release adoption work
+
+Version `0.25.0` adds Qwen3.8 Omni Flash multimodal support. See the [0.25.0 release plan](docs/releases/0.25.0.md) for validation and publication steps.
 
 Version `0.24.0` adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough-candidate),
 [OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
