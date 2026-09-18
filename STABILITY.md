@@ -162,6 +162,13 @@ DeepSeek now serves `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` with 
 
 Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
 
+## Qwen3.8 Omni Flash
+
+The model-specific native multimodal integration is Beta. Existing `create_qwen`,
+text/streaming, and agent contracts retain their classifications. Omni accepts mixed
+image/audio/video input and produces text, with callable tools and native web search.
+Native JSON Schema, speech output, and realtime are not claimed for this model.
+
 ## September 16 native extensions
 
 Meta Spark 1.3 is a Beta model extension; Standard 1.2 remains the reviewed Stable Meta cohort. Anthropic `native.messages()` and signed on-demand compaction, OpenAI `native.agent_sessions()`, GPT Image 2.5, and Lyria 3.5 are Beta. `native.live()` for GPT-Live and Gemini 3.8 Live/Extended Thinking are Experimental. Native JSON/event payloads preserve provider-specific shapes and do not carry the portable contract. The Stable `ModelApiSurface` type additively accepts `"live"` to distinguish GPT-Live from Realtime. No existing exports are removed or promoted.

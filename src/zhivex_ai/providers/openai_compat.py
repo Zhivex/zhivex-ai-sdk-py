@@ -116,6 +116,7 @@ from ._openai_responses_normalization import (
     _response_reference_part,
 )
 from ._payload import drop_none
+from ._qwen_omni import is_qwen_omni, omni_file_content, validate_omni_input
 from .base import ProviderAdapter
 
 _TERMINAL_RESPONSE_STATUSES = {"completed", "failed", "incomplete", "cancelled"}
@@ -284,7 +285,7 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
     return content
 
 
-def _map_qwen_responses_message_content(message: ModelMessage) -> str | list[dict[str, Any]]:
+def _map_qwen_responses_message_content(message: ModelMessage, model_id: str = "") -> str | list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     text_chunks: list[str] = []
     for part in message.parts:
@@ -307,7 +308,7 @@ def _map_qwen_responses_message_content(message: ModelMessage) -> str | list[dic
                 raise UnsupportedFeatureError(
                     'Provider "qwen" Responses history does not accept assistant file input.'
                 )
-            content.append(_map_file_part(part))
+            content.append(omni_file_content(part) if is_qwen_omni(model_id) else _map_file_part(part))
     if message.role != "assistant" and content and all(item.get("type") == "input_text" for item in content):
         return "".join(text_chunks)
     return content
@@ -397,7 +398,7 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
     return items
 
 
-def _to_qwen_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def _to_qwen_responses_input(messages: list[ModelMessage], model_id: str = "") -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for message in messages:
         if message.role == "system":
@@ -414,7 +415,7 @@ def _to_qwen_responses_input(messages: list[ModelMessage]) -> list[dict[str, Any
                     )
             items.extend(_serialize_provider_data_input(message, "qwen"))
             continue
-        content = _map_qwen_responses_message_content(message)
+        content = _map_qwen_responses_message_content(message, model_id)
         if content:
             items.append(
                 {
@@ -672,7 +673,7 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
 
 def _qwen_reasoning_options(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
     if input.reasoning is None:
-        if model_id.strip().lower() in {"qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"} and (
+        if model_id.strip().lower() in {"qwen3.8-omni-flash", "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"} and (
             input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
         ):
             # Qwen3.8-Max reasons at xhigh by default, while forced tool choice
@@ -694,6 +695,8 @@ def _validate_qwen_responses_tools(
     mapped_tools: list[dict[str, Any]],
 ) -> None:
     tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
+    if is_qwen_omni(model_id) and tool_types - {"function", "web_search"}:
+        raise UnsupportedFeatureError("Qwen Omni supports only function and web_search tools.")
     reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
     thinking_enabled = reasoning_effort not in {None, "none"}
 
@@ -713,6 +716,8 @@ def _validate_qwen_responses_tools(
 
 
 def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
+    if provider_name == "qwen" and is_qwen_omni(model_id):
+        validate_omni_input(input)
     provider_options = deepcopy(input.provider_options or {})
     provider_tools = provider_options.pop("tools", None)
     if provider_tools is not None and not isinstance(provider_tools, list):
@@ -730,7 +735,7 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     body = {
         "model": model_id,
         "instructions": _system_instructions(input.messages),
-        "input": _to_qwen_responses_input(input.messages) if provider_name == "qwen" else _to_responses_input(input.messages, provider_name),
+        "input": _to_qwen_responses_input(input.messages, model_id) if provider_name == "qwen" else _to_responses_input(input.messages, provider_name),
         "tools": merged_tools or None,
         "tool_choice": _map_tool_choice(input.tool_choice, provider_name=provider_name),
         "text": _map_structured_output(input),

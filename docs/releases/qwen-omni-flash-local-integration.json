@@ -1,0 +1,31 @@
+{
+  "model": "qwen3.8-omni-flash",
+  "provider": "qwen",
+  "evidence": "local-integration",
+  "release_certified": false,
+  "recorded_at": "2026-09-18T02:58:24.269601+00:00",
+  "source_sha256": {
+    "src/zhivex_ai/providers/qwen.py": "78dc853337075fb46cba27de6a9b10947460cf3c0174632b657f6298cb719e9b",
+    "src/zhivex_ai/providers/_qwen_omni.py": "75db0e142b80968d42f385f6e79c25f98cac3ec26cdf9d4f66700de6f44b5f02",
+    "src/zhivex_ai/providers/openai_compat.py": "fa28b41109046b404381f62350f1effbc5b41c5c4892680820e6a39fde646c68",
+    "src/zhivex_ai/catalog.py": "376233e30e0c239ad6b9f671e5567a565e51d14196a3658375de33014db5a683",
+    "scripts/smoke_qwen_omni.py": "c8f88338719b6ebdf5709d2506e4328f87cfb94294ebb966bf98967eb2c3aed2"
+  },
+  "operations": {
+    "text": "passed",
+    "streaming-thinking": "passed",
+    "image": "passed",
+    "audio": "passed",
+    "mixed-image-audio": "passed",
+    "multichannel-audio": "passed",
+    "budget-chat": "passed",
+    "budget-chat-audio": "passed",
+    "budget-chat-search-request": "passed",
+    "prompted-json": "passed",
+    "agent-tool-replay": "passed",
+    "web-search": "passed",
+    "video": "passed",
+    "mixed-image-audio-video": "passed",
+    "mixed-streaming": "passed"
+  }
+}

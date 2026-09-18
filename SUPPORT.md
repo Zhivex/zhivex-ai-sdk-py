@@ -145,6 +145,25 @@ Local agent run stores and memory/checkpoint factories have Stable contracts: In
 
 Application-owned `ModelCatalog` construction, lookup and metadata types are Stable. Pin reviewed entries and effective pricing windows for production routing. The maintained `default_model_catalog` snapshot and provider capability discovery remain Beta; metadata does not establish live certification.
 
+## Qwen3.8 Omni Flash
+
+`qwen3.8-omni-flash` has model-specific native support for text, images, audio,
+video, mixed-media streaming, reasoning, function calls, and hosted web search.
+Other hosted tools are rejected. Structured output uses prompting, not native JSON Schema.
+The catalog records source-backed capabilities independently of release certification.
+Run `.venv/bin/python scripts/smoke_qwen_omni.py` with configured Qwen credentials;
+the bundled synthetic MP4 includes video checks by default. Set
+`QWEN_OMNI_SMOKE_VIDEO_PATH` to override that fixture.
+This opt-in smoke uses synthetic inline media and emits operation status only.
+A missing video fixture is a blocker, never a successful video certification.
+
+The redacted [local Omni integration report](./docs/releases/qwen-omni-flash-local-integration.json)
+records per-operation outcomes and source hashes. To refresh it, add
+`--report docs/releases/qwen-omni-flash-local-integration.json` to the smoke command.
+The bundled fixture is a two-second red frame generated with ffmpeg.
+Never use customer recordings in this synthetic smoke. For installed-wheel
+verification and candidate evidence, see the [0.25.0 release plan](./docs/releases/0.25.0.md).
+
 ## September 16, 2026 model and native API refresh
 
 See [the source review and usage guide](docs/MODEL_REFRESH_2026_09_16.md). DeepSeek Flash legacy IDs are now deprecated catalog routes: upstream serves them with V4.1 and Flash pricing, while the SDK preserves the requested ID. Meta Spark 1.3 is a Beta model extension with text, streaming, JSON Schema, reasoning and tool replay contracts; this does not expand the existing Stable 1.2 certification cohort or add Contributor variants.

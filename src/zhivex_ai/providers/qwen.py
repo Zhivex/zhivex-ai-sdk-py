@@ -53,6 +53,7 @@ from ..types import (
     TranscriptionModel,
     TranscriptionOutput,
 )
+from ._qwen_omni import is_qwen_omni, omni_file_content, prepare_omni_input, validate_omni_input
 from .base import ProviderBundle, create_provider_bundle
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
@@ -60,6 +61,7 @@ from .openai_compat import (
     OPENAI_COMPAT_TRANSCRIPTION_CAPABILITIES,
     OpenAICompatibleBatchesClient,
     OpenAICompatibleFilesClient,
+    OpenAICompatibleLanguageModel,
     OpenAICompatibleResponsesClient,
     _parse_json_error,
     create_openai_compatible_provider,
@@ -206,7 +208,7 @@ def _qwen_chat_file_content(part: FilePart) -> dict[str, Any]:
     return {"type": "video_url", "video_url": {"url": url}}
 
 
-def _qwen_chat_message_content(message: ModelMessage) -> str | list[dict[str, Any]] | None:
+def _qwen_chat_message_content(message: ModelMessage, model_id: str = "") -> str | list[dict[str, Any]] | None:
     text_chunks: list[str] = []
     content: list[dict[str, Any]] = []
     for part in message.parts:
@@ -216,7 +218,7 @@ def _qwen_chat_message_content(message: ModelMessage) -> str | list[dict[str, An
         elif isinstance(part, ImagePart):
             content.append({"type": "image_url", "image_url": {"url": part.image}})
         elif isinstance(part, FilePart):
-            content.append(_qwen_chat_file_content(part))
+            content.append(omni_file_content(part, chat=True) if is_qwen_omni(model_id) else _qwen_chat_file_content(part))
     if not content:
         return None
     if all(item.get("type") == "text" for item in content):
@@ -224,7 +226,7 @@ def _qwen_chat_message_content(message: ModelMessage) -> str | list[dict[str, An
     return content
 
 
-def _qwen_chat_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def _qwen_chat_messages(messages: list[ModelMessage], model_id: str = "") -> list[dict[str, Any]]:
     mapped: list[dict[str, Any]] = []
     for message in messages:
         if message.role == "tool":
@@ -240,7 +242,7 @@ def _qwen_chat_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
             continue
 
         payload: dict[str, Any] = {"role": message.role}
-        content = _qwen_chat_message_content(message)
+        content = _qwen_chat_message_content(message, model_id)
         if content is not None:
             payload["content"] = content
         tool_calls = [part.tool_call for part in message.parts if isinstance(part, ToolCallPart)]
@@ -417,12 +419,20 @@ def _qwen_chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -
         raise ValidationError(
             "Qwen provider_options cannot override SDK-owned fields: " + ", ".join(sorted(reserved)) + "."
         )
+    if is_qwen_omni(model_id):
+        validate_omni_input(input)
     structured_output = input.structured_output is not None and input.structured_output.mode == "native"
-    reasoning_options = _qwen_38_reasoning_options(
-        input,
-        provider_options,
-        structured_output=structured_output,
-    )
+    if is_qwen_omni(model_id):
+        reasoning_options: dict[str, Any] = {}
+        if input.reasoning is not None:
+            if input.reasoning.budget_tokens is not None:
+                reasoning_options["thinking_budget"] = input.reasoning.budget_tokens
+            elif input.reasoning.effort is not None:
+                reasoning_options["reasoning_effort"] = input.reasoning.effort
+    else:
+        reasoning_options = _qwen_38_reasoning_options(
+            input, provider_options, structured_output=structured_output,
+        )
     forced_tool_choice = input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
     if forced_tool_choice:
         if _qwen_38_explicit_thinking_enabled(
@@ -434,7 +444,7 @@ def _qwen_chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -
                 "Qwen3.8-Max cannot force a required or named tool while thinking is enabled. "
                 'Use reasoning=ReasoningConfig(effort="none") or tool_choice="auto".'
             )
-        reasoning_options.setdefault("enable_thinking", False)
+        reasoning_options.setdefault("reasoning_effort" if is_qwen_omni(model_id) else "enable_thinking", "none" if is_qwen_omni(model_id) else False)
     stream_options = deepcopy(provider_options.pop("stream_options", None))
     if stream:
         if stream_options is None:
@@ -442,10 +452,22 @@ def _qwen_chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -
         if not isinstance(stream_options, dict):
             raise ValidationError('Qwen provider option "stream_options" must be an object.')
         stream_options.setdefault("include_usage", True)
+    chat_tools = input.tools
+    if is_qwen_omni(model_id):
+        chat_tools = dict(input.tools or {})
+        for name, definition in list(chat_tools.items()):
+            if is_hosted_tool_definition(definition):
+                if definition.type != "web_search":
+                    raise UnsupportedFeatureError("Qwen Omni supports only function and web_search tools.")
+                if definition.config:
+                    raise UnsupportedFeatureError("Configured Responses web search requires effort-based reasoning, not a Chat token budget.")
+                provider_options["enable_search"] = True
+                provider_options["search_options"] = {"search_strategy": "agent"}
+                del chat_tools[name]
     body = {
         "model": model_id,
-        "messages": _qwen_chat_messages(input.messages),
-        "tools": _qwen_chat_tools(input.tools),
+        "messages": _qwen_chat_messages(input.messages, model_id),
+        "tools": _qwen_chat_tools(chat_tools),
         "tool_choice": _qwen_chat_tool_choice(input.tool_choice),
         "temperature": input.temperature,
         "max_completion_tokens": input.max_tokens,
@@ -455,6 +477,8 @@ def _qwen_chat_body(model_id: str, input: ModelGenerateInput, *, stream: bool) -
         "stream": True if stream else None,
         "stream_options": stream_options,
     }
+    if is_qwen_omni(model_id):
+        body["max_tokens"] = body.pop("max_completion_tokens")
     return {key: value for key, value in body.items() if value is not None}
 
 
@@ -518,6 +542,33 @@ class QwenChatLanguageModel(LanguageModel):
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         body = _qwen_chat_body(self.model_id, input, stream=False)
+        if is_qwen_omni(self.model_id) and body.get("enable_search") and body.get("thinking_budget"):
+            # Model Studio requires streaming for search in thinking mode, even
+            # when the caller wants one collected GenerateResult.
+            text_chunks: list[str] = []
+            reasoning_chunks: list[str] = []
+            calls: list[ToolCallPart] = []
+            terminal: StreamFinishEvent | None = None
+            async for event in await self.stream(input):
+                if isinstance(event, StreamTextDeltaEvent):
+                    text_chunks.append(event.text_delta)
+                elif isinstance(event, StreamToolCallEvent):
+                    calls.append(ToolCallPart(tool_call=event.tool_call))
+                elif isinstance(event, StreamProviderDataEvent) and isinstance(event.data, dict):
+                    if event.data.get("reasoning_content") is not None:
+                        reasoning_chunks.append(str(event.data["reasoning_content"]))
+                elif isinstance(event, StreamFinishEvent):
+                    terminal = event
+            if terminal is None or terminal.finish_reason is None:
+                raise ValidationError("Qwen Omni search stream ended without a terminal finish reason.")
+            text = "".join(text_chunks)
+            message = ModelMessage(role="assistant", parts=[TextPart(text=text), *calls])
+            if reasoning_chunks:
+                message.parts.append(ProviderDataPart(provider="qwen", data={"reasoning_content": "".join(reasoning_chunks)}))
+            return GenerateResult(
+                messages=[message], text=text, finish_reason=terminal.finish_reason,
+                provider_finish_reason=terminal.provider_finish_reason, usage=terminal.usage,
+            )
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/chat/completions",
@@ -641,11 +692,21 @@ class Qwen38LanguageModel(LanguageModel):
     capabilities: ModelCapabilities
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
-        model = self.chat_model if _qwen_38_requires_chat(input) else self.responses_model
+        if is_qwen_omni(self.model_id):
+            input = prepare_omni_input(input)
+        requires_chat = _qwen_38_requires_chat(input)
+        if is_qwen_omni(self.model_id):
+            requires_chat = (input.reasoning is not None and input.reasoning.budget_tokens is not None)
+        model = self.chat_model if requires_chat else self.responses_model
         return await model.generate(input)
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
-        model = self.chat_model if _qwen_38_requires_chat(input) else self.responses_model
+        if is_qwen_omni(self.model_id):
+            input = prepare_omni_input(input)
+        requires_chat = _qwen_38_requires_chat(input)
+        if is_qwen_omni(self.model_id):
+            requires_chat = (input.reasoning is not None and input.reasoning.budget_tokens is not None)
+        model = self.chat_model if requires_chat else self.responses_model
         return await model.stream(input)
 
 
@@ -942,6 +1003,25 @@ def create_qwen(
 
     def qwen_language_model(model_id: str) -> LanguageModel:
         responses_model = responses_language_model_factory(model_id)
+        if is_qwen_omni(model_id):
+            omni_capabilities = replace(
+                shared_capabilities, files=True, audio_input=True,
+                audio_output=False, embeddings=False, structured_output=False, json_mode=False,
+                agent_capabilities=AgentCapabilities(
+                    support_tier="tier-b", tool_choice_none=True, hosted_web_search=True,
+                ),
+            )
+            return Qwen38LanguageModel(
+                provider="qwen", model_id=model_id, capabilities=omni_capabilities,
+                responses_model=OpenAICompatibleLanguageModel(
+                    provider="qwen", model_id=model_id, api_key=resolved_key,
+                    base_url=resolved_responses_base_url, fetch=requester, capabilities=omni_capabilities,
+                ),
+                chat_model=QwenChatLanguageModel(
+                    provider="qwen", model_id=model_id, api_key=resolved_key,
+                    base_url=resolved_base_url, fetch=requester, capabilities=omni_capabilities,
+                ),
+            )
         if not _is_qwen_38_max(model_id):
             return responses_model
         qwen_38_capabilities = replace(shared_capabilities, files=True)

@@ -94,6 +94,18 @@ async def main() -> None:
     )
     print("hosted tool:", search.text)
 
+    omni_audio_url = os.getenv("QWEN_OMNI_AUDIO_URL")
+    if omni_audio_url:
+        omni = await generate_text(
+            model=qwen.native.language_model("qwen3.8-omni-flash"),
+            messages=[ModelMessage(role="user", parts=[
+                TextPart(text="Summarize this recording."),
+                FilePart(url=omni_audio_url, media_type="audio/wav"),
+            ])],
+            reasoning=ReasoningConfig(effort="low"),
+        )
+        print("omni audio understanding:", omni.text)
+
     embedding_model = _env("QWEN_EMBEDDING_MODEL", "text-embedding-v4")
     embedding = await embed(
         model=qwen.native.embedding_model(embedding_model),

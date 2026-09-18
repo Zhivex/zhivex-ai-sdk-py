@@ -604,6 +604,8 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
                 self.assertEqual(entry.verified_at, "2026-09-16")
                 continue
             expected_date = "2026-09-05" if (entry.provider, entry.model_id) in reviewed else "2026-08-29"
+            if (entry.provider, entry.model_id) == ("qwen", "qwen3.8-omni-flash"):
+                expected_date = "2026-09-18"
             self.assertEqual(entry.verified_at, expected_date)
         self.assertTrue(all(entry.capabilities is not None for entry in entries))
         self.assertTrue(all(entry.cost_per_1k_tokens is None for entry in entries))

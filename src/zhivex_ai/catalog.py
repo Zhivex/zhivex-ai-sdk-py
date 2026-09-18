@@ -1371,6 +1371,16 @@ default_model_catalog = create_model_catalog(
         ),
         # Qwen pricing is regional and tiered, so the default catalog never invents one scalar.
         _entry(
+            "qwen", "qwen3.8-omni-flash",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            regions=("cn", "intl", "us", "hk", "jp", "eu"),
+            support_evidence="offline-contract",
+            source_urls=("https://help.aliyun.com/en/model-studio/qwen3-8-omni-flash",),
+            verified_at="2026-09-18",
+            capabilities=replace(_QWEN_LANGUAGE, files=True, audio_input=True,
+                                 web_search=True, structured_output=False, json_mode=False),
+        ),
+        _entry(
             "qwen",
             "qwen3.8-max",
             recommended_for=("chat", "reasoning", "tools", "vision"),
