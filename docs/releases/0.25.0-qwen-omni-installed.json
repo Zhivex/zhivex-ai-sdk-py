@@ -4,16 +4,16 @@
   "evidence": "installed-wheel-local-integration",
   "artifact": {
     "filename": "zhivex_ai_sdk-0.25.0-py3-none-any.whl",
-    "sha256": "e8977703af8882d43d6e6267038021d838dbd2f32735733af8e3ca56922faf01",
+    "sha256": "dcdf3b835ba175d8a3d0e09bbb5ed6e1d8ddba7f8e86f85a78c98d6b59240ba5",
     "package_version": "0.25.0"
   },
   "release_certified": false,
-  "recorded_at": "2026-09-18T03:06:50.373841+00:00",
+  "recorded_at": "2026-09-18T03:16:52.007359+00:00",
   "source_sha256": {
     "src/zhivex_ai/providers/qwen.py": "78dc853337075fb46cba27de6a9b10947460cf3c0174632b657f6298cb719e9b",
     "src/zhivex_ai/providers/_qwen_omni.py": "75db0e142b80968d42f385f6e79c25f98cac3ec26cdf9d4f66700de6f44b5f02",
     "src/zhivex_ai/providers/openai_compat.py": "fa28b41109046b404381f62350f1effbc5b41c5c4892680820e6a39fde646c68",
-    "src/zhivex_ai/catalog.py": "376233e30e0c239ad6b9f671e5567a565e51d14196a3658375de33014db5a683",
+    "src/zhivex_ai/catalog.py": "ee091a4a6086f24f5dc52db03957add22a0ad7ee900f95072e531caeb3be8298",
     "scripts/smoke_qwen_omni.py": "ba0afa9c1e10989096a8c1b62b9d1e645b0a63414f06cdb8877b890813916864"
   },
   "operations": {
