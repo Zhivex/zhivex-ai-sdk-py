@@ -1,5 +1,7 @@
 # Model source review — September 5, 2026
 
+Historical snapshot. See [September 16 changes](MODEL_REFRESH_2026_09_16.md) for current DeepSeek aliases, Meta 1.3, voice and native API updates.
+
 This review updates the existing providers from official documentation. Catalog availability describes the upstream model; SDK stability and exact-artifact live certification remain separate. New catalog entries are source references, with request behavior covered offline in `tests/test_model_refresh.py`. Credentialed candidate-wheel evidence is recorded in [0.23.0-model-smoke.json](releases/0.23.0-model-smoke.json): Astra, Fable 5.1, Gemini 3.8 Flash, Qwen3.8-Max-0902 and DeepSeek vision passed generation, streaming, structured output and agent tools; DeepSeek also passed a synthetic base64 image check. Updated Anthropic and Google credentials passed. Mythos 5.1 returned model-not-found (404) for the tested credential; its access remains unconfirmed. Azure and Vertex were not credentialed. These local results do not certify a clean tagged release.
 
 | Provider | Added API ID | Integration boundary |

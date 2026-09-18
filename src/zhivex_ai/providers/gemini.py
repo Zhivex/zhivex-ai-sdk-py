@@ -1589,6 +1589,16 @@ def _gemini_realtime_generation_config(config: RealtimeSessionConfig, model_id: 
     if config.voice:
         generation_config.setdefault("speechConfig", {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": config.voice}}})
     response_modalities = generation_config.get("responseModalities")
+    if model_id in {"gemini-3.8-live", "gemini-3.8-live-extended-thinking"}:
+        if response_modalities is not None and response_modalities != ["AUDIO"]:
+            raise ValidationError("Gemini 3.8 Live requires AUDIO response modality.")
+        generation_config["responseModalities"] = ["AUDIO"]
+        thinking = generation_config.get("thinkingConfig", generation_config.get("thinking_config", {}))
+        if not isinstance(thinking, dict):
+            raise ValidationError("Gemini Live thinkingConfig must be a dict.")
+        level = thinking.get("thinkingLevel", thinking.get("thinking_level"))
+        if level is not None and (model_id == "gemini-3.8-live" or str(level).lower() not in {"low", "medium", "high"}):
+            raise UnsupportedFeatureError("Gemini 3.8 Live has no thinkingLevel; Extended Thinking accepts low, medium, high.")
     if _is_gemini_live_translate_model(model_id):
         if response_modalities is not None and response_modalities != ["AUDIO"]:
             raise ValidationError('Provider "gemini" Live Translate requires generationConfig.responseModalities=["AUDIO"].')
@@ -1615,6 +1625,12 @@ def _gemini_realtime_setup(config: RealtimeSessionConfig, model_id: str) -> dict
         "systemInstruction": {"parts": [{"text": config.instructions}]} if config.instructions else None,
         **_gemini_realtime_extra_provider_options(config.provider_options),
     }
+    if model_id == "gemini-3.8-live-extended-thinking":
+        for tool_group in payload.get("tools") or []:
+            for declaration in tool_group.get("functionDeclarations", []):
+                if declaration.get("behavior") not in {None, "NON_BLOCKING"}:
+                    raise UnsupportedFeatureError("Gemini 3.8 Live Extended Thinking only supports NON_BLOCKING tools.")
+                declaration["behavior"] = "NON_BLOCKING"
     if _is_gemini_live_translate_model(model_id):
         payload.setdefault("inputAudioTranscription", {})
         payload.setdefault("outputAudioTranscription", {})
@@ -1746,10 +1762,13 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     provider_metadata=payload,
                 )
             )
-        if content.get("generationComplete") or content.get("generation_complete"):
+        status = content.get("interactionStatus") or content.get("interaction_status") or payload.get("interactionStatus") or payload.get("interaction_status")
+        if status != "IN_PROGRESS" and (content.get("generationComplete") or content.get("generation_complete")):
             events.append(RealtimeResponseCompletedEvent(reason="generation-complete", provider_metadata=payload))
-        if content.get("turnComplete") or content.get("turn_complete"):
+        if status != "IN_PROGRESS" and (content.get("turnComplete") or content.get("turn_complete") or status == "IDLE"):
             events.append(RealtimeResponseCompletedEvent(reason="turn-complete", provider_metadata=payload))
+        remaining = {key: value for key, value in payload.items() if key not in {"serverContent", "server_content"}}
+        events.extend(_gemini_realtime_parse_event(remaining))
         return events
     tool_call = payload.get("toolCall") or payload.get("tool_call")
     if isinstance(tool_call, dict):
@@ -2933,7 +2952,7 @@ class GeminiRealtimeModel(RealtimeModel):
     ) -> RealtimeSession:
         resolved_config = config or RealtimeSessionConfig()
         _validate_gemini_realtime_config(resolved_config, self.model_id)
-        _gemini_realtime_generation_config(resolved_config, self.model_id)
+        _gemini_realtime_setup(resolved_config, self.model_id)
         url = self.realtime_url or _gemini_realtime_url(self.base_url, self.api_key, resolved_config.provider_options)
         headers = _gemini_realtime_headers(resolved_config.provider_options)
         factory = self.connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))

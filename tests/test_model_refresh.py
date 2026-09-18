@@ -374,7 +374,7 @@ class ModelRefreshTests(IsolatedAsyncioTestCase):
                 "image_url": {"url": "https://example.test/image.png"},
             },
         )
-        for model_id in ("deepseek-v4-flash", "deepseek-v4-pro"):
+        for model_id in ("deepseek-v4-pro",):
             with self.assertRaises(UnsupportedFeatureError):
                 await generate_text(model=provider(model_id), messages=messages)
         with self.assertRaises(UnsupportedFeatureError):

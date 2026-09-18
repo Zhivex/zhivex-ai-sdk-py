@@ -1,0 +1,73 @@
+{
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.25.0-py3-none-any.whl",
+    "installation_status": "passed",
+    "kind": "wheel",
+    "package_name": "zhivex-ai-sdk",
+    "package_version": "0.25.0",
+    "sha256": "191d5ca8582d1508c6047109284b4be9b99c0f9a1064aa909ddc9d9d3b1c2de0",
+    "source_revision": "25ea28bb01af4b45d205bec418f202bf7f3e6179"
+  },
+  "recorded_at": "2026-09-17T01:01:19.231792Z",
+  "run_status": "passed",
+  "schema_version": 1,
+  "targets": [
+    {
+      "diagnostic_code": null,
+      "diagnostic_fingerprint": null,
+      "model": "muse-spark-1.2-contributor",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "passed"
+        },
+        {
+          "name": "generation",
+          "status": "passed"
+        },
+        {
+          "name": "portable-retrieval",
+          "status": "passed"
+        },
+        {
+          "name": "streaming",
+          "status": "passed"
+        },
+        {
+          "name": "structured-output",
+          "status": "passed"
+        }
+      ],
+      "provider": "meta",
+      "result": "passed",
+      "surface": "contributor",
+      "target_id": "meta-contributor"
+    },
+    {
+      "diagnostic_code": null,
+      "diagnostic_fingerprint": null,
+      "model": "gpt-5.6-luna",
+      "operations": [
+        {
+          "name": "agent-tool",
+          "status": "passed"
+        },
+        {
+          "name": "generation",
+          "status": "passed"
+        }
+      ],
+      "provider": "openai",
+      "result": "passed",
+      "surface": "standard",
+      "target_id": "openai-standard"
+    }
+  ],
+  "workflow": {
+    "name": "Local provider smoke",
+    "platform": "local",
+    "repository": null,
+    "run_attempt": null,
+    "run_id": null
+  }
+}

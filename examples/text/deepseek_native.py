@@ -28,7 +28,7 @@ class ProviderSummary(BaseModel):
 
 async def main() -> None:
     deepseek = create_deepseek()
-    model_id = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    model_id = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
     model = deepseek.native.language_model(model_id)
 
     reasoned = await generate_text(

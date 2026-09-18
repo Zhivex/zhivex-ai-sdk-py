@@ -106,3 +106,9 @@ Development and CI use a reviewed uv lock with independent minimum/latest range 
 The local persistence and application-owned catalog cohorts are Stable from `0.24.0`. Existing imports and calls require no migration. Factory signatures and returned memory/checkpoint operations, run-state revision and claim semantics, and readability of previously supported SQLite data follow the Stable deprecation policy. Memory saves replace a session snapshot; callers serialize concurrent session updates. InMemory values are process-local and may share nested mutable objects; they are not durable snapshots.
 
 Catalog construction and lookup, metadata fields and literal values, identifier collision rejection, defensive copies, and `ModelPricing` units and date-window behavior now follow the Stable compatibility policy. Capability types are Stable schemas; provider discovery helpers and the default catalog content remain Beta. Catalog metadata changes do not certify a model or alter this compatibility contract.
+
+## September 16 compatibility notes
+
+The `ModelApiSurface` literal additively accepts `"live"`. Native provider capabilities add `messages`, `agent_sessions`, and `live` flags; existing fields and defaults remain compatible. Native clients are accessed through `provider.native`, without new package-root exports.
+
+DeepSeek's upstream Flash aliases now resolve to V4.1. The SDK does not rewrite IDs on the wire: it updates their vision/reasoning contracts and marks their catalog entries deprecated in favor of `deepseek-flash`. V4 Pro keeps its existing contract. No API-level deprecation or removal is introduced. See [migration details](docs/MODEL_REFRESH_2026_09_16.md).

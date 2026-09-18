@@ -29,6 +29,7 @@ from ..types import (
     ProviderDataPart,
     ToolCall,
 )
+from ._native_sessions import OpenAIAgentSessionsClient, OpenAILiveClient
 from .base import ProviderBundle, create_provider_bundle
 from .openai_compat import (
     OpenAICompatibleBatchesClient,
@@ -695,6 +696,15 @@ def create_openai(
             base_url=base,
             fetch=requester,
         ),
+    )
+    native.agent_sessions_client_factory = lambda: OpenAIAgentSessionsClient(
+        provider="openai", base_url=base, fetch=requester,
+        headers={"authorization": f"Bearer {resolved_key}", "content-type": "application/json", "OpenAI-Beta": "agents=v1"},
+    )
+    native.live_client_factory = lambda: OpenAILiveClient(
+        provider="openai", base_url=base, fetch=requester,
+        headers={"authorization": f"Bearer {resolved_key}", "content-type": "application/json"},
+        connection_factory=realtime_connection_factory,
     )
     return create_provider_bundle(
         name="openai",

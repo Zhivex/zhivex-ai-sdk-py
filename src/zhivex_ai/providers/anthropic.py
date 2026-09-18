@@ -49,6 +49,7 @@ from ..types import (
     PortableSupport,
 )
 from ._payload import drop_none
+from ._native_sessions import AnthropicMessagesClient
 from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 
 ANTHROPIC_CAPABILITIES = ModelCapabilities(
@@ -350,6 +351,19 @@ def _has_uploaded_file_reference(messages: list[ModelMessage]) -> bool:
     return False
 
 
+def _validate_compaction_request(input: ModelGenerateInput) -> None:
+    options = input.provider_options or {}
+    if options.get("compaction") is None:
+        return
+    choice = options.get("tool_choice") or {}
+    output = options.get("output_config") or {}
+    if (input.structured_output is not None or options.get("stop_sequences") is not None
+            or (isinstance(output, dict) and output.get("format") is not None)
+            or input.tool_choice not in (None, "auto", "none")
+            or (isinstance(choice, dict) and choice.get("type") in {"any", "tool"})):
+        raise ValidationError("Anthropic on-demand compaction cannot force tools, structured output, or stop sequences.")
+
+
 def _extract_provider_options(provider_options: dict[str, Any] | None) -> tuple[dict[str, Any], list[str], str | None]:
     options = dict(provider_options or {})
     request_betas = _coerce_beta_headers(options.pop("anthropic_beta", None))
@@ -357,6 +371,13 @@ def _extract_provider_options(provider_options: dict[str, Any] | None) -> tuple[
         _coerce_mcp_beta(options.pop("anthropic_mcp_beta", None)),
         _extract_mcp_beta_from_server_options(options.get("mcp_servers")),
     )
+    compaction = options.get("compaction")
+    if compaction is not None:
+        if not isinstance(compaction, dict) or compaction.get("type") != "summarize":
+            raise ValidationError("Anthropic compaction must have type=summarize.")
+        if options.get("context_management") is not None:
+            raise ValidationError("Anthropic compaction cannot be combined with context_management.")
+        request_betas.append("compact-2026-09-04")
     return options, request_betas, mcp_beta
 
 
@@ -1153,6 +1174,10 @@ def _parse_assistant_message(payload: dict[str, Any]) -> ModelMessage:
                     },
                 )
             )
+        elif block_type == "compaction":
+            parts.append(ProviderDataPart(provider="anthropic", data={
+                "type": "raw_content_block", "block": deepcopy(block),
+            }))
         elif block_type:
             if block_type == "fallback":
                 pending_thinking_blocks.clear()
@@ -1397,6 +1422,15 @@ class _AnthropicBase:
         mcp_beta: str | None = None,
     ) -> list[str]:
         extra = list(request_betas)
+        if any(
+            part.type == "provider-data" and part.provider == "anthropic"
+            and isinstance(part.data, dict)
+            and isinstance(part.data.get("block"), dict)
+            and part.data["block"].get("type") == "compaction"
+            and part.data["block"].get("signature")
+            for message in messages for part in message.parts
+        ):
+            extra.append("compact-2026-09-04")
         if _has_uploaded_file_reference(messages):
             extra.append(_ANTHROPIC_FILES_BETA)
         if provider_options.get("speed") == "fast":
@@ -1496,6 +1530,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        _validate_compaction_request(input)
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
@@ -1571,6 +1606,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        _validate_compaction_request(input)
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         mcp_beta = _merge_mcp_beta(mcp_beta, _extract_mcp_beta_from_tools(input.tools))
@@ -1686,7 +1722,7 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
                     yield StreamToolResultEvent(
                         tool_result=_parse_provider_tool_result_block(payload["content_block"]).tool_result
                     )
-                elif event.event == "content_block_start" and payload.get("content_block", {}).get("type") == "fallback":
+                elif event.event == "content_block_start" and payload.get("content_block", {}).get("type") in {"fallback", "compaction"}:
                     pending_thinking_blocks.clear()
                     yield StreamProviderDataEvent(
                         provider="anthropic",
@@ -1773,6 +1809,8 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
         _validate_mid_conversation_system_messages(input.messages, self.model_id)
         _validate_assistant_prefill(input.messages, self.model_id)
         provider_options, request_betas, mcp_beta = _extract_provider_options(input.provider_options)
+        if provider_options.get("compaction") is not None:
+            raise UnsupportedFeatureError("Use native Messages for on-demand compaction.")
         _validate_adaptive_thinking_request(self.model_id, input, provider_options)
         _validate_model_tool_choice(self.model_id, provider_options.get("tool_choice"))
         web_search_tool, remaining_options = _build_web_search_tool(provider_options)
@@ -1879,6 +1917,12 @@ def create_anthropic(
             fetch=requester,
             beta_headers=list(resolved_betas),
         ),
+    )
+    native.messages_client_factory = lambda: AnthropicMessagesClient(
+        provider="anthropic", base_url=base_url.rstrip("/"), fetch=requester,
+        headers={"x-api-key": resolved_key, "content-type": "application/json",
+                 "anthropic-version": anthropic_version,
+                 "anthropic-beta": _merge_beta_headers(resolved_betas, "compact-2026-09-04") or "compact-2026-09-04"},
     )
     return create_provider_bundle(
         name="anthropic",

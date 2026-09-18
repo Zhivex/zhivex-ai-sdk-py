@@ -7,6 +7,7 @@ from zhivex_ai import create_meta, generate_text
 
 
 async def main() -> None:
+    # Set ZHIVEX_EXAMPLE_META_MODEL=muse-spark-1.3 for the Beta September model.
     model_id = os.getenv("ZHIVEX_EXAMPLE_META_MODEL", "muse-spark-1.2")
     meta = create_meta()  # Reads MODEL_API_KEY; defaults to https://api.meta.ai/v1.
     result = await generate_text(

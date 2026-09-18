@@ -14,6 +14,7 @@ ModelApiSurface = Literal[
     "language",
     "image",
     "realtime",
+    "live",
     "embedding",
     "transcription",
     "speech",
@@ -40,6 +41,7 @@ _MODEL_API_SURFACES = {
     "language",
     "image",
     "realtime",
+    "live",
     "embedding",
     "transcription",
     "speech",
@@ -500,12 +502,62 @@ def _usd(
 default_model_catalog = create_model_catalog(
     [
         _entry(
+            "openai", "gpt-live-1", api_surface="live",
+            recommended_for=("audio", "realtime"), capabilities=_REALTIME,
+            source_urls=("https://developers.openai.com/api/docs/guides/live",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "meta", "muse-spark-1.3", api_surface="language",
+            recommended_for=("chat", "reasoning", "tools", "vision"), capabilities=_META_LANGUAGE,
+            source_urls=("https://research.meta.ai/blog/introducing-muse-spark-1-3",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "openai", "gpt-image-2.5-sunburst", api_surface="image",
+            recommended_for=("vision",), capabilities=_IMAGE,
+            source_urls=("https://developers.openai.com/api/docs/guides/image-generation",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "openai", "gpt-image-2.5-flare", api_surface="image",
+            recommended_for=("vision",), capabilities=_IMAGE,
+            source_urls=("https://developers.openai.com/api/docs/guides/image-generation",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini", "gemini-3.8-live", api_surface="realtime",
+            recommended_for=("audio", "realtime"), capabilities=_REALTIME,
+            source_urls=("https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini", "gemini-3.8-live-extended-thinking", api_surface="realtime",
+            recommended_for=("audio", "realtime"), capabilities=_REALTIME,
+            source_urls=("https://ai.google.dev/gemini-api/docs/changelog",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini", "lyria-3.5", api_surface="media",
+            recommended_for=("audio",), capabilities=_SPEECH,
+            source_urls=("https://ai.google.dev/gemini-api/docs/models/lyria-3.5",),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+
+        _entry(
+            "deepseek", "deepseek-flash",
+            recommended_for=("reasoning", "tools", "vision"),
+            source_urls=("https://api-docs.deepseek.com/",),
+            capabilities=replace(_DEEPSEEK_LANGUAGE, vision=True),
+            verified_at="2026-09-16", support_evidence="offline-contract",
+        ),
+        _entry(
             "deepseek", "deepseek-v4-flash-vision-exp",
             recommended_for=("reasoning", "tools", "vision"),
-            availability="preview",
-            source_urls=("https://api-docs.deepseek.com/guides/vision/",),
+            availability="deprecated", replacement_model_id="deepseek-flash",
+            source_urls=("https://api-docs.deepseek.com/",),
             capabilities=replace(_DEEPSEEK_LANGUAGE, vision=True),
-            verified_at="2026-09-05",
+            verified_at="2026-09-16", support_evidence="offline-contract",
         ),
         _entry(
             "openai",
@@ -1654,7 +1706,9 @@ default_model_catalog = create_model_catalog(
             "deepseek-v4-flash",
             recommended_for=("chat", "speed", "reasoning", "tools"),
             source_urls=_DEEPSEEK_MODELS,
-            capabilities=_DEEPSEEK_LANGUAGE,
+            capabilities=replace(_DEEPSEEK_LANGUAGE, vision=True),
+            availability="deprecated", replacement_model_id="deepseek-flash",
+            verified_at="2026-09-16",
         ),
         _entry(
             "deepseek",

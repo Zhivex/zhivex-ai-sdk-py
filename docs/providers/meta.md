@@ -38,6 +38,10 @@ Use `base_url=` only for an explicitly trusted proxy. Portable calls reject `pro
 
 Portable retrieval is an SDK-owned prompt-context operation: it injects bounded document text before the user request and uses the normal Chat Completions route. It does not upload files or invoke Meta Files, hosted `web_search`, `tool_search`, or raw Responses. Those provider-native retrieval surfaces remain Beta.
 
+## Beta Spark 1.3 update
+
+`muse-spark-1.3` is available through the existing factory and has exact-ID offline text, streaming, max reasoning, JSON Schema and tool replay tests. Set `ZHIVEX_EXAMPLE_META_MODEL=muse-spark-1.3` in the existing example. The September 2 [official announcement](https://research.meta.ai/blog/introducing-muse-spark-1-3) confirms direct Meta Model API availability. This Beta model extension does not change the Stable Standard 1.2 cohort, infer Contributor IDs, or certify a live wheel.
+
 ## Beta native and model extensions
 
 The following implemented surfaces remain Beta and do not inherit Tier-1 stability:
