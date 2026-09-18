@@ -68,6 +68,9 @@ class NativeSupport:
     caches: bool = False
     count_tokens: bool = False
     formulas: bool = False
+    messages: bool = False
+    agent_sessions: bool = False
+    live: bool = False
 
 
 @dataclass(slots=True)

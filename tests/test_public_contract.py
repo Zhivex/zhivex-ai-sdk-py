@@ -190,6 +190,13 @@ COMPATIBILITY_ROOT_EXPORTS_SHA256 = "cd0492db34a342394b1b15cae5384c34d869eeec228
 
 
 class PublicContractTests(TestCase):
+    def test_live_api_surface_is_additive_to_realtime(self) -> None:
+        from typing import get_args
+
+        self.assertIn("live", get_args(zhivex_ai.ModelApiSurface))
+        self.assertIn("realtime", get_args(zhivex_ai.ModelApiSurface))
+
+
     def test_package_root_does_not_expand_without_an_explicit_contract_update(self) -> None:
         payload = "\n".join(sorted(zhivex_ai.__all__)).encode("utf-8")
 

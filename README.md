@@ -233,21 +233,21 @@ portable providers remain `contract-supported`. Certification does not change po
 
 ### Native Extras
 
-| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches | Token Count | Formulas |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | Yes | Yes | Yes | No | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No |
-| azure-openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No | No | No |
-| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No |
-| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No |
-| kimi | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes |
-| meta | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No |
-| ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No |
-| openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No | No | No |
-| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No | Yes | No |
-| vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No |
+| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches | Token Count | Formulas | Messages | Managed Agent Sessions | GPT-Live |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | Yes | Yes | Yes | No | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | Yes | No | No |
+| azure-openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No | No | No | No | No | No |
+| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
+| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No |
+| kimi | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | No | No | No |
+| meta | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No |
+| ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | Yes |
+| openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No |
+| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No | Yes | No | No | No | No |
+| vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
 
 ### Agent Capabilities
 
@@ -1460,7 +1460,7 @@ tokens = await kimi.tokens().count(model_id="kimi-k3", prompt="hello")
 tools = await kimi.formulas().toolset(["moonshot/web-search:latest"])
 ```
 
-DeepSeek V4 usage:
+DeepSeek V4.1 Flash usage:
 
 ```python
 import asyncio
@@ -1471,7 +1471,7 @@ from zhivex_ai import ReasoningConfig, create_deepseek, generate_text
 async def main() -> None:
     deepseek = create_deepseek()  # DEEPSEEK_API_KEY
     result = await generate_text(
-        model=deepseek("deepseek-v4-flash"),
+        model=deepseek("deepseek-flash"),
         prompt="Explain the portable DeepSeek integration in one sentence.",
         reasoning=ReasoningConfig(effort="high"),
     )
@@ -1481,7 +1481,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-DeepSeek thinking is enabled by default for V4. Portable `temperature`, `top_p`, or forced `tool_choice` requests automatically select non-thinking mode unless reasoning was explicitly requested; explicitly combining thinking with an incompatible option fails before network dispatch. Strict callable tools and assistant prefix completion use DeepSeek's beta route automatically. See `examples/text/deepseek_native.py` for text and structured-output usage.
+DeepSeek thinking is enabled by default. The current `deepseek-flash` route and the provider-redirected legacy Flash IDs accept user images. V4.1 maps minimal/low to low, medium/high/xhigh to high, and max/ultra to max. Native `top_p` in [0.95, 1] works with thinking; custom values with thinking disabled are rejected. Temperature and forced tool choice retain the existing non-thinking selection. V4 Pro keeps its separate text contract. See `examples/text/deepseek_native.py` and [the September 16 refresh](docs/MODEL_REFRESH_2026_09_16.md).
 
 Local Ollama usage follows the same native escape hatch:
 
@@ -1543,7 +1543,7 @@ The canonical matrix now lives in runtime metadata:
 - `provider.portable_support`
 - `provider.native_support`
 - `provider.tier`
-- `default_model_catalog` is a source-backed Beta snapshot verified on 2026-08-29. It tracks OpenAI/Azure GPT-5.6, GPT Image and Realtime as distinct API IDs; Claude 5 and 4.x versions separately; Gemini/Vertex 3.7 Flash, GA Gemini Omni 1.1 Flash, Transcribe, media, and lifecycle replacements; Qwen3.8 Max/Flash plus distinct snapshots and embedding versions; Kimi K3/K2.x; DeepSeek V4; Meta Muse; and hosted routes. Every entry carries reviewed capabilities, lifecycle, sources, and a verification date. Only true provider aliases resolve to a canonical ID—older versions and previews are never silently remapped. When explicitly passed to `GatewayConfig.model_catalog`, the metadata drives fallback ranking and route evidence; it remains guidance rather than live certification.
+- `default_model_catalog` is a source-backed Beta snapshot with per-entry review dates (latest refresh: 2026-09-16). It tracks OpenAI/Azure GPT-5.6, GPT Image and Realtime as distinct API IDs; Claude 5 and 4.x versions separately; Gemini/Vertex 3.7 Flash, GA Gemini Omni 1.1 Flash, Transcribe, media, and lifecycle replacements; Qwen3.8 Max/Flash plus distinct snapshots and embedding versions; Kimi K3/K2.x; DeepSeek V4; Meta Muse; and hosted routes. Every entry carries reviewed capabilities, lifecycle, sources, and a verification date. Only true provider aliases resolve to a canonical ID—older versions and previews are never silently remapped. When explicitly passed to `GatewayConfig.model_catalog`, the metadata drives fallback ranking and route evidence; it remains guidance rather than live certification.
 - Catalog recommendations affect ranking, not capability authorization. Retired or non-language entries fail closed in text routing. Source-backed `ModelPricing` is available from `zhivex_ai.catalog`; it preserves per-million input/output rates and effective dates, while regional/tiered prices remain application-owned overrides.
 
 To regenerate the markdown tables used above:
@@ -2003,3 +2003,11 @@ Version `0.24.0` adds Beta `zhivex init` and an [installed durable walkthrough](
 [OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
 [reproducible performance evidence](docs/PERFORMANCE.md). See the [0.24.0 release plan](docs/releases/0.24.0.md) for validation and publication status. The scaffold composes existing APIs. CLI and observability remain Beta; local
 storage is promoted separately under the guarantees documented above.
+
+## September 16 provider update
+
+DeepSeek V4.1 Flash and Meta `muse-spark-1.3` have explicit offline contracts. The Meta 1.3 model extension remains Beta; the existing 1.2 Stable cohort and its certification records are unchanged. OpenAI image 2.5 and Lyria 3.5 use existing native media clients. Gemini Live 3.8 and GPT-Live remain Experimental SDK integrations even though the upstream models are GA.
+
+New native entrypoints are `openai.native.agent_sessions()` (Beta managed Agents sessions), `openai.native.live()` (Experimental GPT-Live WebSocket/WebRTC), and `anthropic.native.messages()` (Beta Messages/compaction). These do not replace the portable `Agent` runtime. See [usage, sources and evidence boundaries](docs/MODEL_REFRESH_2026_09_16.md). New model contracts do not certify a release wheel.
+
+Release candidate `0.25.0` adds the September provider refresh and native session APIs. See the [release plan](docs/releases/0.25.0.md) for migration, validation and publication gates.
