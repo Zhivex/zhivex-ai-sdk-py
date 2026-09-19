@@ -3,8 +3,8 @@
 GPT-Live uses `/live/sessions`, separately from OpenAI `/realtime`. The supported
 WebSocket subset of `create_openai().native.live()` consists of `connect`, session
 `send`/`receive`, `append_audio`, `append_context`, `run_delegation`, `finish` and
-`aclose`. This change prepares that subset for Stable; promotion evidence is recorded
-in the GPT-Live candidate report. WebRTC creation, forks, recording downloads, SIP,
+`aclose`. That subset is Stable; [protected evidence](../releases/2026-09-19-gpt-live-protected.md)
+records the exact certified wheel and scenarios. WebRTC creation, forks, recording downloads, SIP,
 Responses-managed delegation and automatic reconnect are not promoted by this work.
 
 Install `zhivex-ai-sdk[realtime]`. Use the runnable

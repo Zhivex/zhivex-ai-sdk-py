@@ -172,6 +172,6 @@ Native additions: GPT Image 2.5, Lyria 3.5, Anthropic signed on-demand compactio
 
 Offline tests establish wire behavior only. Existing evidence files retain their original model, source and artifact hashes. None of these additions inherits a live certification from an older model, a different provider route, or the previous wheel.
 
-## GPT-Live certification candidate
+## GPT-Live WebSocket certification
 
-GPT-Live WebSocket audio, interruption and durable Agent client delegation have a dedicated two-round exact-artifact gate. Passing normalized `gpt-realtime-2.1` evidence does not certify `gpt-live-1`; the new workflow job must pass for its own promotion. See [scope and lifecycle](docs/agents/gpt-live.md).
+GPT-Live WebSocket audio, interruption and durable Agent client delegation have a dedicated two-round exact-artifact gate. Passing normalized `gpt-realtime-2.1` evidence does not certify `gpt-live-1`; its dedicated protected job passed 6/6 scenarios and the documented WebSocket subset is Stable. See [exact-artifact evidence](docs/releases/2026-09-19-gpt-live-protected.md). See [scope and lifecycle](docs/agents/gpt-live.md).

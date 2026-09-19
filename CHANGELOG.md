@@ -20,11 +20,11 @@ Related documents:
 
 ## Unreleased
 
-### GPT-Live WebSocket candidate
+### GPT-Live WebSocket Stable subset
 
 - Add validated PCM16 audio/context helpers and durable client delegation from GPT-Live to `Agent`, preserving approvals and rejecting duplicate delegation execution.
 - Bound native Live sends and transport cleanup, enforce one reader, preserve startup failures during cleanup, and document finalization versus playback.
-- Add synthetic audio/interruption/delegation fixtures, exact-wheel certification and a protected CI job. This is a promotion candidate pending protected evidence; native WebRTC/resource operations remain Experimental.
+- Add synthetic audio/interruption/delegation fixtures, exact-wheel certification and a protected CI job. The documented WebSocket subset is Stable after a protected 6/6 GPT-Live certification; native WebRTC/resource operations remain Experimental.
 
 ### Changed
 
