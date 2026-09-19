@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 from unittest import TestCase
+from unittest.mock import patch
 import wave
 import zipfile
 
@@ -16,6 +17,19 @@ class RealtimeCertificationGateTests(TestCase):
     def test_published_schema_matches_the_verifier(self):
         schema = Path(__file__).resolve().parents[1] / "docs/releases/realtime-certification.schema.json"
         self.assertEqual(schema.read_text(), schema_text())
+
+    def test_schema_canonicalizes_only_redundant_literal_enums(self):
+        generated = {"properties": {
+            "kind": {"const": "evidence", "enum": ["evidence"]},
+            "status": {"enum": ["passed", "failed"]},
+            "other": {"const": "a", "enum": ["a", "b"]},
+        }}
+        with patch("scripts.verify_realtime_certification.RealtimeEvidence.model_json_schema", return_value=generated):
+            result = json.loads(schema_text())
+        self.assertEqual(result["properties"]["kind"], {"const": "evidence"})
+        self.assertEqual(result["properties"]["status"], generated["properties"]["status"])
+        self.assertEqual(result["properties"]["other"], generated["properties"]["other"])
+        self.assertIn("enum", generated["properties"]["kind"])
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

@@ -41,7 +41,19 @@ class RealtimeEvidence(BaseModel):
 
 
 def schema_text():
-    return json.dumps(RealtimeEvidence.model_json_schema(), indent=2, sort_keys=True) + "\n"
+    def normalize(value):
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if isinstance(value, dict):
+            result = {key: normalize(item) for key, item in value.items()}
+            # Older supported Pydantic versions emit a redundant singleton enum
+            # alongside const. Preserve the constraint with a canonical spelling.
+            if "const" in result and result.get("enum") == [result["const"]]:
+                del result["enum"]
+            return result
+        return value
+
+    return json.dumps(normalize(RealtimeEvidence.model_json_schema()), indent=2, sort_keys=True) + "\n"
 
 OPERATIONS = frozenset({
     "response", "audio-output", "audio-roundtrip", "tool-loop", "approval-suspend",
