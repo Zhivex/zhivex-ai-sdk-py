@@ -48,7 +48,16 @@ def safe_code(value):
     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.\[\]-]{1,100}", value) else None
 
 
-async def probe(provider_name, model_id, operation, resume_model=None):
+def transient_connection_failure(outcome):
+    if outcome.get("status") != "failed":
+        return False
+    if outcome.get("error_type") not in {"ConnectionClosedError", "ValidationError"}:
+        return False
+    events = outcome.get("events") if isinstance(outcome.get("events"), dict) else {}
+    return bool(events.get("error")) and not outcome.get("wire_events") and not outcome.get("diagnostics")
+
+
+async def probe(provider_name, model_id, operation, resume_model=None, _attempt=1):
     recovery = operation in {"approval-allow-restart", "approval-deny-restart", "approval-concurrent"}
     if recovery and not resume_model:
         return {"status": "blocked", "reason": "missing_resume_model"}
@@ -252,6 +261,10 @@ async def probe(provider_name, model_id, operation, resume_model=None):
         outcome.update(duration_ms=round((time.monotonic()-started)*1000), audio_bytes=audio_bytes,
                        tool_executions=len(executions), events=dict(events), wire_events=dict(wire),
                        diagnostics=diagnostics, connections_closed=bool(connections) and all(c.closed for c in connections))
+    if transient_connection_failure(outcome) and _attempt < 3:
+        await asyncio.sleep(0.5 * _attempt)
+        return await probe(provider_name, model_id, operation, resume_model=resume_model, _attempt=_attempt + 1)
+    outcome["attempts"] = _attempt
     return outcome
 
 

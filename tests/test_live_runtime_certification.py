@@ -85,3 +85,40 @@ class LiveCertificationTests(IsolatedAsyncioTestCase):
             result = await certify_live_runtime.probe("openai", "test-model", "response")
         self.assertEqual(result, {"status": "blocked", "reason": "missing_credentials"})
         connection.assert_not_called()
+
+    async def test_transient_connection_closure_is_retried(self) -> None:
+        class ConnectionClosedError(Exception):
+            pass
+
+        class Connection:
+            def __init__(self, *, fail: bool):
+                self.fail = fail
+                self.queue = asyncio.Queue()
+
+            async def send_json(self, payload):
+                if not self.fail and payload.get("type") == "response.create":
+                    await self.queue.put({"type": "response.text.delta", "delta": "ok"})
+                    await self.queue.put({"type": "response.done", "response": {"status": "completed"}})
+
+            async def recv_json(self):
+                if self.fail:
+                    raise ConnectionClosedError("transient close")
+                return await self.queue.get()
+
+            async def close(self):
+                pass
+
+        attempts = 0
+
+        async def connect(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            return Connection(fail=attempts == 1)
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "synthetic-test-key"}), patch.object(
+            certify_live_runtime, "open_websocket_connection", connect,
+        ):
+            result = await certify_live_runtime.probe("openai", "test-model", "response")
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(attempts, 2)
