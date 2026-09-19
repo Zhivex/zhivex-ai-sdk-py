@@ -184,13 +184,13 @@ Native JSON Schema, speech output, and realtime are not claimed for this model.
 
 ## September 16 native extensions
 
-Meta Spark 1.3 is a Beta model extension; Standard 1.2 remains the reviewed Stable Meta cohort. Anthropic `native.messages()` and signed on-demand compaction, OpenAI `native.agent_sessions()`, GPT Image 2.5, and Lyria 3.5 are Beta. `native.live()` for GPT-Live and Gemini 3.8 Live/Extended Thinking are Experimental. Native JSON/event payloads preserve provider-specific shapes and do not carry the portable contract. The Stable `ModelApiSurface` type additively accepts `"live"` to distinguish GPT-Live from Realtime. That model refresh did not remove or promote existing exports; the subsequent normalized runtime promotion is described in the Stable section.
+Meta Spark 1.3 is a Beta model extension; Standard 1.2 remains the reviewed Stable Meta cohort. Anthropic `native.messages()` and signed on-demand compaction, OpenAI `native.agent_sessions()`, GPT Image 2.5, and Lyria 3.5 are Beta. The original `native.live()` GPT-Live extension and Gemini 3.8 Live/Extended Thinking were Experimental in that refresh; the subsequent GPT-Live WebSocket promotion is scoped below. Native JSON/event payloads preserve provider-specific shapes and do not carry the portable contract. The Stable `ModelApiSurface` type additively accepts `"live"` to distinguish GPT-Live from Realtime. That model refresh did not remove or promote existing exports; the subsequent normalized runtime promotion is described in the Stable section.
 
 The Stable realtime namespace also exports `RealtimeSessionResumptionEvent` and
 `RealtimeGoAwayEvent`, with root compatibility aliases. These data contracts were
 already members of `RealtimeEvent`; explicit exports make every emitted variant
 importable. A resumption notification is not automatic reconnection support.
 
-## GPT-Live WebSocket promotion candidate
+## GPT-Live WebSocket Stable subset
 
-The `/live/sessions` WebSocket subset now includes validated audio/context helpers and durable Agent client delegation, with bounded sends, cleanup and single-reader enforcement. Its Stable promotion is pending protected exact-artifact certification of this change. WebRTC creation/fork, recording downloads, SIP, Responses-managed delegation and automatic reconnect retain their separate Experimental classification. See [the exact contract](docs/agents/gpt-live.md). No root exports change.
+The `/live/sessions` WebSocket subset now includes validated audio/context helpers and durable Agent client delegation, with bounded sends, cleanup and single-reader enforcement. This WebSocket subset is Stable after [protected exact-artifact certification](docs/releases/2026-09-19-gpt-live-protected.md), with 6/6 GPT-Live scenarios passed. WebRTC creation/fork, recording downloads, SIP, Responses-managed delegation and automatic reconnect retain their separate Experimental classification. See [the exact contract](docs/agents/gpt-live.md). No root exports change.

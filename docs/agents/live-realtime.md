@@ -89,7 +89,7 @@ session resumption are outside this Stable guarantee.
 Direct live handoff orchestration, native structured output, multi-turn voice
 session recovery, audio safety filtering and provider billing reconciliation are
 not claimed by this promotion. Runtime hooks and stored state do not certify the
-native provider transport. GPT-Live `/live/sessions`, model-specific Gemini Live
+native provider transport. GPT-Live `/live/sessions` has a [separate Stable WebSocket contract](gpt-live.md); model-specific Gemini Live
 extensions, and non-portable Bedrock/vLLM realtime integrations retain their
 separate classifications.
 
