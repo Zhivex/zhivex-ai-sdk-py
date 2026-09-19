@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
+from pydantic import BaseModel, ValidationError as PydanticValidationError
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -24,6 +26,7 @@ from zhivex_ai import (  # noqa: E402
     ModelGenerateInput,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
+    RealtimeErrorEvent,
     RealtimeResponseCompletedEvent,
     RealtimeSessionEndedEvent,
     RealtimeSessionConfig,
@@ -31,6 +34,7 @@ from zhivex_ai import (  # noqa: E402
     RealtimeToolCallEvent,
     RealtimeToolResultEvent,
     RealtimeTranscriptEvent,
+    RunLimits,
     ToolExecutionResult,
     ToolDefinition,
     ToolExecutionOptions,
@@ -59,6 +63,8 @@ class FakeRealtimeConnection:
 
     async def send_json(self, payload: dict[str, Any]) -> None:
         self.sent.append(payload)
+        if "setup" in payload:
+            self._incoming.insert(0, {"setupComplete": {}})
 
     async def recv_json(self) -> Any:
         if self.closed:
@@ -72,6 +78,175 @@ class FakeRealtimeConnection:
 
 
 class RealtimeProviderTests(IsolatedAsyncioTestCase):
+    async def test_gemini_connect_waits_for_setup_ack_and_bounds_timeout(self) -> None:
+        class HandshakeConnection(FakeRealtimeConnection):
+            def __init__(self):
+                super().__init__([])
+                self.queue = asyncio.Queue()
+                self.setup_sent = asyncio.Event()
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+                self.setup_sent.set()
+
+            async def recv_json(self):
+                return await self.queue.get()
+
+        connection = HandshakeConnection()
+
+        async def factory(*_args):
+            return connection
+
+        model = create_gemini(api_key="test", realtime_connection_factory=factory).realtime_model("gemini-3.8-live")
+        task = asyncio.create_task(model.connect(options=RealtimeConnectOptions(timeout_ms=1000)))
+        await connection.setup_sent.wait()
+        self.assertFalse(task.done())
+        await connection.queue.put({"setupComplete": {}})
+        session = await asyncio.wait_for(task, timeout=1)
+        await session.aclose()
+        connection = HandshakeConnection()
+        with self.assertRaises(TimeoutError):
+            await model.connect(options=RealtimeConnectOptions(timeout_ms=10))
+        self.assertTrue(connection.closed)
+
+    def test_openai_manual_turn_detection_preserves_explicit_null(self) -> None:
+        from zhivex_ai.providers.openai_compat import _openai_realtime_session_config
+
+        config = _openai_realtime_session_config(RealtimeSessionConfig(turn_detection={"type": "none"}))
+        self.assertIn("turn_detection", config["audio"]["input"])
+        self.assertIsNone(config["audio"]["input"]["turn_detection"])
+
+    async def test_update_failure_keeps_last_sent_config(self) -> None:
+        class FailingConnection(FakeRealtimeConnection):
+            fail = False
+
+            async def send_json(self, payload):
+                if self.fail:
+                    raise ConnectionError("send failed")
+                await super().send_json(payload)
+
+            async def recv_json(self):
+                await asyncio.Event().wait()
+
+        connection = FailingConnection([])
+
+        async def factory(*_args):
+            return connection
+
+        session = await create_openai(api_key="test", realtime_connection_factory=factory).realtime_model(
+            "gpt-realtime-2.1",
+        ).connect(RealtimeSessionConfig(instructions="original"))
+        try:
+            connection.fail = True
+            with self.assertRaisesRegex(ConnectionError, "send failed"):
+                await session.update(instructions="unsent")
+            self.assertEqual(session.config.instructions, "original")
+            connection.fail = False
+            await session.update(instructions="sent")
+            self.assertEqual(session.config.instructions, "sent")
+        finally:
+            await session.aclose()
+
+    async def test_gemini_update_rejects_without_sending_second_setup(self) -> None:
+        connection = FakeRealtimeConnection([])
+
+        async def factory(*_args):
+            return connection
+
+        session = await create_gemini(api_key="test", realtime_connection_factory=factory).realtime_model(
+            "gemini-3.8-live",
+        ).connect(RealtimeSessionConfig(instructions="original"))
+        try:
+            before = len(connection.sent)
+            with self.assertRaisesRegex(UnsupportedFeatureError, "open connection"):
+                await session.update(instructions="unsupported")
+            self.assertEqual(session.config.instructions, "original")
+            self.assertEqual(len(connection.sent), before)
+        finally:
+            await session.aclose()
+
+    def test_realtime_tools_omit_responses_only_strict_field(self) -> None:
+        from zhivex_ai.providers.openai_compat import _openai_realtime_tools
+
+        payload = _openai_realtime_tools(RealtimeSessionConfig(tools={
+            "lookup": ToolDefinition(name="lookup", description="Lookup", schema={"type": "object"}),
+        }))
+        self.assertEqual(len(payload), 1)
+        self.assertNotIn("strict", payload[0])
+        self.assertEqual(payload[0]["name"], "lookup")
+
+    async def test_realtime_overrun_is_explicit_instead_of_losing_events(self) -> None:
+        from zhivex_ai.realtime import CallbackRealtimeSession, RealtimeSessionCallbacks
+
+        session = CallbackRealtimeSession(
+            provider="test", model_id="test", capabilities=FakeLiveModel.capabilities,
+            config=RealtimeSessionConfig(), connection=FakeRealtimeConnection([]),
+            callbacks=RealtimeSessionCallbacks(
+                parse_event=lambda _payload: [], build_audio_payloads=lambda *_args: [],
+                build_text_payloads=lambda *_args: [], build_tool_result_payloads=lambda *_args: [],
+                build_update_payloads=lambda *_args: [],
+            ),
+        )
+        iterator = session.event_stream().__aiter__()
+        for index in range(1000):
+            await session._broadcast.publish(RealtimeTextDeltaEvent(text_delta=str(index)))
+        self.assertEqual((await anext(iterator)).text_delta, "0")
+        await session._broadcast.publish(RealtimeTextDeltaEvent(text_delta="1000"))
+        self.assertEqual((await anext(iterator)).text_delta, "1")
+        for index in range(1001, 2002):
+            await session._broadcast.publish(RealtimeTextDeltaEvent(text_delta=str(index)))
+        with self.assertRaisesRegex(ValidationError, "retained event history"):
+            await anext(iterator)
+        await session.aclose()
+
+    async def test_close_cancels_blocked_receiver_and_rejects_late_sends(self) -> None:
+        entered = asyncio.Event()
+        exited = asyncio.Event()
+
+        class BlockingConnection(FakeRealtimeConnection):
+            async def recv_json(self) -> Any:
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    exited.set()
+
+        connection = BlockingConnection([])
+
+        async def factory(*_args: Any) -> Any:
+            return connection
+
+        session = await create_openai(api_key="test", realtime_connection_factory=factory).realtime_model(
+            "gpt-realtime-2.1",
+        ).connect()
+        await entered.wait()
+        await asyncio.wait_for(session.aclose(), timeout=1)
+        self.assertTrue(exited.is_set())
+        self.assertTrue(connection.closed)
+        await session.aclose()
+        with self.assertRaisesRegex(ValidationError, "closed"):
+            await session.send_text("late")
+
+    async def test_openai_wire_error_fails_live_run(self) -> None:
+        async def factory(*_args: Any) -> Any:
+            return FakeRealtimeConnection([{"type": "error", "error": {"message": "invalid request"}}])
+
+        model = create_openai(api_key="test", realtime_connection_factory=factory).realtime_model("gpt-realtime-2.1")
+        with self.assertRaisesRegex(RuntimeError, "provider reported an error"):
+            await stream_live_agent(agent=Agent(name="live", model=model)).collect()
+
+    async def test_openai_completion_normalizes_status_and_tool_boundary(self) -> None:
+        from zhivex_ai.providers.openai_compat import _openai_realtime_parse_event
+
+        for status in ("failed", "cancelled", "incomplete"):
+            with self.subTest(status=status):
+                events = _openai_realtime_parse_event({"type": "response.done", "response": {"status": status}})
+                self.assertIsInstance(events[0], RealtimeErrorEvent)
+        events = _openai_realtime_parse_event({"type": "response.done", "response": {
+            "status": "completed", "output": [{"type": "function_call"}],
+        }})
+        self.assertEqual(events[0].reason, "tool-calls")
+
     async def test_realtime_session_rejects_oversized_provider_message(self) -> None:
         async def connection_factory(url: str, headers: dict[str, str], options: RealtimeConnectOptions | None):
             return FakeRealtimeConnection([{"server_content": {"model_turn": {"parts": [{"text": "x" * (1024 * 1024 + 1)}]}}}])
@@ -429,7 +604,7 @@ class FakeLiveSession:
 
     def event_stream(self):
         async def generator():
-            events = self.events or [
+            events = self.events if self.events is not None else [
                 RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True),
                 RealtimeToolCallEvent(tool_call=ToolCall(id="call_1", name="weather", input={"city": "BA"})),
                 RealtimeTextDeltaEvent(text_delta="Hace sol"),
@@ -494,6 +669,188 @@ class FakeLiveModel:
 
 
 class LiveAgentTests(IsolatedAsyncioTestCase):
+    async def test_live_prompted_output_validates_before_durable_completion(self) -> None:
+        class Answer(BaseModel):
+            count: int
+
+        for text, valid in (("{\"count\": 7}", True), ("{\"count\": \"invalid\"}", False)):
+            with self.subTest(valid=valid):
+                session = FakeLiveSession([
+                    RealtimeTextDeltaEvent(text_delta=text),
+                    RealtimeResponseCompletedEvent(reason="done"),
+                ])
+                store = create_in_memory_agent_run_store()
+                agent = Agent(name="typed", model=FakeLiveModel(session), run_store=store,
+                              output_type=Answer, output_mode="prompted")
+                stream = stream_live_agent(agent=agent, idempotency_key="typed")
+                if valid:
+                    result = await stream.collect()
+                    self.assertIsInstance(result.output, Answer)
+                    self.assertEqual(result.output.count, 7)
+                else:
+                    with self.assertRaises(PydanticValidationError):
+                        await stream.collect()
+                state = await store.find_by_idempotency_key("typed")
+                self.assertEqual(state.status, "completed" if valid else "failed")
+                self.assertTrue(session.closed)
+
+    async def test_stalled_live_transport_obeys_wall_limit_and_joins_iterator(self) -> None:
+        exited = asyncio.Event()
+
+        class StalledSession(FakeLiveSession):
+            def event_stream(self):
+                async def events():
+                    try:
+                        yield RealtimeTextDeltaEvent(text_delta="partial")
+                        await asyncio.Event().wait()
+                    finally:
+                        exited.set()
+                return events()
+
+        session = StalledSession()
+        store = create_in_memory_agent_run_store()
+        stream = stream_live_agent(agent=Agent(name="stalled", model=FakeLiveModel(session),
+                                               run_store=store, run_limits=RunLimits(max_wall_time_ms=30)),
+                                   idempotency_key="stalled")
+        with self.assertRaisesRegex(RuntimeError, "max wall time"):
+            await asyncio.wait_for(stream.collect(), timeout=2)
+        self.assertTrue(exited.is_set())
+        self.assertTrue(session.closed)
+        state = await store.find_by_idempotency_key("stalled")
+        self.assertEqual(state.status, "failed")
+
+    async def test_live_response_step_limit_stops_before_next_turn(self) -> None:
+        for reason in ("tool-calls", "turn-complete"):
+            for limit in (1, 2):
+                with self.subTest(reason=reason, limit=limit):
+                    session = FakeLiveSession([
+                        RealtimeToolCallEvent(tool_call=ToolCall(id="call", name="lookup", input={})),
+                        RealtimeResponseCompletedEvent(reason="generation-complete"),
+                        RealtimeResponseCompletedEvent(reason=reason),
+                        RealtimeTextDeltaEvent(text_delta="complete"),
+                        RealtimeResponseCompletedEvent(reason="done"),
+                    ])
+                    store = create_in_memory_agent_run_store()
+                    agent = Agent(name="live", model=FakeLiveModel(session), run_store=store,
+                                  run_limits=RunLimits(max_steps=limit), tools={
+                        "lookup": ToolDefinition(name="lookup", description="Lookup",
+                                                 schema={"type": "object"}, execute=lambda _: "ok"),
+                    })
+                    stream = stream_live_agent(agent=agent, idempotency_key="limit")
+                    if limit == 1:
+                        with self.assertRaisesRegex(RuntimeError, "exceeded max steps"):
+                            await stream.collect()
+                    else:
+                        result = await stream.collect()
+                        self.assertEqual(result.text, "complete")
+                    state = await store.find_by_idempotency_key("limit")
+                    self.assertIsNotNone(state)
+                    self.assertEqual(state.status, "failed" if limit == 1 else "completed")
+                    self.assertTrue(session.closed)
+
+    async def test_live_trace_preserves_agent_events_in_stream_order(self) -> None:
+        session = FakeLiveSession([
+            RealtimeTextDeltaEvent(text_delta="hello"),
+            RealtimeResponseCompletedEvent(reason="done"),
+        ])
+        stream = stream_live_agent(agent=Agent(name="live", model=FakeLiveModel(session),
+                                              run_limits=RunLimits(max_steps=1)))
+        events = [event async for event in stream.event_stream()]
+        result = await stream.collect()
+        agent_events = [event for event in events if not event.type.startswith("realtime-")]
+        self.assertEqual(result.trace.events, agent_events)
+        self.assertEqual(len(agent_events), 3)
+        self.assertEqual(result.text, "hello")
+
+    async def test_live_tool_turn_boundary_waits_for_response_and_collects_transcript_deltas(self) -> None:
+        session = FakeLiveSession([
+            RealtimeToolCallEvent(tool_call=ToolCall(id="call", name="lookup", input={})),
+            RealtimeResponseCompletedEvent(reason="generation-complete"),
+            RealtimeResponseCompletedEvent(reason="turn-complete"),
+            RealtimeTranscriptEvent(role="assistant", text="ORBIT", is_final=False),
+            RealtimeTranscriptEvent(role="assistant", text=" SEVEN", is_final=False),
+            RealtimeResponseCompletedEvent(reason="turn-complete"),
+        ])
+        agent = Agent(name="live", model=FakeLiveModel(session), tools={
+            "lookup": ToolDefinition(name="lookup", description="Lookup", schema={"type": "object"},
+                                     execute=lambda _input: {"marker": "ORBIT SEVEN"}),
+        })
+        result = await stream_live_agent(agent=agent).collect()
+        self.assertEqual(result.text, "ORBIT SEVEN")
+        self.assertEqual(len(session.sent_tool_results), 1)
+
+    async def test_cancelled_sender_does_not_cancel_shared_connection(self) -> None:
+        connected = asyncio.Event()
+        session = FakeLiveSession([RealtimeResponseCompletedEvent(reason="done")])
+
+        class DelayedModel(FakeLiveModel):
+            async def connect(self, config=None, options=None):
+                await connected.wait()
+                return await super().connect(config, options)
+
+        stream = stream_live_agent(agent=Agent(name="live", model=DelayedModel(session)))
+        sender = asyncio.create_task(stream.send_text("discarded"))
+        await asyncio.sleep(0)
+        sender.cancel()
+        await asyncio.gather(sender, return_exceptions=True)
+        connected.set()
+        result = await stream.collect()
+        self.assertEqual(result.state.status, "completed")  # type: ignore[union-attr]
+        self.assertTrue(session.closed)
+
+    async def test_incomplete_or_failed_session_never_commits_success(self) -> None:
+        cases = [
+            [],
+            [RealtimeTextDeltaEvent(text_delta="partial")],
+            [RealtimeSessionEndedEvent(reason="client-close")],
+            [RealtimeErrorEvent(message="provider failure")],
+            [RealtimeResponseCompletedEvent(reason="failed")],
+            [RealtimeResponseCompletedEvent(reason="cancelled")],
+            [RealtimeResponseCompletedEvent(reason="generation-complete")],
+        ]
+        for index, events in enumerate(cases):
+            with self.subTest(index=index):
+                session = FakeLiveSession(events)
+                store = create_in_memory_agent_run_store()
+                stream = stream_live_agent(
+                    agent=Agent(name="live", model=FakeLiveModel(session), run_store=store),
+                    idempotency_key="failed",
+                )
+                with self.assertRaises(RuntimeError):
+                    await stream.collect()
+                state = await store.find_by_idempotency_key("failed")
+                self.assertEqual(state.status, "failed")  # type: ignore[union-attr]
+                self.assertTrue(session.closed)
+
+    async def test_tool_duplicates_execute_once_and_wait_for_final_response(self) -> None:
+        call = ToolCall(id="lookup", name="lookup", input={})
+        executions: list[str] = []
+        session = FakeLiveSession([
+            RealtimeTranscriptEvent(text="checking", role="assistant", is_final=True),
+            RealtimeToolCallEvent(tool_call=call),
+            RealtimeToolCallEvent(tool_call=call),
+            RealtimeResponseCompletedEvent(reason="tool-calls"),
+            RealtimeTextDeltaEvent(text_delta="final"),
+            RealtimeResponseCompletedEvent(reason="generation-complete"),
+            RealtimeResponseCompletedEvent(reason="turn-complete"),
+        ])
+        agent = Agent(name="live", model=FakeLiveModel(session), tools={
+            "lookup": ToolDefinition(name="lookup", description="Lookup", schema={"type": "object"},
+                execute=lambda _input: executions.append("once")),
+        })
+        result = await stream_live_agent(agent=agent).collect()
+        self.assertEqual(executions, ["once"])
+        self.assertEqual(result.text, "final")
+        self.assertEqual(len(session.sent_tool_results), 1)
+
+    async def test_tool_id_reuse_with_different_arguments_fails(self) -> None:
+        session = FakeLiveSession([
+            RealtimeToolCallEvent(tool_call=ToolCall(id="call", name="lookup", input={})),
+            RealtimeToolCallEvent(tool_call=ToolCall(id="call", name="lookup", input={"other": True})),
+        ])
+        with self.assertRaisesRegex(ValidationError, "reused"):
+            await stream_live_agent(agent=Agent(name="live", model=FakeLiveModel(session))).collect()
+
     async def test_stream_live_agent_executes_tools_and_persists_transcript(self) -> None:
         live_session = FakeLiveSession()
         agent: Agent[Any, Any] = Agent(
@@ -592,6 +949,17 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
         stored = await run_store.load(suspended.run_id)
         self.assertEqual(stored.status, "suspended")  # type: ignore[union-attr]
         self.assertIn("resume_messages", stored.metadata)  # type: ignore[union-attr]
+
+        generate = model.generate
+        model.generate = None  # type: ignore[assignment]
+        try:
+            with self.assertRaisesRegex(ValidationError, "requires a language model"):
+                await resume_agent_run(agent=agent, run_id=suspended.run_id)
+            self.assertEqual(executions, [])
+            unclaimed = await run_store.load(suspended.run_id)
+            self.assertEqual(unclaimed.status, "suspended")  # type: ignore[union-attr]
+        finally:
+            model.generate = generate  # type: ignore[method-assign]
 
         resumed = await resume_agent_run(agent=agent, run_id=suspended.run_id)
 

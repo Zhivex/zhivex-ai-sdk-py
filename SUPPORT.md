@@ -121,7 +121,7 @@ Kimi/Moonshot is tier-1 for portable text generation, streaming, structured outp
 
 DeepSeek is tier-1 for portable text generation, streaming, JSON structured output, callable tools, and reasoning through Chat Completions. The catalog tracks current `deepseek-flash` (V4.1) and `deepseek-v4-pro`; retired `deepseek-chat` and `deepseek-reasoner` IDs fail before dispatch. The adapter preserves `reasoning_content` for tool replay, maps portable reasoning effort, retains provider-specific usage metadata, and routes strict tools or prefix completion to DeepSeek's beta base URL when requested. User-image vision is available on Flash V4.1 as a Beta SDK extension; files, embeddings, audio, moderation, and hosted tools are not claimed.
 
-vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains subject to the experimental realtime API stability level.
+vLLM is tier-1 for portable text, streaming, structured output/tools, embeddings, and transcription through the vLLM OpenAI-compatible server. Realtime ASR is exposed through `provider.native.realtime_model(...)` and remains a provider-native Experimental integration; the normalized runtime is Beta.
 
 Other providers remain available, but they should be treated according to the support matrix and the stability level of the specific feature area.
 
@@ -137,7 +137,7 @@ The catalog and offline tests cover GPT-6 Astra on OpenAI/Azure Responses, Claud
 
 ## Dependency compatibility update
 
-Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Normalized realtime APIs are Stable and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
 
 ## Stable local storage and reviewed catalogs
 

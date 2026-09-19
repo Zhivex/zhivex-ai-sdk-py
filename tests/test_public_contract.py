@@ -17,6 +17,56 @@ from zhivex_ai.workflows import __all__ as WORKFLOW_EXPORTS
 
 
 DOCUMENTED_STABLE_EXPORTS = {
+    "AgentCancellationToken",
+    "AgentCheckpointEvent",
+    "AgentDelegationFinishEvent",
+    "AgentDelegationStartEvent",
+    "AgentErrorEvent",
+    "AgentFinishEvent",
+    "AgentGuardrailEvent",
+    "AgentHandoffEvent",
+    "AgentHandoffFailedEvent",
+    "AgentHandoffRequestedEvent",
+    "AgentHandoffResolvedEvent",
+    "AgentLiveEvent",
+    "AgentRunStartEvent",
+    "AgentSkillArtifactCreatedEvent",
+    "AgentSkillDependencyCheckEvent",
+    "AgentSkillExecutionFinishEvent",
+    "AgentSkillExecutionStartEvent",
+    "AgentSkillResolvedEvent",
+    "AgentSummaryUpdateEvent",
+    "AgentTextDeltaEvent",
+    "AgentToolCallEvent",
+    "AgentToolResultEvent",
+    "AnyToolDefinition",
+    "AudioFrame",
+    "HostedToolClass",
+    "HostedToolDefinition",
+    "LiveAgentStreamResult",
+    "RealtimeAudioOutputEvent",
+    "RealtimeConnectOptions",
+    "RealtimeErrorEvent",
+    "RealtimeEvent",
+    "RealtimeGoAwayEvent",
+    "RealtimeModel",
+    "RealtimeResponseCompletedEvent",
+    "RealtimeSession",
+    "RealtimeSessionConfig",
+    "RealtimeSessionEndedEvent",
+    "RealtimeSessionResumptionEvent",
+    "RealtimeSessionStartedEvent",
+    "RealtimeTextDeltaEvent",
+    "RealtimeTokenResult",
+    "RealtimeToolCallEvent",
+    "RealtimeToolResultEvent",
+    "RealtimeTranscriptEvent",
+    "SkillArtifact",
+    "ToolChoiceName",
+    "ToolGuardrailStage",
+    "open_websocket_connection",
+    "stream_live_agent",
+
     "AgentCapabilities",
     "AgentMemoryState",
     "AgentSupportTier",
@@ -186,7 +236,7 @@ WORKFLOW_STABLE_EXPORTS = {
 }
 DOCUMENTED_STABLE_EXPORTS |= WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 
-COMPATIBILITY_ROOT_EXPORTS_SHA256 = "cd0492db34a342394b1b15cae5384c34d869eeec2289bbaa72ce6625c43863ae"
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "4821040f56026b228b1c6424ad9dc95a571525fd6a783a6af646d3aa1587cb5e"
 
 
 class PublicContractTests(TestCase):
@@ -297,9 +347,21 @@ class PublicContractTests(TestCase):
         self.assertIn("[STABILITY.md](./STABILITY.md)", changelog)
         self.assertIn("[VERSIONING.md](./VERSIONING.md)", changelog)
 
-    def test_readme_keeps_realtime_marked_as_experimental(self) -> None:
+    def test_readme_keeps_realtime_marked_as_stable(self) -> None:
         readme = (ROOT / "README.md").read_text("utf-8")
-        self.assertIn("Experimental realtime/live voice sessions plus `stream_live_agent()`", readme)
+        self.assertIn("Stable realtime/live voice sessions plus `stream_live_agent()`", readme)
+
+    def test_live_namespace_has_stable_contract_and_preserves_aliases(self) -> None:
+        from zhivex_ai import live
+        from zhivex_ai.api_stability import STABLE_EXPORTS
+        from zhivex_ai.experimental import realtime as legacy
+
+        self.assertIn("stream_live_agent", live.__all__)
+        for name in live.__all__:
+            with self.subTest(name=name):
+                self.assertIn(name, STABLE_EXPORTS)
+                self.assertIs(getattr(live, name), getattr(zhivex_ai, name))
+                self.assertIs(getattr(live, name), getattr(legacy, name))
 
     def test_beta_package_signal_is_consistent_in_metadata_and_docs(self) -> None:
         readme = (ROOT / "README.md").read_text("utf-8")

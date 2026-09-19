@@ -70,6 +70,42 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
+    def test_live_call_history_migration_preserves_real_signatures(self) -> None:
+        from zhivex_ai.providers.gemini import _gemini_realtime_parse_event, _map_part
+        from zhivex_ai.types import ToolCall, ToolCallPart
+        from zhivex_ai._serde import deserialize_messages, serialize_messages
+
+        for signature in (None, "actual-signature"):
+            wire_call = {"id": "call", "name": "lookup", "args": {}}
+            if signature is not None:
+                wire_call["thoughtSignature"] = signature
+            call = _gemini_realtime_parse_event({"toolCall": {"functionCalls": [wire_call]}})[0].tool_call
+            restored = deserialize_messages(serialize_messages([
+                ModelMessage(role="assistant", parts=[ToolCallPart(tool_call=call)]),
+            ]))
+            mapped = _map_part(restored[0].parts[0])
+            self.assertEqual(mapped["thoughtSignature"], signature or "skip_thought_signature_validator")
+        unsigned = _map_part(ToolCallPart(tool_call=ToolCall(id="other", name="lookup", input={})))
+        self.assertNotIn("thoughtSignature", unsigned)
+
+    async def test_denied_tool_result_serializes_slotted_error(self) -> None:
+        from zhivex_ai.types import ToolExecutionError, ToolExecutionResult, ToolResultPart
+
+        requests = []
+
+        async def fetch(url, **kwargs):
+            requests.append(kwargs["json_body"])
+            return FakeResponse(status_code=200, payload={"candidates": [{"content": {"parts": [{"text": "denied"}]}}]})
+
+        await generate_text(model=create_gemini(api_key="test", fetch=fetch)("test"), messages=[
+            ModelMessage(role="tool", parts=[ToolResultPart(tool_result=ToolExecutionResult(
+                tool_call_id="call", tool_name="lookup", is_error=True,
+                error=ToolExecutionError(message="Approval denied"),
+            ))]),
+        ])
+        response = requests[0]["contents"][0]["parts"][0]["functionResponse"]
+        self.assertEqual(response["response"]["content"], {"message": "Approval denied"})
+
     async def test_create_gemini_accepts_google_api_key_alias(self) -> None:
         requests: list[str] = []
 

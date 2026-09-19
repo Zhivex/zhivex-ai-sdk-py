@@ -116,6 +116,22 @@ class WeatherToolOutput(BaseModel):
 
 
 class OpenAIProviderTests(IsolatedAsyncioTestCase):
+    async def test_replayed_assistant_text_uses_output_content_type(self) -> None:
+        requests = []
+
+        async def fetch(url, **kwargs):
+            requests.append(kwargs["json_body"])
+            return FakeResponse(status_code=200, payload={"output": [
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]},
+            ]})
+
+        await generate_text(model=create_openai(api_key="test", fetch=fetch)("test"), messages=[
+            ModelMessage(role="user", parts=[TextPart(text="request")]),
+            ModelMessage(role="assistant", parts=[TextPart(text="Awaiting approval")]),
+            ModelMessage(role="user", parts=[TextPart(text="continue")]),
+        ])
+        self.assertEqual(requests[0]["input"][1]["content"], [{"type": "output_text", "text": "Awaiting approval"}])
+
     async def test_openai_maps_responses_request(self) -> None:
         requests: list[dict[str, Any]] = []
 

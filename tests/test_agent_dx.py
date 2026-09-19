@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any, Literal
 from unittest import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
@@ -19,8 +21,10 @@ from zhivex_ai import (
     ToolDefinition,
     ToolExecutionContext,
     create_in_memory_agent_run_store,
+    create_sqlite_agent_run_store,
     create_text_message,
     handoff_to,
+    resume_agent_run,
     run_agent,
     stream_agent,
 )
@@ -117,6 +121,23 @@ class HandoffModel(JsonModel):
             text="delegated",
             finish_reason="stop",
         )
+
+
+class HandoffApprovalModel(JsonModel):
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        if not any(
+            part.type == "tool-result" and part.tool_result.tool_name == "lookup"
+            for message in input.messages
+            for part in message.parts
+        ):
+            self.inputs.append(input)
+            return GenerateResult(
+                messages=[ModelMessage(role="assistant", parts=[ToolCallPart(
+                    tool_call=ToolCall(id="lookup_1", name="lookup", input={}),
+                )])],
+                finish_reason="tool-calls",
+            )
+        return await super().generate(input)
 
 
 @dataclass
@@ -337,6 +358,113 @@ class AgentDxTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.output, Answer(answer="from-child", confidence=0.9))
         self.assertEqual(result.agent_name, "child")
         self.assertEqual(child_model.inputs[0].structured_output.schema, Answer)  # type: ignore[union-attr]
+
+    async def test_approval_resume_preserves_root_output_contract_after_handoff(self) -> None:
+        modes: tuple[Literal["native", "prompted"], ...] = ("native", "prompted")
+        for mode in modes:
+            for approved in (True, False):
+                with self.subTest(mode=mode, approved=approved):
+                    executions: list[str] = []
+
+                    def lookup(_input: Any) -> dict[str, bool]:
+                        executions.append("lookup")
+                        return {"ok": True}
+
+                    model = HandoffApprovalModel('{"answer":"resumed","confidence":0.9}')
+                    child = Agent(
+                        name="child", model=model, output_type=OtherAnswer,
+                        tools={"lookup": ToolDefinition(
+                            name="lookup", description="Lookup", schema={"type": "object"},
+                            execute=lookup, requires_approval=True,
+                        )},
+                        approval_policy=lambda _request: ApprovalDecision.require_human("review"),
+                    )
+                    root = Agent(
+                        name="root", model=HandoffModel("unused"),
+                        output_type=Answer, output_mode=mode,
+                        output_name="root_answer", output_description="Root decision",
+                        run_store=create_in_memory_agent_run_store(), subagents={"child": child},
+                        tools={"delegate": ToolDefinition(
+                            name="delegate", description="Delegate", schema={"type": "object"},
+                            execute=lambda _input: handoff_to("child"),
+                        )},
+                    )
+                    suspended = await run_agent(agent=root, prompt="Delegate")
+                    self.assertEqual(suspended.state.status, "suspended")  # type: ignore[union-attr]
+                    self.assertEqual(executions, [])
+                    resumed = await resume_agent_run(agent=root, run_id=suspended.run_id, approved=approved)
+                    self.assertEqual(resumed.output, Answer(answer="resumed", confidence=0.9))
+                    self.assertEqual(resumed.agent_name, "child")
+                    self.assertEqual(executions, ["lookup"] if approved else [])
+                    self.assertIs(child.output_type, OtherAnswer)
+                    request = model.inputs[-1]
+                    if mode == "native":
+                        self.assertIsNotNone(request.structured_output)
+                        self.assertIs(request.structured_output.schema, Answer)  # type: ignore[union-attr]
+                        self.assertEqual(request.structured_output.name, "root_answer")  # type: ignore[union-attr]
+                        self.assertEqual(request.structured_output.description, "Root decision")  # type: ignore[union-attr]
+                    else:
+                        self.assertIsNone(request.structured_output)
+                        instructions = str(request.messages)
+                        self.assertIn("root_answer", instructions)
+                        self.assertIn("Root decision", instructions)
+
+    async def test_approval_resume_rejects_invalid_root_output_after_handoff(self) -> None:
+        store = create_in_memory_agent_run_store()
+        child = Agent(
+            name="child", model=HandoffApprovalModel("not valid JSON"),
+            tools={"lookup": ToolDefinition(
+                name="lookup", description="Lookup", schema={"type": "object"},
+                execute=lambda _input: {"ok": True}, requires_approval=True,
+            )},
+            approval_policy=lambda _request: ApprovalDecision.require_human("review"),
+        )
+        root = Agent(
+            name="root", model=HandoffModel("unused"), output_type=Answer,
+            run_store=store, subagents={"child": child},
+            tools={"delegate": ToolDefinition(
+                name="delegate", description="Delegate", schema={"type": "object"},
+                execute=lambda _input: handoff_to("child"),
+            )},
+        )
+        suspended = await run_agent(agent=root, prompt="Delegate")
+        with self.assertRaises(ParseError):
+            await resume_agent_run(agent=root, run_id=suspended.run_id)
+        state = await store.load(suspended.run_id)
+        self.assertEqual(state.status, "failed")  # type: ignore[union-attr]
+
+    async def test_approval_resume_preserves_output_after_reopening_sqlite(self) -> None:
+        for typed in (True, False):
+            with self.subTest(typed=typed), TemporaryDirectory() as directory:
+                path = str(Path(directory) / "runs.sqlite3")
+                text = '{"answer":"restored","confidence":0.8}' if typed else "plain answer"
+                child = Agent(
+                    name="child", model=HandoffApprovalModel(text), output_type=OtherAnswer,
+                    tools={"lookup": ToolDefinition(
+                        name="lookup", description="Lookup", schema={"type": "object"},
+                        execute=lambda _input: {"ok": True}, requires_approval=True,
+                    )},
+                    approval_policy=lambda _request: ApprovalDecision.require_human("review"),
+                )
+                root = Agent(
+                    name="root", model=HandoffModel("unused"), output_type=Answer if typed else None,
+                    run_store=create_sqlite_agent_run_store(path), subagents={"child": child},
+                    tools={"delegate": ToolDefinition(
+                        name="delegate", description="Delegate", schema={"type": "object"},
+                        execute=lambda _input: handoff_to("child"),
+                    )},
+                )
+                suspended = await run_agent(agent=root, prompt="Delegate")
+                restored = replace(
+                    root, run_store=create_sqlite_agent_run_store(path),
+                    subagents={"child": replace(child, model=HandoffApprovalModel(text))},
+                )
+                resumed = await resume_agent_run(agent=restored, run_id=suspended.run_id)
+                expected = Answer(answer="restored", confidence=0.8) if typed else text
+                self.assertEqual(resumed.output, expected)
+                self.assertEqual(resumed.state.status, "completed")  # type: ignore[union-attr]
+                parent = await restored.run_store.load(suspended.run_id)  # type: ignore[union-attr]
+                self.assertEqual(parent.status, "completed")  # type: ignore[union-attr]
 
     async def test_idempotent_reuse_rehydrates_typed_output(self) -> None:
         model = JsonModel('{"answer":"cached","confidence":0.8}')

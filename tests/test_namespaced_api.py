@@ -4,8 +4,9 @@ import unittest
 from types import ModuleType
 
 import zhivex_ai
-from zhivex_ai import evals, experimental, integrations, workflows
-from zhivex_ai.api_stability import EXPERIMENTAL_EXPORTS
+from zhivex_ai import evals, experimental, integrations, live, workflows
+
+from zhivex_ai.api_stability import EXPERIMENTAL_EXPORTS, STABLE_EXPORTS
 from zhivex_ai.experimental import providers as experimental_providers
 from zhivex_ai.experimental import realtime as experimental_realtime
 from zhivex_ai.integrations import protocols as integration_protocols
@@ -71,8 +72,9 @@ class NamespacedApiTests(unittest.TestCase):
         )
 
     def test_experimental_namespace_matches_the_stability_manifest(self) -> None:
-        self.assertEqual(set(experimental.__all__), set(EXPERIMENTAL_EXPORTS))
-        for name in EXPERIMENTAL_EXPORTS:
+        self.assertEqual(set(experimental.__all__), set(EXPERIMENTAL_EXPORTS) | set(live.__all__))
+        self.assertTrue(set(live.__all__).issubset(STABLE_EXPORTS))
+        for name in experimental.__all__:
             self.assertIs(getattr(experimental, name), getattr(zhivex_ai, name))
 
         self.assertEqual(
@@ -88,12 +90,12 @@ class NamespacedApiTests(unittest.TestCase):
         )
         self.assertEqual(
             set(experimental_realtime.__all__),
-            set(EXPERIMENTAL_EXPORTS) - set(experimental_providers.__all__),
+            set(live.__all__),
         )
 
     def test_namespaces_do_not_expand_the_legacy_root_wildcard_contract(self) -> None:
         self.assertTrue(
-            {"evals", "experimental", "integrations", "workflows"}.isdisjoint(
+            {"evals", "experimental", "integrations", "live", "workflows"}.isdisjoint(
                 zhivex_ai.__all__
             )
         )
@@ -108,6 +110,7 @@ class NamespacedApiTests(unittest.TestCase):
             experimental,
             experimental_providers,
             experimental_realtime,
+            live,
         ):
             self.assertIsNotNone(namespace.__doc__)
             self.assertTrue(namespace.__doc__.strip())
@@ -115,3 +118,10 @@ class NamespacedApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_all_normalized_realtime_event_variants_have_public_imports():
+    from typing import get_args
+
+    for event_type in get_args(live.RealtimeEvent):
+        assert getattr(live, event_type.__name__) is event_type

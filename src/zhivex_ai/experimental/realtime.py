@@ -1,4 +1,4 @@
-"""Experimental realtime and live-agent APIs.
+"""Compatibility aliases for the Stable zhivex_ai.live APIs.
 
 All objects are compatibility re-exports of the existing public contracts.
 """
@@ -18,6 +18,8 @@ from ..types import (
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
     RealtimeSessionStartedEvent,
+    RealtimeSessionResumptionEvent,
+    RealtimeGoAwayEvent,
     RealtimeTextDeltaEvent,
     RealtimeTokenResult,
     RealtimeToolCallEvent,
@@ -38,6 +40,8 @@ __all__ = [
     "RealtimeSessionConfig",
     "RealtimeSessionEndedEvent",
     "RealtimeSessionStartedEvent",
+    "RealtimeSessionResumptionEvent",
+    "RealtimeGoAwayEvent",
     "RealtimeTextDeltaEvent",
     "RealtimeTokenResult",
     "RealtimeToolCallEvent",

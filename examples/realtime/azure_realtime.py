@@ -1,7 +1,7 @@
 import asyncio
 
 from zhivex_ai import create_azure_openai
-from zhivex_ai.experimental import (
+from zhivex_ai.live import (
     RealtimeAudioOutputEvent,
     RealtimeResponseCompletedEvent,
     RealtimeSessionConfig,

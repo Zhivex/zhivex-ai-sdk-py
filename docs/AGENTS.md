@@ -20,9 +20,10 @@ The stable core is:
 - session helpers such as `create_agent_session(...)` and `load_agent_session(...)`
 - portable skills and MCP discovery/registry helpers
 - Postgres memory, checkpoint, and run stores
+- Local InMemory/SQLite agent stores within the [local storage guarantees](./agents/durable-state.md#local-storage-guarantees)
 - run-state serialization, cancellation tree, replay, run-snapshot helpers, and durable pending approvals
 
-Stable workflow orchestration—including declarative agents, durable graphs, checkpoint stores, leases, migration, functional steps, resume/fork/cancel, and the generic callback envelope—is documented in [WORKFLOWS.md](./WORKFLOWS.md). The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, in-memory/SQLite agent stores, packaged skills, named external workflow-engine adapter factories, and UI approval chunks. Live/realtime agent APIs are experimental.
+Stable workflow orchestration—including declarative agents, durable graphs, checkpoint stores, leases, migration, functional steps, resume/fork/cancel, and the generic callback envelope—is documented in [WORKFLOWS.md](./WORKFLOWS.md). The beta layer includes native subagent tools such as `create_subagent_tool(...)`, checkpoint events, evaluation reports, trace artifacts, safety policies, provider-managed approvals, packaged skills, named external workflow-engine adapter factories, and UI approval chunks. Normalized live/realtime agent APIs are Stable under `zhivex_ai.live`; see [their guarantees and limitations](./agents/live-realtime.md).
 
 ## Minimal Tool-Using Agent
 
@@ -127,11 +128,11 @@ Instructions may be a string or a sync/async callable accepting `AgentContext`; 
 
 `output_mode="auto"` selects native structured output when the current model advertises it and a prompted JSON Schema fallback otherwise. Set `"native"` to fail closed on models without native support, or `"prompted"` to force the fallback. Output guardrails run before parsing. Invalid JSON or schema values fail the run; suspended and stopped-on-handoff results have `output=None`. Raw `result.text` remains available.
 
-The root agent owns the output contract for the full run. A terminal agent reached through direct handoff is instructed and validated against the root `output_type`. All direct-handoff agents share the same dependency type for that run. A native subagent invoked as a tool starts a child run whose own agent defines its output contract.
+The root agent owns the output contract for the full run. A terminal agent reached through direct handoff is instructed and validated against the root `output_type`. Pass that same root agent to `resume_agent_run(...)` after an approval suspension; its `output_type`, `output_mode`, `output_name`, and `output_description` also govern the continuation. All direct-handoff agents share the same dependency type for that run. A native subagent invoked as a tool starts a child run whose own agent defines its output contract.
 
 Dependencies are process-local capabilities and may contain clients or credentials. The runtime excludes them from reprs, serialized tool contexts, checkpoints, traces, metadata, and `AgentRunState`. Supply `deps=` again to `resume_agent(...)` or `resume_agent_run(...)`; do not use dependencies as durable state.
 
-`stream_agent(...).collect()` returns the same typed `AgentRunResult`. Experimental realtime agents use prompted typed output and reject `output_mode="native"`.
+`stream_agent(...).collect()` returns the same typed `AgentRunResult`. Stable realtime agents use prompted typed output and reject `output_mode="native"`.
 
 ## Lifecycle Hooks And Run Middleware
 
@@ -257,6 +258,6 @@ Replay helpers analyze stored `AgentRunState`; they do not re-execute providers.
 
 Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress.
 
-Experimental `stream_live_agent(...)` now uses the same run-store idempotency, middleware, tool timeout, pending-approval suspension/resume, terminal-state, and cancellation boundaries where the realtime transport permits them. Realtime remains Experimental: isolate it behind an application service boundary, use a durable run store for approval/recovery, and validate the exact provider/model session behavior live.
+Stable `stream_live_agent(...)` now uses the same run-store idempotency, middleware, tool timeout, pending-approval suspension/resume, terminal-state, and cancellation boundaries where the realtime transport permits them. The normalized runtime is Stable: use a durable run store for approval/recovery, and validate the exact provider/model session behavior live.
 
 If an application-supplied event callback raises, the runtime raises `AgentEventDeliveryError`. Check `durable_state_committed`: `False` means the run was persisted as failed before model execution continued; `True` means the terminal run state already won and must not be rewritten merely because delivery failed. Reconcile the event sink by `run_id` instead of retrying the agent action blindly.

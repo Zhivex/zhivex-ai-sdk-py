@@ -164,6 +164,7 @@ files = [
   "src/zhivex_ai/protocols.py",
   "src/zhivex_ai/observability.py",
   "src/zhivex_ai/realtime.py",
+  "src/zhivex_ai/live.py",
   "src/zhivex_ai/responses_host.py",
   "src/zhivex_ai/runtime.py",
   "src/zhivex_ai/safety.py",

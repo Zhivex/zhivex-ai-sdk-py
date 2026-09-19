@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class DocsOnboardingTests(TestCase):
     def test_examples_use_only_documented_public_namespaces(self) -> None:
         focused_namespaces = {
+            "zhivex_ai.live",
             "zhivex_ai.evals",
             "zhivex_ai.experimental",
             "zhivex_ai.experimental.providers",

@@ -163,7 +163,7 @@ These capabilities are available but are not part of the minimum agent journey:
 - Beta evaluation experiments and CI gates: [EVALUATIONS.md](./EVALUATIONS.md)
 - Beta A2A, AG-UI, and Responses-compatible hosting: [PROTOCOLS.md](./PROTOCOLS.md)
 - Beta general CLI and loopback playground: [CLI.md](./CLI.md)
-- Experimental realtime/live agents: see the stability classification in [../STABILITY.md](../STABILITY.md)
+- Stable realtime/live agents: use `zhivex_ai.live` and read the [runtime contract](agents/live-realtime.md)
 
 Use the focused imports `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.integrations`, and `zhivex_ai.experimental` for these surfaces. Existing top-level imports remain compatible, but new extension code should make its dependency boundary explicit.
 

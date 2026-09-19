@@ -80,9 +80,11 @@ from .types import (
     ReasoningConfig,
     RemoteHTTPToolConfig,
     RealtimeConnectOptions,
+    RealtimeAudioOutputEvent,
     RealtimeEvent,
     RealtimeModel,
     RealtimeResponseCompletedEvent,
+    RealtimeErrorEvent,
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
     RealtimeTextDeltaEvent,
@@ -4356,10 +4358,10 @@ class LiveAgentStreamResult(OwnedStream[AgentRunResult[AgentOutputT]]):
         return self._broadcast.stream()
 
     async def send_audio(self, frame: AudioFrame) -> None:
-        await (await self._live_session).send_audio(frame)
+        await (await asyncio.shield(self._live_session)).send_audio(frame)
 
     async def send_text(self, text: str) -> None:
-        await (await self._live_session).send_text(text)
+        await (await asyncio.shield(self._live_session)).send_text(text)
 
     async def update(
         self,
@@ -4371,7 +4373,7 @@ class LiveAgentStreamResult(OwnedStream[AgentRunResult[AgentOutputT]]):
         turn_detection: dict[str, Any] | None = None,
         provider_options: dict[str, Any] | None = None,
     ) -> None:
-        await (await self._live_session).update(
+        await (await asyncio.shield(self._live_session)).update(
             instructions=instructions,
             voice=voice,
             tools=tools,
@@ -4987,7 +4989,22 @@ def resume_agent_run(
             raise ValidationError(
                 f'Agent "{loaded_state.agent_name}" that suspended run "{run_id}" is not registered for resume.'
             )
-        resume_agent_instance = replace(approval_agent, run_store=run_store)
+        # Continue with the suspended agent's tools and instructions, while the
+        # caller's root agent still owns the output contract across handoffs.
+        resume_agent_instance = replace(
+            approval_agent,
+            run_store=run_store,
+            output_type=agent.output_type,
+            output_mode=agent.output_mode,
+            output_name=agent.output_name,
+            output_description=agent.output_description,
+        )
+        if not callable(getattr(resume_agent_instance.model, "generate", None)):
+            raise ValidationError(
+                "resume_agent_run(...) requires a language model with generate(). "
+                "For a suspended realtime run, reconstruct the agent with a compatible "
+                "language model and the same tools and run store before approving."
+            )
         if approved:
             _validate_resolved_approval_tool(agent=resume_agent_instance, pending=selected_pending, tools=tools)
         claim_pending_approval = getattr(run_store, "claim_pending_approval", None)
@@ -5243,9 +5260,9 @@ def stream_live_agent(
     resolved_runtime = runtime or AgentRuntime(registry=registry, observer=observer)
     broadcast = Broadcast[AgentLiveEvent](max_events=stream_buffer_size)
     live_session_future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-
-    async def emit_agent(event: AgentEvent) -> None:
-        await broadcast.publish(event)
+    # collect() callers may never send input; retrieve failures without consuming
+    # their availability to callers awaiting the connection future.
+    live_session_future.add_done_callback(lambda future: None if future.cancelled() else future.exception())
 
     async def emit_live(event: RealtimeEvent) -> None:
         await broadcast.publish(event)
@@ -5280,6 +5297,11 @@ def stream_live_agent(
             started_at_ms=started_at_ms,
             orchestration_path=[live_agent.name],
         )
+
+        async def emit_agent(event: AgentEvent) -> None:
+            trace.events.append(event)
+            await broadcast.publish(event)
+
         initial_state = AgentRunState(
             run_id=run_id,
             agent_name=live_agent.name,
@@ -5506,17 +5528,30 @@ def stream_live_agent(
                     text = _text_from_message(message)
                     if message.role == "user" and text:
                         await await_boundary(live_session.send_text(text))
+                        transcript.append(create_text_message("user", text))
             elif guarded_input.prompt is not None:
                 await await_boundary(live_session.send_text(guarded_input.prompt))
+                transcript.append(create_text_message("user", guarded_input.prompt))
 
             event_iterator = live_session.event_stream().__aiter__()
             buffer_realtime_output = bool(live_agent.output_guardrails)
+            seen_tool_calls: dict[str, ToolCall] = {}
+            awaiting_tool_response = False
+            transcript_buffer: list[str] = []
+            completed_response_steps = 0
             while True:
                 try:
                     event = await await_boundary(event_iterator.__anext__())
                 except StopAsyncIteration:
-                    break
+                    raise RuntimeError("Realtime stream ended before response completion.") from None
                 await check_cancelled()
+                if isinstance(event, RealtimeErrorEvent):
+                    raise RuntimeError("Realtime provider reported an error.") from event.error
+                if isinstance(event, RealtimeToolResultEvent):
+                    # Tool results are emitted once by the runtime after delivery.
+                    continue
+                if isinstance(event, RealtimeAudioOutputEvent) and event.audio:
+                    awaiting_tool_response = False
                 contains_unredacted_assistant_text = buffer_realtime_output and (
                     isinstance(event, RealtimeTextDeltaEvent)
                     or (isinstance(event, RealtimeTranscriptEvent) and event.role == "assistant")
@@ -5524,11 +5559,17 @@ def stream_live_agent(
                 if not contains_unredacted_assistant_text:
                     await emit_live(event)
                 if isinstance(event, RealtimeTextDeltaEvent):
+                    if event.text_delta:
+                        awaiting_tool_response = False
                     assistant_buffer.append(event.text_delta)
                     if not buffer_realtime_output:
                         await emit_agent(AgentTextDeltaEvent(text_delta=event.text_delta))
                     continue
                 if isinstance(event, RealtimeTranscriptEvent):
+                    if event.role == "assistant" and event.text:
+                        awaiting_tool_response = False
+                        if not event.is_final:
+                            transcript_buffer.append(event.text)
                     if event.role == "user" and event.is_final and event.text:
                         transcript.append(create_text_message("user", event.text))
                     if event.role == "assistant" and event.is_final:
@@ -5537,8 +5578,18 @@ def stream_live_agent(
                             last_assistant_text = text
                             transcript.append(create_text_message("assistant", text))
                             assistant_buffer.clear()
+                            transcript_buffer.clear()
                     continue
                 if isinstance(event, RealtimeToolCallEvent):
+                    previous_call = seen_tool_calls.get(event.tool_call.id)
+                    if previous_call is not None:
+                        if previous_call != event.tool_call:
+                            raise ValidationError("Realtime tool call ID was reused with different arguments.")
+                        continue
+                    if not event.tool_call.id:
+                        raise ValidationError("Realtime tool calls require a non-empty ID.")
+                    seen_tool_calls[event.tool_call.id] = event.tool_call
+                    awaiting_tool_response = True
                     await emit_agent(AgentToolCallEvent(tool_call=event.tool_call))
                     definition = wrapped_tools.get(event.tool_call.name) if wrapped_tools else None
                     if definition is None or not is_callable_tool_definition(definition) or definition.execute is None:
@@ -5592,12 +5643,24 @@ def stream_live_agent(
                     await emit_live(RealtimeToolResultEvent(tool_result=tool_result))
                     continue
                 if isinstance(event, RealtimeSessionEndedEvent):
-                    if event.reason == "error":
-                        raise RuntimeError("Realtime session ended with an error.")
-                    break
+                    raise RuntimeError("Realtime session ended before response completion.")
                 if isinstance(event, RealtimeResponseCompletedEvent):
+                    if event.reason == "generation-complete":
+                        continue
+                    if event.reason in {"failed", "cancelled", "incomplete", "error"}:
+                        raise RuntimeError("Realtime response did not complete successfully.")
+                    completed_response_steps += 1
+                    if event.reason == "tool-calls" or awaiting_tool_response:
+                        if (
+                            live_agent.run_limits.max_steps is not None
+                            and completed_response_steps >= live_agent.run_limits.max_steps
+                        ):
+                            raise RuntimeError(f'Agent exceeded max steps ({live_agent.run_limits.max_steps}).')
+                        continue
                     break
-            if assistant_buffer and not last_assistant_text:
+            if transcript_buffer and not assistant_buffer:
+                assistant_buffer = transcript_buffer
+            if assistant_buffer:
                 last_assistant_text = "".join(assistant_buffer)
                 if last_assistant_text:
                     transcript.append(create_text_message("assistant", last_assistant_text))
