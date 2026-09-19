@@ -190,3 +190,7 @@ The Stable realtime namespace also exports `RealtimeSessionResumptionEvent` and
 `RealtimeGoAwayEvent`, with root compatibility aliases. These data contracts were
 already members of `RealtimeEvent`; explicit exports make every emitted variant
 importable. A resumption notification is not automatic reconnection support.
+
+## GPT-Live WebSocket promotion candidate
+
+The `/live/sessions` WebSocket subset now includes validated audio/context helpers and durable Agent client delegation, with bounded sends, cleanup and single-reader enforcement. Its Stable promotion is pending protected exact-artifact certification of this change. WebRTC creation/fork, recording downloads, SIP, Responses-managed delegation and automatic reconnect retain their separate Experimental classification. See [the exact contract](docs/agents/gpt-live.md). No root exports change.

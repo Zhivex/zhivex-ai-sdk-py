@@ -2015,3 +2015,5 @@ Release candidate `0.25.0` adds the September provider refresh and native sessio
 Realtime event consumers can import every normalized event variant from
 `zhivex_ai.live`, including `RealtimeGoAwayEvent` and
 `RealtimeSessionResumptionEvent`; these notifications are Stable.
+
+GPT-Live `gpt-live-1` uses a separate native WebSocket path with durable Agent client delegation. See the [GPT-Live contract and certification scope](docs/agents/gpt-live.md); it is not an alias for `realtime_model()`.

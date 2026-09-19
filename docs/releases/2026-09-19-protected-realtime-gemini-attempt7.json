@@ -1,0 +1,703 @@
+{
+  "schema_version": 1,
+  "kind": "local-live-runtime-evidence",
+  "release_certified": false,
+  "created_at": "2026-09-19T12:22:29.840086+00:00",
+  "provider": "gemini",
+  "requested_model": "gemini-3.8-live",
+  "wheel_sha256": "9e8a15280cc832201135673615412503a62f645500355925de254ea58e01b163",
+  "package_version": "0.25.0",
+  "runner_sha256": "fafa6bc6d97783b78a32170b3b39456a494a62787f80358bf859b3801c1df117",
+  "recovery_tool_sha256": "183b474f414a90ffe60aad2bd9e1aec69218d7aaf256bf74764feaffd945182f",
+  "recovery_runner_sha256": "a62387117d2e89e3b83c4b170e03224207d006e95c9ffdb338b0c24e65e44307",
+  "source_manifest": {
+    "zhivex_ai/__init__.py": "d77c61f6ac73ca923c4a6c14634b0dda9799d17cfe6cf1c362af6c4c233e9c9c",
+    "zhivex_ai/_agent_persistence.py": "475c1bf67cb67b61fddb933f9983424f549eb9423c16fa0baa6048b1afb2eb8f",
+    "zhivex_ai/_http.py": "94d00a696425c94f4201ac9c507f0a3170e29548f6f78279b8dede22f77798dc",
+    "zhivex_ai/_scaffold.py": "a2555dff9eaa9b785e05a7eb59172e4864609a4f9b89510d8d302744a2f515cf",
+    "zhivex_ai/_serde.py": "1dee0756fc7127fad758639becdd8bb81352b3fa3656ba788620da0643fdcf74",
+    "zhivex_ai/_sse.py": "728f0e936351392a440ec8f85fa1a1171831710514e17b87c4f748117a270abd",
+    "zhivex_ai/_streaming.py": "9ab2bdb577f4d811367aeea0b0f0a6bf1f29bae4bc84f72ab34e6af6a1983000",
+    "zhivex_ai/agent.py": "197cad5ddfa88f1232e2224510522ab69d094067e15ebc3f76acd20e129c422d",
+    "zhivex_ai/agent_evaluation.py": "1b2d813be2dadc676bedfa971f6fca4a2329616eb8c63ebd370c1319053b9583",
+    "zhivex_ai/agent_state.py": "30ba44e212101f68a5185969f9fd4c5a7cb51fd5363b0f3874224e216557d14a",
+    "zhivex_ai/api_stability.py": "dcd335124c4c3f194975a372bcbf16bc04a3adcd8029ef886b6ddd6780ee71ed",
+    "zhivex_ai/audio.py": "073cf8617175544bc931498309bfe72a5ec81cd5bf9341d97d21d4e4f25d38d8",
+    "zhivex_ai/catalog.py": "ee091a4a6086f24f5dc52db03957add22a0ad7ee900f95072e531caeb3be8298",
+    "zhivex_ai/cli.py": "7bde93e6424df70fd75ce90352941993869464843bf2f57a291a6259dffb6f36",
+    "zhivex_ai/embed.py": "3df9eb910c8aa41601f262e709621f62e112ca36181bba9b0fd156a9660b9872",
+    "zhivex_ai/errors.py": "8aa8292659ecb20b11e6b0923b90bd65b355cedf1093f75b267d3c7eb056ddd1",
+    "zhivex_ai/evals.py": "630487ebd883bdeaf9d894db54d332edfbab0ffcf4f92f541b34165d2e42136d",
+    "zhivex_ai/gateway.py": "32a9d42f5a4ae2913dafe8b428df78f11c60e46aa79e77162aa3197edb0a0532",
+    "zhivex_ai/generate_object.py": "6bf3f4519114969ed4594caeab3491810610170272dd76237b98c182e541f1b8",
+    "zhivex_ai/generate_text.py": "1ed3a21f4968a16349f8441aaef6a7fb26dc1c83d4878a93a40776cbe717396d",
+    "zhivex_ai/grounded_text.py": "42beb4c112c71b46b9db87f560f49834e5c8ccfe945ca7b0b2a9b604eb0d7540",
+    "zhivex_ai/live.py": "49d9bfead98f8ba9f1c777c1fa80c39d5a353ca755a92d83c0f7a038ea7e18a4",
+    "zhivex_ai/messages.py": "4efe16b017af7680a2c9e080913b9123ce1310a0f41e3956bba115535c813785",
+    "zhivex_ai/middleware.py": "ede167afde62f42807693c94e52729d1f439d6d866f0a55cedfdfa56587b39c6",
+    "zhivex_ai/observability.py": "e2dd52d5cc6cf6b33e1274a5dadfd339e4b15d06ffd5ebdfcea4b1ce9fe92f1c",
+    "zhivex_ai/protocols.py": "f37569fec11a09e367dc6842f123cec0245060d36d882316cfa8637f36b2d584",
+    "zhivex_ai/provider_support.py": "ec632baf9dd5b1b457de267b650bf7d19e5f045f6dfc16b4f710c8fd230cbcf5",
+    "zhivex_ai/realtime.py": "d23d1692794b90368508e495e56c3833cee51ddf9d7ba0122cdb08fe751b1c6e",
+    "zhivex_ai/responses_host.py": "0fe9f05d59a95ae963da169b6cd1a3e52ec2ac4c2c02dc8691d9036f47b3c942",
+    "zhivex_ai/runtime.py": "0f8e53bf659ff7ebf59fb0298d1ef06dffbb1d06356f94a1d63ada88cd016ba6",
+    "zhivex_ai/safety.py": "5855e8c7bfe10eaeda3fb74fbe72de49722e9752ce1f0c81f3b8ed1d825cd97c",
+    "zhivex_ai/schema.py": "967ac657c6ffc3fb03a6338c5713dd7a52a6449dc5e76d17fa1d86e6c8ec9507",
+    "zhivex_ai/skill_cli.py": "8668ad81581df3d89519b4001e7bceca90f0e51b659f0d2e17c949af0c771f7d",
+    "zhivex_ai/skillpacks.py": "38f0ff1cade24a9dfd84783f7cf03b607fe98075a680fc36f11f42c765ac58f7",
+    "zhivex_ai/skills.py": "d651e2cc05ad82baa900823ad938db002f7c39f70475c0f5635aa677625fa74b",
+    "zhivex_ai/transport.py": "16f731770ace87e3f32c7d7ffb244fc93a537eae3b7bbb33d4d41fc2ae01ec0a",
+    "zhivex_ai/types.py": "b679f76e03ea0f9dbae218cb8ec7123917d9f21cb7f1321e8d31f150e86fed01",
+    "zhivex_ai/ui.py": "870b6d14da19ce23f3e5fd00ea378c09e2094f52daa832f15479704015eb8888",
+    "zhivex_ai/workflow.py": "010e2928ce3a62c6aee0b6742f88a5f948a61deac403e83ab4971d038f9489f0",
+    "zhivex_ai/workflow_adapters.py": "3ae2d0dd6f52480e15cebfb2392edfceb6777061d451f5f4bc291321cbe72fbf",
+    "zhivex_ai/workflow_graph.py": "823def758d7a7d759a856e59eb1bba2415c51f35aac82b35ff27ac48c44a9be1",
+    "zhivex_ai/workflow_state.py": "ea3dc0b0f31927b4f8a1564a7be198ba83a0d3fcbe13fe5f434a0ef3257d1021",
+    "zhivex_ai/workflows.py": "c3e91de34ae922292ec144aa87eb47e07a1cc0127a9399a8f048d336cbcf9019",
+    "zhivex_ai/experimental/__init__.py": "6c8c521be1199eee21041592164340f7b2d072d07656e7d4bc9e8476a5b4aa1e",
+    "zhivex_ai/experimental/providers.py": "59e24d7bafa091ec8793eebb16721545a19829b76d1745442189d8bf0f0a4879",
+    "zhivex_ai/experimental/realtime.py": "4a256df01bf64ce922aba887f3736b90aa8457de0fbd670861cf378709638437",
+    "zhivex_ai/integrations/__init__.py": "1a7cfffbf4a71df63179d940dc32a4da66ab38ab5cf5318470eb5d23550da7f4",
+    "zhivex_ai/integrations/protocols.py": "047f60d590f3efc9c7e2f66ef5591e7159febfa74de4d706e460822638fc9973",
+    "zhivex_ai/integrations/responses.py": "99a8a14f3bf1ea4d82e91f5c9a63db2ba0c7576b3531b23ad0bfdb387a5ec4d1",
+    "zhivex_ai/official_skills/__init__.py": "49ac21e6e0a25081f6874dd48f85a46ca63673ec9a7f1af00e1418b85a7a2d9a",
+    "zhivex_ai/official_skills/docx/scripts/analyze_docx.py": "f1c59818c54cf54ddd131c88e1ca467685f7cba98b36352c501f48f8c655c3dc",
+    "zhivex_ai/official_skills/docx/scripts/create_docx.py": "7e14f4b45998ea31fa9eead8d6777c066b70702ed34c4a68c133ed3ec1a9e357",
+    "zhivex_ai/official_skills/docx/scripts/edit_docx.py": "f9eb6b5fe646398004affaa75e25cfdf9a20b1405811db18d27fb464693b2c4f",
+    "zhivex_ai/providers/__init__.py": "8638c7df32641442ddbc96b49d5a964fde13788dc4bd6b683631702aa0f0a867",
+    "zhivex_ai/providers/_native_sessions.py": "fd39bd9bab3e43911c2ef991f7f7ee77d34cec720dcb4c9cb2c7443204d3ee85",
+    "zhivex_ai/providers/_openai_responses_normalization.py": "ad76a2d9d1f8236e187ff01eadbd97035a8483a75bdb5598907e15089b3b874a",
+    "zhivex_ai/providers/_payload.py": "437d406684f26e41c81fed674f3e60cc84bf72f72853c0b0194afde7fc563a0c",
+    "zhivex_ai/providers/_qwen_omni.py": "75db0e142b80968d42f385f6e79c25f98cac3ec26cdf9d4f66700de6f44b5f02",
+    "zhivex_ai/providers/_url_security.py": "a46151b9270b3797f9a80f340a3aa0026e51ecebb32e4b96e491a455be6d979c",
+    "zhivex_ai/providers/anthropic.py": "52541c616ff6d15ce4e3b335197561b686eaa5c79b26d285cd03bcce1d7d4c3e",
+    "zhivex_ai/providers/azure_openai.py": "8ac62b78b7583c1371baaecacb299c8b74e794d852f90c687d69e714723c2419",
+    "zhivex_ai/providers/base.py": "8752e6011f2e52a386eabf6a012f33b9bdf8503a47478cb27b0ab5dcf1de1e40",
+    "zhivex_ai/providers/bedrock.py": "eb3d236febbd3b3dad989a2f88271ca93f7664d4b3ce9ee85ca377dccddd8417",
+    "zhivex_ai/providers/deepseek.py": "b9f1949926729f8776e38cc86a9239081cfb8a8f664c42a70f190a6df2bac277",
+    "zhivex_ai/providers/gemini.py": "b23a551e5955d371c741e26c6633587e92c691ffb15e532a73fb059123c81035",
+    "zhivex_ai/providers/kimi.py": "26d480ce561f85854653595006ca751b5b8a2b5f6a21a4303bbc787ef056193d",
+    "zhivex_ai/providers/meta.py": "f253103d584b2dcace14d48afc5eb97f3a45851cdb3b4327fbfb32fc270ca88c",
+    "zhivex_ai/providers/ollama.py": "c5a58a88aa2efa10ae69dbbda14a691234478ffe6ca228962b4658c58d228b09",
+    "zhivex_ai/providers/openai.py": "633f2a31560536b24804507b34d09149234ed69f82c19e10319ebfe3e9db7039",
+    "zhivex_ai/providers/openai_compat.py": "71a73f57b6c690f8e4f27c2a456b7785b79a50331ec241a969537a8320a2fcc8",
+    "zhivex_ai/providers/openrouter.py": "fd27ae4a34285343e85384e5c2f2b5e08184beafac5d7e4e1e003fc1d6e4680a",
+    "zhivex_ai/providers/qwen.py": "78dc853337075fb46cba27de6a9b10947460cf3c0174632b657f6298cb719e9b",
+    "zhivex_ai/providers/vertex.py": "6db298768fcf194faaca5ab63747ba31b8984eaef875242afed7e88cc53c3390",
+    "zhivex_ai/providers/vllm.py": "0a732c6b6bb023684fa4426f6bbd6a64e8579574f0984c2fab1c5bc08f234c59"
+  },
+  "head": "40606d7b4660fe78132ad04a67ab5c8155c8f490",
+  "working_tree_dirty": false,
+  "workflow": {
+    "repository": "Zhivex/zhivex-ai-sdk-py",
+    "run_id": "35413884198",
+    "sha": "40606d7b4660fe78132ad04a67ab5c8155c8f490",
+    "ref": "refs/heads/main",
+    "workflow_ref": "Zhivex/zhivex-ai-sdk-py/.github/workflows/realtime-certification.yml@refs/heads/main"
+  },
+  "results": [
+    {
+      "operation": "response",
+      "sample": 1,
+      "output_nonempty": true,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 3450,
+      "audio_bytes": 96002,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 10,
+        "realtime-transcript": 2,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 13
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "audio-output",
+      "sample": 1,
+      "output_nonempty": true,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 2685,
+      "audio_bytes": 87360,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 9,
+        "realtime-transcript": 2,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 12
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "audio-roundtrip",
+      "sample": 1,
+      "output_nonempty": true,
+      "marker_matched": true,
+      "input_audio_sha256": "8791c28b4bd4e1d794b39c93521a58c9543a2ca76aeefab95385ce2f204f7f12",
+      "input_audio_bytes": 48760,
+      "input_sample_rate_hz": 16000,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 4118,
+      "audio_bytes": 56642,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-transcript": 3,
+        "realtime-audio-output": 7,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 11
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "tool-loop",
+      "sample": 1,
+      "output_nonempty": true,
+      "marker_matched": true,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 3471,
+      "audio_bytes": 59042,
+      "tool_executions": 1,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-result": 1,
+        "realtime-tool-result": 1,
+        "realtime-response-complete": 4,
+        "realtime-audio-output": 8,
+        "realtime-transcript": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 14,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-suspend",
+      "sample": 1,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "suspended",
+      "duration_ms": 689,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "cancel",
+      "sample": 1,
+      "status": "passed",
+      "durable_status": "cancelled",
+      "duration_ms": 239,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1
+      },
+      "wire_events": {
+        "setupComplete": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "cancel-active",
+      "sample": 1,
+      "status": "passed",
+      "durable_status": "cancelled",
+      "duration_ms": 2596,
+      "audio_bytes": 19680,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 2
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-allow-restart",
+      "sample": 1,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 1,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 4942,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-deny-restart",
+      "sample": 1,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 0,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 4402,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-concurrent",
+      "sample": 1,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "failed",
+          "error_type": "ValidationError",
+          "diagnostics": {
+            "http_status": null,
+            "hints": []
+          },
+          "failure_frames": [
+            "resume_live_certification.py:resume:35",
+            "agent.py:runner:5030"
+          ]
+        },
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 1,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 1770,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "response",
+      "sample": 2,
+      "output_nonempty": true,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 2602,
+      "audio_bytes": 78722,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 10,
+        "realtime-transcript": 2,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 13
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "audio-output",
+      "sample": 2,
+      "output_nonempty": true,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 2398,
+      "audio_bytes": 69122,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 9,
+        "realtime-transcript": 2,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 12
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "audio-roundtrip",
+      "sample": 2,
+      "output_nonempty": true,
+      "marker_matched": true,
+      "input_audio_sha256": "8791c28b4bd4e1d794b39c93521a58c9543a2ca76aeefab95385ce2f204f7f12",
+      "input_audio_bytes": 48760,
+      "input_sample_rate_hz": 16000,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 4045,
+      "audio_bytes": 59522,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-transcript": 3,
+        "realtime-audio-output": 7,
+        "realtime-response-complete": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 11
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "tool-loop",
+      "sample": 2,
+      "output_nonempty": true,
+      "marker_matched": true,
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 5064,
+      "audio_bytes": 101762,
+      "tool_executions": 1,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-result": 1,
+        "realtime-tool-result": 1,
+        "realtime-response-complete": 4,
+        "realtime-audio-output": 9,
+        "realtime-transcript": 2,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 15,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-suspend",
+      "sample": 2,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "status": "passed",
+      "durable_status": "suspended",
+      "duration_ms": 877,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "cancel",
+      "sample": 2,
+      "status": "passed",
+      "durable_status": "cancelled",
+      "duration_ms": 243,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1
+      },
+      "wire_events": {
+        "setupComplete": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "cancel-active",
+      "sample": 2,
+      "status": "passed",
+      "durable_status": "cancelled",
+      "duration_ms": 3003,
+      "audio_bytes": 14400,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-audio-output": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 2
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-allow-restart",
+      "sample": 2,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 1,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 2462,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-deny-restart",
+      "sample": 2,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 0,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 4985,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    },
+    {
+      "operation": "approval-concurrent",
+      "sample": 2,
+      "output_nonempty": false,
+      "marker_matched": false,
+      "recovery_processes": [
+        {
+          "status": "failed",
+          "error_type": "ValidationError",
+          "diagnostics": {
+            "http_status": null,
+            "hints": []
+          },
+          "failure_frames": [
+            "resume_live_certification.py:resume:35",
+            "agent.py:runner:5030"
+          ]
+        },
+        {
+          "status": "passed",
+          "output_nonempty": true,
+          "durable_status": "completed"
+        }
+      ],
+      "recovered_tool_executions": 1,
+      "resume_model": "gemini-3.8-flash",
+      "status": "passed",
+      "durable_status": "completed",
+      "duration_ms": 1572,
+      "audio_bytes": 0,
+      "tool_executions": 0,
+      "events": {
+        "run-start": 1,
+        "realtime-start": 1,
+        "realtime-session-resumption": 1,
+        "realtime-tool-call": 1,
+        "tool-call": 1,
+        "tool-approval": 1,
+        "finish": 1
+      },
+      "wire_events": {
+        "setupComplete": 1,
+        "serverContent": 3,
+        "toolCall": 1
+      },
+      "diagnostics": [],
+      "connections_closed": true
+    }
+  ],
+  "not_tested": [
+    "voice-session-reconnect",
+    "long-session-backpressure",
+    "browser-token",
+    "webrtc"
+  ],
+  "all_requested_passed": true
+}
