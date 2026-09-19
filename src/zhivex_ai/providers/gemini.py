@@ -2478,6 +2478,8 @@ class GeminiImagesClient(ImagesClient):
             )
         for candidate in payload.get("candidates") or []:
             for part in ((candidate.get("content") or {}).get("parts") or []):
+                if part.get("thought") is True:
+                    continue
                 media = _normalize_inline_media_part(part, provider=self.provider)
                 if media and _is_image_media_type(media.media_type):
                     images.append(

@@ -1,5 +1,9 @@
 # Versioning
 
+Vertex Gemma MaaS model routing is additive. Existing Gemini IDs retain their
+protocol; Gemma uses its documented Chat Completions ID. Native Model Garden
+language-model clients remain Beta and require explicit deployment capabilities.
+
 Zhivex AI SDK follows a strict versioning policy for the documented stable surface even while the package remains in the `0.x` range.
 
 Related documents:
@@ -123,3 +127,8 @@ focused `zhivex_ai.live` imports. This is an additive contract change; existing
 imports and event discriminators remain unchanged.
 
 GPT-Live native WebSocket helpers are additive; raw event payloads remain provider-owned. The certified Stable WebSocket subset is documented in [GPT-Live](docs/agents/gpt-live.md), separately from Experimental WebRTC/resource operations. Five-second send/cleanup bounds and explicit rejection of competing readers prevent indefinite ownership conflicts.
+
+Google platform branding uses Gemini Enterprise Agent Platform while preserving
+`create_vertex` and provider ID `vertex`. API key/ADC configuration is additive;
+existing explicit access-token calls remain supported. New Cloud-native clients
+remain Beta and do not promote partner models to the Stable Google contract.

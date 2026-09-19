@@ -19,6 +19,7 @@ from ..errors import (
     ProviderHTTPError,
     UnsupportedFeatureError,
     ValidationError,
+    ZhivexAIError,
 )
 from ..messages import (
     is_callable_tool_definition,
@@ -2646,6 +2647,8 @@ class _BaseOpenAICompatible:
 
 @dataclass(slots=True)
 class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
+    _require_terminal_event = False
+
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
@@ -2693,57 +2696,73 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
             raise _parse_json_error(self.provider, response.status_code, await response.text())
 
         async def generator() -> AsyncIterable[StreamEvent]:
-            async for event in parse_sse(response.iter_lines()):
-                if event.data == "[DONE]":
-                    return
-                payload = json.loads(event.data)
-                if payload.get("type") == "response.output_text.delta":
-                    yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
-                    continue
-                if payload.get("type") in {
-                    "response.reasoning_summary_text.delta",
-                    "response.reasoning_summary_text.done",
-                }:
-                    yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(payload))
-                    continue
-                if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
-                    item = payload.get("item") or {}
-                    provider_data_part = _parse_provider_data_output_item(item, self.provider) if isinstance(item, dict) else None
-                    if provider_data_part is not None:
-                        yield StreamProviderDataEvent(provider=provider_data_part.provider, data=provider_data_part.data)
-                    elif item.get("type") == "function_call":
-                        yield StreamToolCallEvent(
-                            tool_call=ToolCall(
-                                id=item.get("call_id") or item.get("id", ""),
-                                name=item.get("name", ""),
-                                input=_normalize_tool_call_input(item.get("arguments")),
-                                provider_metadata=drop_none(
-                                    {
-                                        "provider": self.provider,
-                                        "response_item_id": item.get("id"),
-                                        "caller": deepcopy(item.get("caller"))
-                                        if isinstance(item.get("caller"), dict)
-                                        else None,
-                                    }
-                                ),
+            terminal = False
+            lines = response.iter_lines()
+            try:
+                async for event in parse_sse(lines):
+                    if event.data == "[DONE]":
+                        if self._require_terminal_event and not terminal:
+                            raise ZhivexAIError("Responses stream ended without a terminal event.")
+                        return
+                    payload = json.loads(event.data)
+                    if payload.get("type") == "error":
+                        raise ZhivexAIError("Responses stream reported an error.")
+                    if payload.get("type") == "response.output_text.delta":
+                        yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
+                        continue
+                    if payload.get("type") in {
+                        "response.reasoning_summary_text.delta",
+                        "response.reasoning_summary_text.done",
+                    }:
+                        yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(payload))
+                        continue
+                    if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
+                        item = payload.get("item") or {}
+                        provider_data_part = _parse_provider_data_output_item(item, self.provider) if isinstance(item, dict) else None
+                        if provider_data_part is not None:
+                            yield StreamProviderDataEvent(provider=provider_data_part.provider, data=provider_data_part.data)
+                        elif item.get("type") == "function_call":
+                            yield StreamToolCallEvent(
+                                tool_call=ToolCall(
+                                    id=item.get("call_id") or item.get("id", ""),
+                                    name=item.get("name", ""),
+                                    input=_normalize_tool_call_input(item.get("arguments")),
+                                    provider_metadata=drop_none(
+                                        {
+                                            "provider": self.provider,
+                                            "response_item_id": item.get("id"),
+                                            "caller": deepcopy(item.get("caller"))
+                                            if isinstance(item.get("caller"), dict)
+                                            else None,
+                                        }
+                                    ),
+                                )
                             )
+                        elif item.get("type") in {"program", "program_output"}:
+                            yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(item))
+                        elif isinstance(item, dict) and _is_provider_managed_output_item(item):
+                            yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
+                        continue
+                    if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
+                        terminal = True
+                        response_payload = payload.get("response") or {}
+                        if self._require_terminal_event and response_payload.get("status") != payload["type"].removeprefix("response."):
+                            raise ZhivexAIError("Responses terminal event has an inconsistent status.")
+                        response_reference = _response_reference_part(response_payload, self.provider)
+                        if response_reference is not None:
+                            yield StreamProviderDataEvent(provider=response_reference.provider, data=response_reference.data)
+                        finish_reason, provider_finish_reason = _parse_response_finish_reason(response_payload)
+                        yield StreamFinishEvent(
+                            finish_reason=finish_reason,
+                            provider_finish_reason=provider_finish_reason,
+                            usage=_parse_responses_usage(response_payload),
                         )
-                    elif item.get("type") in {"program", "program_output"}:
-                        yield StreamProviderDataEvent(provider=self.provider, data=deepcopy(item))
-                    elif isinstance(item, dict) and _is_provider_managed_output_item(item):
-                        yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
-                    continue
-                if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
-                    response_payload = payload.get("response") or {}
-                    response_reference = _response_reference_part(response_payload, self.provider)
-                    if response_reference is not None:
-                        yield StreamProviderDataEvent(provider=response_reference.provider, data=response_reference.data)
-                    finish_reason, provider_finish_reason = _parse_response_finish_reason(response_payload)
-                    yield StreamFinishEvent(
-                        finish_reason=finish_reason,
-                        provider_finish_reason=provider_finish_reason,
-                        usage=_parse_responses_usage(response_payload),
-                    )
+                if self._require_terminal_event and not terminal:
+                    raise ZhivexAIError("Responses stream ended without a terminal event.")
+            finally:
+                closer = getattr(lines, "aclose", None)
+                if closer is not None:
+                    await closer()
 
         return generator()
 

@@ -2,6 +2,13 @@
 
 Zhivex AI SDK is currently published as a `Beta` package.
 
+Vertex 0.27.0 adds Google model routing and Beta native services. Support is scoped
+by model and operation: successful historical integrations do not certify every
+model or the next release artifact. Partner access, restricted Google models and
+unverified resource workflows remain explicit limitations. See the
+[Vertex release scope](docs/providers/vertex-readiness-audit.md) and
+[usage guide](docs/providers/vertex.md).
+
 Related documents:
 
 - [README.md](./README.md)
@@ -9,6 +16,10 @@ Related documents:
 - [VERSIONING.md](./VERSIONING.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [docs/SCOPE.md](./docs/SCOPE.md)
+
+GLM 5.2 on Vertex has offline contract coverage for text, streaming, client
+functions and JSON-schema output; live verification remains throttled. This does
+not promote the Preview model or SDK integration to GA.
 
 ## Product boundary
 
@@ -113,7 +124,7 @@ Azure OpenAI is tier-1 for the portable production surface and exposes beta nati
 
 OpenAI is tier-1 for the portable production surface. The catalog tracks GA GPT-5.6 Sol/Terra/Luna, retaining `gpt-5.6` as the alias of `gpt-5.6-sol` alongside GPT-6 Astra, while retaining older entries for compatibility and GPT Realtime 2.1 for realtime guidance. Responses is the recommended reasoning/tool route. The beta native surface includes explicit prompt-cache/reasoning options and Programmatic Tool Calling with replay-safe preservation of `program`, nested `caller`, function outputs, and `program_output` items.
 
-Gemini and Vertex are tier-1 for the portable production surface. The latest text catalog reference is `gemini-3.8-flash`; `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence, and the adapter rejects unsupported custom sampling and assistant-prefill requests for those covered contracts before dispatch. Google-specific media generation, Batch API, Interactions API, Deep Research, explicit context caching, Live Translate, and Veo operation workflows are native clients rather than portable contracts. Gemini Developer API catalog guidance includes GA Interactions-only `gemini-omni-1.1-flash`, `gemini-3.5-transcribe`, and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Deprecated/retired preview IDs are recorded separately with replacements and are not aliases. Region and quota availability still apply.
+Gemini and Vertex are tier-1 for the portable production surface. The latest text catalog reference is `gemini-3.8-flash`; `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence, and the adapter rejects unsupported custom sampling and assistant-prefill requests for those covered contracts before dispatch. Google-specific media generation, Batch API, Interactions API, Deep Research, explicit context caching, Live Translate, and Veo operation workflows are native clients rather than portable contracts. Gemini Developer API catalog guidance includes GA Interactions-only `gemini-omni-1.1-flash`, `gemini-3.5-transcribe`, and `gemini-3.1-flash-lite-image`; Vertex separately supports Preview `gemini-omni-1.1-flash-preview` through native Interactions; see the [Vertex guide](docs/providers/vertex.md). Deprecated/retired preview IDs are recorded separately with replacements and are not aliases. Region and quota availability still apply.
 
 Qwen is tier-1 for portable text generation, streaming, structured output, callable tools, and embeddings. `create_qwen(region="intl" | "us" | "cn")` maps to Alibaba Cloud Model Studio's documented OpenAI-compatible regions and the current `/compatible-mode/v1/responses` path, while `base_url` and `responses_base_url` remain explicit overrides. The catalog tracks pay-as-you-go GA `qwen3.8-max` separately from the Token Plan's `qwen3.8-max-preview`. For the GA model, Responses covers text, streaming, current `input_text` / `input_image` vision input, all seven `ReasoningConfig` efforts, function tools, and the announced web/code/image-search built-ins. The adapter selects Chat Completions for native JSON Schema output, image/video `FilePart` input, or a reasoning token budget; structured output disables thinking and Chat reasoning state is preserved for replay. Web Extractor requires Web Search, and explicit reasoning cannot be combined with forced required/named tool choice. Hosted helpers, raw Responses, Files, Batch, ASR, and TTS remain beta native surfaces; Batch model availability is regional, with Singapore currently limited to the documented stable aliases.
 
@@ -175,3 +186,43 @@ Offline tests establish wire behavior only. Existing evidence files retain their
 ## GPT-Live WebSocket certification
 
 GPT-Live WebSocket audio, interruption and durable Agent client delegation have a dedicated two-round exact-artifact gate. Passing normalized `gpt-realtime-2.1` evidence does not certify `gpt-live-1`; its dedicated protected job passed 6/6 scenarios and the documented WebSocket subset is Stable. See [exact-artifact evidence](docs/releases/2026-09-19-gpt-live-protected.md). See [scope and lifecycle](docs/agents/gpt-live.md).
+
+## Gemini Enterprise Agent Platform (formerly Vertex AI)
+
+Gemma 4 MaaS has a dedicated Chat Completions route via
+`vertex("google/gemma-4-26b-a4b-it-maas")`; it is distinct from Gemini and remains
+a Beta integration with an Experimental upstream model. Other OpenAI-compatible
+deployed endpoints can use `vertex.native.model_garden().language_model(...)` with
+explicit capabilities. This does not certify every model in Model Garden.
+
+DeepSeek V3.2, Kimi K2 Thinking, GLM 5, Qwen3-Next Instruct and MiniMax M2 MaaS
+also select the Vertex Chat Completions route automatically, accepting their
+publisher-qualified IDs or unambiguous short IDs. The currently enabled defaults
+cover text and streaming only. Each has local installed-wheel integration evidence;
+tools, JSON, multimodal and protected release certification remain separate targets.
+
+See [Vertex configuration and native services](./docs/providers/vertex.md). Express
+API key support is distinct from standard project/IAM access. Source contract
+tests and successful Express requests do not certify managed agents, partner
+models, Live, or other standard Cloud resources. The retained release evidence
+above remains historical until a new exact-wheel target is verified.
+
+Gemini 3.8 Flash Cyber on Vertex is allowlisted upstream GA and appears as
+`limited` in the model catalog. It does not support function/hosted tools,
+grounding or batch inference; the corresponding SDK paths reject these operations.
+Robotics ER 2 is early-access Preview. Neither target is live-certified by the
+current project; see the [Vertex guide](docs/providers/vertex.md).
+
+Vertex Model Garden exposes a Beta native Responses POST/streaming method for
+compatible models. It preserves provider payloads and does not imply the full
+Responses lifecycle. Grok 4.6 returned 404 through both tested API routes and
+remains unverified; see the [recorded evidence](docs/providers/vertex.md).
+
+`native.model_garden().responses_model(...)` is an explicit Beta normalized
+Responses route for text and streaming. It retains Vertex auth/identity and
+conservative default capabilities; it does not certify access to Grok or provide
+the stored-response lifecycle.
+
+Vertex also catalogs the global Preview endpoint `gemini-3.1-pro-preview-customtools`; see the [Vertex guide](docs/providers/vertex.md#gemini-pro-custom-tools-endpoint) for scope and integration evidence.
+
+Beta `vertex.native.rag()` exposes native RAG corpus/file management and retrieval; [scope and limitations](docs/providers/vertex.md#native-rag-engine-beta).

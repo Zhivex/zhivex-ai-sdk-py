@@ -6687,7 +6687,7 @@
       },
       "usage": null,
       "finish": [
-        "unknown",
+        "length",
         "max_output_tokens"
       ]
     },

@@ -1,5 +1,10 @@
 # Stability
 
+Vertex's Stable factory does not promote every addressed model or native service to
+Stable. Model Garden/partner adapters, OCR/FIM, RAG and resource lifecycle clients
+remain Beta. Upstream model availability and SDK integration/release certification
+are separate; see the [Vertex release scope](docs/providers/vertex-readiness-audit.md).
+
 Zhivex AI SDK uses three stability levels so production integrators can understand which surfaces are intended to remain predictable over time.
 
 The `zhivex_ai` package root remains the compatibility entrypoint for the existing public surface. New application code should use the root for the Stable agent-first core and the focused namespaces documented below for extension areas. Deep imports from implementation modules are not part of the public contract unless this document names an explicit exception.
@@ -80,6 +85,8 @@ execution or installation features.
 `AgentCancellationToken`, `AgentCheckpointEvent`, `AgentDelegationFinishEvent`, `AgentDelegationStartEvent`, `AgentErrorEvent`, `AgentFinishEvent`, `AgentGuardrailEvent`, `AgentHandoffEvent`, `AgentHandoffFailedEvent`, `AgentHandoffRequestedEvent`, `AgentHandoffResolvedEvent`, `AgentLiveEvent`, `AgentRunStartEvent`, `AgentSkillArtifactCreatedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillResolvedEvent`, `AgentSummaryUpdateEvent`, `AgentTextDeltaEvent`, `AgentToolCallEvent`, `AgentToolResultEvent`, `AnyToolDefinition`, `AudioFrame`, `HostedToolClass`, `HostedToolDefinition`, `LiveAgentStreamResult`, `RealtimeAudioOutputEvent`, `RealtimeConnectOptions`, `RealtimeErrorEvent`, `RealtimeEvent`, `RealtimeGoAwayEvent`, `RealtimeModel`, `RealtimeResponseCompletedEvent`, `RealtimeSession`, `RealtimeSessionConfig`, `RealtimeSessionEndedEvent`, `RealtimeSessionResumptionEvent`, `RealtimeSessionStartedEvent`, `RealtimeTextDeltaEvent`, `RealtimeTokenResult`, `RealtimeToolCallEvent`, `RealtimeToolResultEvent`, `RealtimeTranscriptEvent`, `SkillArtifact`, `ToolChoiceName`, `ToolGuardrailStage`, `open_websocket_connection`, `stream_live_agent`.
 
 ## Beta
+
+- Vertex native Cloud clients: context caches, BatchPredictionJobs, Interactions, Agent Runtime/Sessions/Memory Bank, and Model Garden raw prediction/chat routes. Google Interactions is Experimental upstream. These do not expand the Stable portable model contract.
 
 
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
@@ -194,3 +201,5 @@ importable. A resumption notification is not automatic reconnection support.
 ## GPT-Live WebSocket Stable subset
 
 The `/live/sessions` WebSocket subset now includes validated audio/context helpers and durable Agent client delegation, with bounded sends, cleanup and single-reader enforcement. This WebSocket subset is Stable after [protected exact-artifact certification](docs/releases/2026-09-19-gpt-live-protected.md), with 6/6 GPT-Live scenarios passed. WebRTC creation/fork, recording downloads, SIP, Responses-managed delegation and automatic reconnect retain their separate Experimental classification. See [the exact contract](docs/agents/gpt-live.md). No root exports change.
+
+`vertex.native.rag()` is a Beta native Google RAG Engine client. It does not extend the Stable portable retrieval guarantee.

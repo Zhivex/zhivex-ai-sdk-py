@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "scope": "exact-wheel-integration-not-protected-release-certification",
+  "reports": {
+    "gemini-core.json": {
+      "schema_version": 1,
+      "provider": "vertex",
+      "model": "gemini-3.8-flash",
+      "mode": "standard",
+      "location": "global",
+      "adapter": "PortableLanguageModel",
+      "recorded_at": "2026-09-19T20:51:44.718923+00:00",
+      "evidence_status": "integration-only",
+      "wheel_sha256": "c7bbff6992bc322c8344fedfea2b00a35fe7731466794a4a575591e42aa4a183",
+      "operations": {
+        "generation": "passed",
+        "streaming": "passed",
+        "structured-output": "passed",
+        "portable": "passed",
+        "agent-tool": "passed",
+        "count-tokens": "passed",
+        "portable-retrieval": "passed"
+      },
+      "diagnostics": {}
+    },
+    "gemma.json": {
+      "schema_version": 1,
+      "provider": "vertex",
+      "model": "google/gemma-4-26b-a4b-it-maas",
+      "mode": "standard-adc-language",
+      "adapter": "PortableLanguageModel",
+      "location": "global",
+      "recorded_at": "2026-09-19T20:52:14.532585+00:00",
+      "wheel_sha256": "c7bbff6992bc322c8344fedfea2b00a35fe7731466794a4a575591e42aa4a183",
+      "evidence_status": "integration-only",
+      "operations": {
+        "generation": "passed",
+        "streaming": "passed",
+        "structured-output": "failed",
+        "agent-tool": "failed",
+        "vision": "passed"
+      },
+      "diagnostics": {
+        "generation-result": {
+          "finish_reason": "stop",
+          "text_chars": 8,
+          "output_tokens": 5
+        },
+        "streaming-result": {
+          "finish_reason": "stop",
+          "text_chars": 8,
+          "output_tokens": 5
+        },
+        "structured-output": {
+          "error_type": "ProviderHTTPError",
+          "http_status": 429
+        },
+        "agent-tool": {
+          "error_type": "ReadTimeout",
+          "http_status": null
+        }
+      },
+      "selected_operations": [
+        "generation",
+        "streaming",
+        "structured-output",
+        "agent-tool",
+        "vision"
+      ],
+      "interval_seconds": 0,
+      "disable_thinking": false,
+      "max_tokens": 128
+    },
+    "matrix.json": {
+      "schema_version": 1,
+      "provider": "vertex",
+      "evidence_status": "integration-only",
+      "scope": "reviewed-baseline-targets",
+      "wheel_sha256": "c7bbff6992bc322c8344fedfea2b00a35fe7731466794a4a575591e42aa4a183",
+      "source_revision": "c64b5f47b419f10e8e74e842f4bb27a6484f3ef1",
+      "worktree_dirty": true,
+      "control_sha256": {
+        "run_vertex_matrix.py": "30683c10fbe5f3754984937ff2c9ad0b949feb3918029c315006fb63aad96d96",
+        "verify_vertex_chat_integration.py": "649a425ab6f070d5d6bc85098650298c80254667ef2250a0a43106b158fb9b2a",
+        "verify_vertex_integration.py": "7c31782aa9779ba85a096efddde2644a6273e05dc478c974316fb9c7a9641881"
+      },
+      "input_sha256": {
+        "pyproject.toml": "deab6b60efe5bf1d021f334ca72ff7948da6ac23b7cb5740ed17a8e850e112dc",
+        "scripts/audit_dependencies.py": "2b496387c49031f0fb5a73ea9a5088407d22d9a1f1b1792c8bbf01f159f5fd5e",
+        "scripts/certify_gpt_live.py": "c5f22667e19d6e663afb0c4f3c4ae06f1011abbc6f13a7fc1cc5c33f1e2f81de",
+        "scripts/certify_live_runtime.py": "fafa6bc6d97783b78a32170b3b39456a494a62787f80358bf859b3801c1df117",
+        "scripts/check_catalog_freshness.py": "e891377df3a4ae177e63a7df4fa4d50b128af636d964e0876626ce559303b0cd",
+        "scripts/check_dependency_compatibility.py": "3f253adf88a8dcf0d51e5dddcf49d30b6db063fa6f2ae3eab3979bc7421d6485",
+        "scripts/collect_release_evidence.py": "74334706e15c42187118a91568bc23d0f30a9f49c4366f43ecd94301d65a972d",
+        "scripts/generate_public_stub.py": "99526cbd53c0c9f3cb02b401cb186dbc2d11db9cd940d54332320af044e07b74",
+        "scripts/generate_support_matrix.py": "fdad0c00b41cccb358858b6a986ab04bd86f269951601c41813b5d7aff06a8f4",
+        "scripts/live_certification_tools.py": "183b474f414a90ffe60aad2bd9e1aec69218d7aaf256bf74764feaffd945182f",
+        "scripts/provider_certification.py": "bbeb77e3f7c4e74789e424d599398a9f436ecc4c1b74d727d38642ae1d731903",
+        "scripts/resume_live_certification.py": "a62387117d2e89e3b83c4b170e03224207d006e95c9ffdb338b0c24e65e44307",
+        "scripts/run_live_smoke.py": "209cdb78b4b2102ab2bb340a4e22df885412885b07ebb7992eb2120be1493ddb",
+        "scripts/run_september_live_certification.py": "221eea86ce3ba5bacc69be36677a93395f465f22b81f715e56e70ddaf0ece956",
+        "scripts/run_vertex_matrix.py": "30683c10fbe5f3754984937ff2c9ad0b949feb3918029c315006fb63aad96d96",
+        "scripts/smoke_live_runtime.py": "c37e71c423854b633aa6f93398636c0c1c4c416cf02de482278de5b467d96fa0",
+        "scripts/smoke_qwen_omni.py": "ba0afa9c1e10989096a8c1b62b9d1e645b0a63414f06cdb8877b890813916864",
+        "scripts/verify_adoption.py": "14b9d5197c3906ee6a11f00338839c3d36336abc9f646dbf7534cac630872f2d",
+        "scripts/verify_gpt_live_certification.py": "b9eee96ae023b0389c94e9d99d1f91147205519764418ed13c33a5e155aa348a",
+        "scripts/verify_otlp.py": "196a825377888a6be5d2132eb8eb71b478b0540b4cc34420528f2a985e312eba",
+        "scripts/verify_provider_certification.py": "85baf6be10c8d98ab90b778b3bb40bc7d20809cf059a7348def15d86658a06a0",
+        "scripts/verify_realtime_certification.py": "9f7784ba8ac092ce0d876c0a86e9c3ee864b50a1eb404e958e6a2f5a3135fcfc",
+        "scripts/verify_release_artifacts.py": "20b9264aa520dcb1a461f5accbf346f28fc3f966e30aa1ff1baac1cace88817a",
+        "scripts/verify_release_tag.py": "e9a77615681a1ce09d7db1681360e1cb8384a157b4679e1676dfee493e2c0a24",
+        "scripts/verify_vertex_batch_integration.py": "339f7e0e3c71028270e6f8343cda36b8481f71d396056284498466ffa76f07f4",
+        "scripts/verify_vertex_chat_integration.py": "649a425ab6f070d5d6bc85098650298c80254667ef2250a0a43106b158fb9b2a",
+        "scripts/verify_vertex_embedding_integration.py": "78987a4bd6baaf8b661e287fd267d8b3e1b31682466a6112cb3b491931880981",
+        "scripts/verify_vertex_endpoint_discovery.py": "fd446ba02dd88d107114fd893dbac4b25f4e2c351c2b2e90b94f7ab48a7c9622",
+        "scripts/verify_vertex_endpoint_lifecycle.py": "1d595e570b352bacda7e2ea2a49e97b01cb9ebe14e2cf01e45bffd171349683a",
+        "scripts/verify_vertex_hosted_tools_integration.py": "bd70b66ba7a6a715dd7364afa06df93c8a0cfb1b3965a1a3caa8e3e1ef967827",
+        "scripts/verify_vertex_integration.py": "7c31782aa9779ba85a096efddde2644a6273e05dc478c974316fb9c7a9641881",
+        "scripts/verify_vertex_live_integration.py": "81c96841ace2b85a67b9e28ce83266ad85dac6c44ba78653633c98b0b35d59ed",
+        "scripts/verify_vertex_media_integration.py": "94590244da953521353bec68e55ed05e8093c9e513e5230f31a0d33a3659709d",
+        "scripts/verify_vertex_memory_integration.py": "97916b7289ca3207138e6784163f55437652d22133dd9efde8b9cfe0c3a1395d",
+        "scripts/verify_vertex_mistral_integration.py": "61071920581007c4d44b479a223fffa723beea17fc08cac478623d5644c6ac09",
+        "scripts/verify_vertex_model_discovery.py": "f24e45ef11a856798a6e0c468ed647141e6122b1702ce6c1ec33ba199c0869a9",
+        "scripts/verify_vertex_multimodal_integration.py": "8620a34263d85801eeddc4108c6aefdf359893839e235b1d0e2cbfaf1d834b93",
+        "scripts/verify_vertex_native_integration.py": "e2d126fc9757286ba0ef68399a2ca41b82dd6c9da70856173d62e1c1b0414c55",
+        "scripts/verify_vertex_omni_integration.py": "c9cebee89ea125e13a2649fc35a7aaa7bc1127d8ce1c0cdfb61e7fffe362adc3",
+        "scripts/verify_vertex_rag_discovery.py": "967a51c3b510ba4ab925fcfb3a0d4804050f7e8049fec052b0d9a62090af6023",
+        "scripts/verify_vertex_rag_lifecycle.py": "39b47d3a919d254d396bed82b884fa7084ed471ba945d4dec02f60ea5e24eac5",
+        "scripts/verify_vertex_responses_integration.py": "c74452db1c8c13d078f26b082b827790226070cb183fa53bbaff50e855dd8ae9",
+        "scripts/verify_vertex_thinking_integration.py": "5003f67bacad616cb07d6ae0677cc46ff7b3a07dd194b90b8d30e1ef7540f43a",
+        "scripts/verify_vertex_transcribe_live_integration.py": "56cffa88bfae7e12caa87ea9fe8ce2c5d6254a07964f8c0e46ce2607e8122dbf",
+        "scripts/verify_vertex_translate_live_integration.py": "ec8a6496e77db9094e108ec73a3c6cc848d8a909316e62c7b27a88133bc86492",
+        "scripts/verify_vertex_video_input_integration.py": "5e6d60dafed539815a6aa50ee824f0236450f11ce9e0505e84f7c7d7479a58c3",
+        "scripts/verify_vertex_video_integration.py": "414adb22a5249f25d364412d464e8f690b07524b4b71c80034844c10f9664dfe",
+        "tests/fixtures/vertex/README.md": "b96e3e27283aeac851464104a695b10948d49953e953b621c9bd7c936141249b",
+        "tests/fixtures/vertex/color-sequence.mp4": "e3d0cb9c90920279e9f1488f17c2bdf0bde9e3ba06179de1b4e31e9225c2d19b",
+        "tests/fixtures/vertex/document-marker.pdf": "36154397e745d2caad9eb1a2168042db1d749eae179f6145d1850e61f91b840e",
+        "tests/fixtures/vertex/red-circle-720p.png": "4dc1d177ef0e67e6f43f4a96d9bfe92f37d5a4e83be5db03028ad7651ee92781",
+        "uv.lock": "90c85067df6fd5352c77e486de01e457b2cb216caaaa1c22a26d90ac594575bf"
+      },
+      "inputs_unchanged": true,
+      "selected_targets": [
+        "gemini-core",
+        "gemma"
+      ],
+      "all_baseline_targets_selected": false,
+      "recorded_at": "2026-09-19T20:51:44.120257+00:00",
+      "targets": {
+        "gemini-core": {
+          "status": "passed",
+          "report": "gemini-core.json"
+        },
+        "gemma": {
+          "status": "failed",
+          "report": "gemma.json"
+        }
+      }
+    }
+  }
+}

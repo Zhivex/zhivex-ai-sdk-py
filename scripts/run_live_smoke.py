@@ -466,7 +466,7 @@ def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
         return {"temperature": None, "max_tokens": 1024}
     if provider == "openai":
         return {"temperature": None, "max_tokens": 512}
-    if provider == "gemini":
+    if provider in {"gemini", "vertex"}:
         return {"temperature": None, "max_tokens": 512}
     return {"temperature": 0, "max_tokens": 80}
 
@@ -878,19 +878,21 @@ async def _run_vertex() -> tuple[str, bool, str, bool]:
     access_token = os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")
     location = os.getenv("VERTEX_LOCATION", "us-central1")
-    if not access_token or not project_id or not model:
+    api_key = os.getenv("VERTEX_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    adc_configured = bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    if not model or not (api_key or ((access_token or adc_configured) and project_id)):
         return (
             "vertex",
             False,
-            "skip: set VERTEX_ACCESS_TOKEN (or GOOGLE_ACCESS_TOKEN), GOOGLE_CLOUD_PROJECT, and ZHIVEX_SMOKE_VERTEX_MODEL",
+            "skip: set Vertex API key or token/ADC with project, and ZHIVEX_SMOKE_VERTEX_MODEL",
             False,
         )
-    provider = create_vertex(access_token=access_token, project_id=project_id, location=location)
+    provider = create_vertex(project_id=project_id, location=location)
     language_model = provider(model)
     result = await generate_text(
         model=language_model,
         prompt="Reply with exactly VERTEX_SMOKE_OK.",
-        max_tokens=20,
+        max_tokens=512,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=20_000,

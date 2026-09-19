@@ -459,7 +459,7 @@ class ReleaseArtifactToolingTests(TestCase):
                 workflow,
             )
             self.assertIn("ZHIVEX_SMOKE_META_CERTIFICATION: \"1\"", workflow)
-            self.assertIn("docs/releases/0.26.0-smoke-policy.json", workflow)
+            self.assertIn("docs/releases/0.27.0-smoke-policy.json", workflow)
             self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
             self.assertIn("release-smoke-evidence.json", workflow)
             self.assertIn("name: release-smoke-evidence", workflow)
@@ -573,7 +573,7 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn(name, workflow)
 
         policy = json.loads(
-            (ROOT / "docs/releases/0.26.0-smoke-policy.json").read_text("utf-8")
+            (ROOT / "docs/releases/0.27.0-smoke-policy.json").read_text("utf-8")
         )
         self.assertEqual(
             policy["required_providers"]["openai"]["model"],

@@ -813,6 +813,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/27/0f7247b8002a1404fdb5412aeb15fb0fe70288eb8f88a5873d1c0d8262cf/google_auth-2.57.1-py3-none-any.whl", hash = "sha256:ab439dee60a6856412bc058f13a68eb6a59c5b81526bb89cfdcf89ce9c0a48c9", size = 259974, upload-time = "2026-09-04T00:50:21.693Z" },
 ]
 
+[package.optional-dependencies]
+requests = [
+    { name = "requests" },
+]
+
 [[package]]
 name = "googleapis-common-protos"
 version = "1.75.3"
@@ -2732,7 +2737,7 @@ wheels = [
 
 [[package]]
 name = "zhivex-ai-sdk"
-version = "0.26.0"
+version = "0.27.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -2788,6 +2793,9 @@ postgres = [
 realtime = [
     { name = "websockets" },
 ]
+vertex = [
+    { name = "google-auth", extra = ["requests"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2802,6 +2810,7 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=50.0.0" },
     { name = "cryptography", marker = "extra == 'mcp'", specifier = ">=50.0.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115.0" },
+    { name = "google-auth", extras = ["requests"], marker = "extra == 'vertex'", specifier = ">=2.38.0" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = ">=1.27.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.12.0" },
@@ -2824,7 +2833,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'api'", specifier = ">=0.31.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=15.0.1" },
 ]
-provides-extras = ["realtime", "dev", "postgres", "mcp", "docx", "api", "a2a", "ag-ui", "otel"]
+provides-extras = ["vertex", "realtime", "dev", "postgres", "mcp", "docx", "api", "a2a", "ag-ui", "otel"]
 
 [[package]]
 name = "zipp"
