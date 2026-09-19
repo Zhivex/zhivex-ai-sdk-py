@@ -152,6 +152,17 @@ STABLE_EXPORTS = frozenset(
 
 EXPERIMENTAL_EXPORTS = frozenset(
     (
+        "create_bedrock",
+        "create_ollama",
+        "create_openrouter",
+        "openai_local_shell_tool",
+        "openai_shell_environment",
+        "openai_shell_tool",
+    )
+)
+
+BETA_EXPORTS = frozenset(
+    (
         "AgentLiveEvent",
         "LiveAgentStreamResult",
         "RealtimeAudioOutputEvent",
@@ -164,24 +175,16 @@ EXPERIMENTAL_EXPORTS = frozenset(
         "RealtimeSessionConfig",
         "RealtimeSessionEndedEvent",
         "RealtimeSessionStartedEvent",
+        "RealtimeSessionResumptionEvent",
+        "RealtimeGoAwayEvent",
         "RealtimeTextDeltaEvent",
         "RealtimeTokenResult",
         "RealtimeToolCallEvent",
         "RealtimeToolResultEvent",
         "RealtimeTranscriptEvent",
-        "create_bedrock",
-        "create_ollama",
-        "create_openrouter",
         "open_websocket_connection",
-        "openai_local_shell_tool",
-        "openai_shell_environment",
-        "openai_shell_tool",
         "stream_live_agent",
-    )
-)
 
-BETA_EXPORTS = frozenset(
-    (
         "meta_hosted_tool",
         "meta_tool_search_tool",
         "meta_web_search_tool",
@@ -745,6 +748,63 @@ _LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS = frozenset(
 STABLE_EXPORTS = STABLE_EXPORTS | _LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS
 BETA_EXPORTS = BETA_EXPORTS - _LOCAL_PERSISTENCE_AND_CATALOG_STABLE_EXPORTS
 
+_REALTIME_STABLE_EXPORTS = frozenset(
+    (
+        "AgentCancellationToken",
+        "AgentCheckpointEvent",
+        "AgentDelegationFinishEvent",
+        "AgentDelegationStartEvent",
+        "AgentErrorEvent",
+        "AgentFinishEvent",
+        "AgentGuardrailEvent",
+        "AgentHandoffEvent",
+        "AgentHandoffFailedEvent",
+        "AgentHandoffRequestedEvent",
+        "AgentHandoffResolvedEvent",
+        "AgentLiveEvent",
+        "AgentRunStartEvent",
+        "AgentSkillArtifactCreatedEvent",
+        "AgentSkillDependencyCheckEvent",
+        "AgentSkillExecutionFinishEvent",
+        "AgentSkillExecutionStartEvent",
+        "AgentSkillResolvedEvent",
+        "AgentSummaryUpdateEvent",
+        "AgentTextDeltaEvent",
+        "AgentToolCallEvent",
+        "AgentToolResultEvent",
+        "AnyToolDefinition",
+        "AudioFrame",
+        "HostedToolClass",
+        "HostedToolDefinition",
+        "LiveAgentStreamResult",
+        "RealtimeAudioOutputEvent",
+        "RealtimeConnectOptions",
+        "RealtimeErrorEvent",
+        "RealtimeEvent",
+        "RealtimeGoAwayEvent",
+        "RealtimeModel",
+        "RealtimeResponseCompletedEvent",
+        "RealtimeSession",
+        "RealtimeSessionConfig",
+        "RealtimeSessionEndedEvent",
+        "RealtimeSessionResumptionEvent",
+        "RealtimeSessionStartedEvent",
+        "RealtimeTextDeltaEvent",
+        "RealtimeTokenResult",
+        "RealtimeToolCallEvent",
+        "RealtimeToolResultEvent",
+        "RealtimeTranscriptEvent",
+        "SkillArtifact",
+        "ToolChoiceName",
+        "ToolGuardrailStage",
+        "open_websocket_connection",
+        "stream_live_agent",
+    )
+)
+STABLE_EXPORTS = STABLE_EXPORTS | _REALTIME_STABLE_EXPORTS
+BETA_EXPORTS = BETA_EXPORTS - _REALTIME_STABLE_EXPORTS
+
+
 _CATEGORY_BY_MODULE = {
     "_http": "transport",
     "agent": "agent",
@@ -806,7 +866,7 @@ _NOTES_BY_EXPORT = {
     "create_temporal_workflow_adapter": "beta named-engine factory; not a certified Temporal integration",
     "openai_local_shell_tool": "local shell execution is experimental and must be isolated by applications",
     "openai_shell_tool": "shell execution is experimental and must be isolated by applications",
-    "stream_live_agent": "realtime/live APIs are experimental",
+    "stream_live_agent": "Stable bounded live-agent runtime; provider-native live transports retain their own maturity",
 }
 
 _EXPORT_LEVELS: dict[str, ApiStabilityLevel] = {

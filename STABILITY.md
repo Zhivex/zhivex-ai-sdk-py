@@ -26,7 +26,8 @@ The recommended public import paths are:
 - `zhivex_ai.evals` for Beta evaluation APIs
 - `zhivex_ai.workflows` for the Stable declarative and durable workflow core plus clearly identified Beta named-engine factories
 - `zhivex_ai.integrations.protocols` for Beta A2A, AG-UI, and Responses-compatible hosting
-- `zhivex_ai.experimental` for Experimental realtime/live-agent and non-portable provider surfaces
+- `zhivex_ai.live` for Stable normalized realtime sessions and live-agent orchestration
+- `zhivex_ai.experimental` for Experimental provider-native live and non-portable provider surfaces
 
 Existing top-level Beta and Experimental imports remain available for compatibility in the current Beta release line. A focused namespace changes the recommended ownership boundary; it does not promote the symbols inside it. New Beta or Experimental features should land in a focused namespace and should not expand the package root by default.
 
@@ -67,7 +68,19 @@ The Stable surface is the agent-first core contract plus the application-owned w
 - Local agent persistence: `AgentMemoryState`, `SummaryConfig`, `InMemoryAgentRunStore`, `SQLiteAgentRunStore`, `create_in_memory_agent_run_store`, `create_sqlite_agent_run_store`, `create_in_memory_agent_memory_store`, `create_sqlite_agent_memory_store`, `create_in_memory_checkpoint_store`, `create_sqlite_checkpoint_store`. InMemory is process-local storage for tests and demos; SQLite is durable local storage for a single host. See [local persistence guarantees](./docs/agents/durable-state.md#local-storage-guarantees).
 - Application-owned model catalogs: `ModelCatalog`, `ModelCatalogEntry`, `create_model_catalog`, `ModelCapabilities`, `AgentCapabilities`, `AgentSupportTier`, `CatalogProviderId`, `ModelApiSurface`, `ModelAvailability`, `ModelSupportEvidence`, `RecommendedUse`, `ModelPricing`. Stable covers construction, lookup, defensive copies, metadata types, and price units/validity windows, not the truth or freshness of provider metadata.
 
+- Normalized realtime and live-agent contracts: `stream_live_agent`, `LiveAgentStreamResult`, `AgentLiveEvent`, `RealtimeModel`, `RealtimeSession`, `RealtimeSessionConfig`, `RealtimeConnectOptions`, `RealtimeTokenResult`, normalized `Realtime*Event` types, and `open_websocket_connection`. Use `zhivex_ai.live`; previous root and experimental imports remain aliases. See [the Stable contract](docs/agents/live-realtime.md). This promotion does not certify provider/model combinations or promote provider-native GPT-Live, Gemini model-specific extensions, Bedrock, or vLLM realtime integrations.
+
+### Realtime compatibility cohort
+
+The unreleased Stable cohort freezes the following public shapes and operations.
+It does not change the package Beta classifier or certify a provider release.
+Hosted-tool and skill types below stabilize data envelopes, not provider-native
+execution or installation features.
+
+`AgentCancellationToken`, `AgentCheckpointEvent`, `AgentDelegationFinishEvent`, `AgentDelegationStartEvent`, `AgentErrorEvent`, `AgentFinishEvent`, `AgentGuardrailEvent`, `AgentHandoffEvent`, `AgentHandoffFailedEvent`, `AgentHandoffRequestedEvent`, `AgentHandoffResolvedEvent`, `AgentLiveEvent`, `AgentRunStartEvent`, `AgentSkillArtifactCreatedEvent`, `AgentSkillDependencyCheckEvent`, `AgentSkillExecutionFinishEvent`, `AgentSkillExecutionStartEvent`, `AgentSkillResolvedEvent`, `AgentSummaryUpdateEvent`, `AgentTextDeltaEvent`, `AgentToolCallEvent`, `AgentToolResultEvent`, `AnyToolDefinition`, `AudioFrame`, `HostedToolClass`, `HostedToolDefinition`, `LiveAgentStreamResult`, `RealtimeAudioOutputEvent`, `RealtimeConnectOptions`, `RealtimeErrorEvent`, `RealtimeEvent`, `RealtimeGoAwayEvent`, `RealtimeModel`, `RealtimeResponseCompletedEvent`, `RealtimeSession`, `RealtimeSessionConfig`, `RealtimeSessionEndedEvent`, `RealtimeSessionResumptionEvent`, `RealtimeSessionStartedEvent`, `RealtimeTextDeltaEvent`, `RealtimeTokenResult`, `RealtimeToolCallEvent`, `RealtimeToolResultEvent`, `RealtimeTranscriptEvent`, `SkillArtifact`, `ToolChoiceName`, `ToolGuardrailStage`, `open_websocket_connection`, `stream_live_agent`.
+
 ## Beta
+
 
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
@@ -75,7 +88,7 @@ These APIs are supported and documented, but they may still change between minor
 - Middleware helpers. `create_file_generate_cache(...)` preserves its JSON format but now publishes complete entries with same-directory atomic replacement. Corrupt, truncated, symlinked, non-regular, or incompatible entries raise `ValidationError`; they are not cache misses. This Beta guarantee is limited to application-owned local filesystems with atomic `os.replace(...)` semantics.
 - Maintained catalog snapshot: `default_model_catalog` remains Beta; its entries, recommendations, lifecycle, sources, capabilities, and prices may change. Construction rejects identifier collisions, catalog reads are defensive, recommendations do not imply capabilities, and the default snapshot does not constitute live certification or automatic provider discovery.
 - Provider agent capability metadata: `get_agent_capabilities`, `get_agent_support_tier`; the returned capability types are Stable, while provider discovery metadata remains Beta
-- First-class hosted tool model: `HostedToolDefinition`, `HostedToolClass`, `AnyToolDefinition`, `hosted_tool`, `is_hosted_tool_definition`, `is_callable_tool_definition`, `get_hosted_tool_class`, `is_hosted_tool_class`; provider-native helpers such as `anthropic_web_fetch_tool()` remain beta
+- First-class hosted tool model: `hosted_tool`, `is_hosted_tool_definition`, `is_callable_tool_definition`, `get_hosted_tool_class`, `is_hosted_tool_class`; provider-native helpers such as `anthropic_web_fetch_tool()` remain beta
 - Provider-data content parts and hosted-tool control payloads: `ProviderDataPart`, `provider_data_part`, `get_provider_data_parts`, `get_last_provider_data_part`, `openai_mcp_approval_response`, `azure_openai_mcp_approval_response`
 - Typed OpenAI/Azure provider-data payloads and parsers: `OpenAIResponseReference`, `OpenAIMcpApprovalRequest`, `OpenAIMcpApprovalResponse`, `OpenAIMcpCall`, `OpenAIMcpListTools`, `OpenAIProviderData`, `AzureOpenAIResponseReference`, `AzureOpenAIMcpApprovalRequest`, `AzureOpenAIMcpApprovalResponse`, `AzureOpenAIMcpCall`, `AzureOpenAIMcpListTools`, `AzureOpenAIProviderData`, `parse_openai_provider_data_part`, `parse_azure_openai_provider_data_part`
 - Response-reference helpers: `openai_response_reference`, `get_openai_response_reference`, `get_openai_response_id`, `azure_openai_response_reference`, `get_azure_openai_response_reference`, `get_azure_openai_response_id`
@@ -107,7 +120,7 @@ Agent production guidance lives in [docs/AGENTS.md](./docs/AGENTS.md), [docs/PRO
 
 These areas are available for evaluation, but they should not be treated as a long-term compatibility contract yet:
 
-- Realtime and live voice flows, including `stream_live_agent()`
+- Provider-native GPT-Live and model-specific Gemini Live extensions outside the normalized Stable runtime
 - Raw provider payload escape hatches that do not map cleanly to the hosted-tool beta surface
 - Non-portable provider factories currently marked as `native-only` or `compatibility` in the support matrix: `create_bedrock`, `create_openrouter`, and `create_ollama`
 
@@ -152,7 +165,7 @@ Other providers remain useful, but they should be evaluated with the support mat
 
 ## Streaming resource ownership
 
-Built-in `StreamTextResult`, `StreamObjectResult`, and `AgentStreamResult` results expose `aclose()` and async context management. Closing a result cancels and joins its producer; closing a single event iterator only detaches that consumer. The Experimental live-agent result uses the same ownership helper and retains its Experimental classification.
+Built-in `StreamTextResult`, `StreamObjectResult`, and `AgentStreamResult` results expose `aclose()` and async context management. Closing a result cancels and joins its producer; closing a single event iterator only detaches that consumer. The Stable live-agent result uses the same ownership helper.
 
 `stream_buffer_size` accepts a positive event count or `None`. Stable defaults preserve full history (`None`). Set a finite limit, such as 4096, for request-owned production streams. Consumers whose cursor has been evicted raise `ValidationError`, including late subscribers requesting unavailable history. There is no silent event loss. `collect()` retains its final-result contract independently of subscriber retention. A limit bounds retained event count, not individual payload bytes or final output size.
 
@@ -160,7 +173,7 @@ DeepSeek now serves `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` with 
 
 ## Dependency compatibility update
 
-Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Normalized realtime APIs are Stable and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
 
 ## Qwen3.8 Omni Flash
 
@@ -171,4 +184,9 @@ Native JSON Schema, speech output, and realtime are not claimed for this model.
 
 ## September 16 native extensions
 
-Meta Spark 1.3 is a Beta model extension; Standard 1.2 remains the reviewed Stable Meta cohort. Anthropic `native.messages()` and signed on-demand compaction, OpenAI `native.agent_sessions()`, GPT Image 2.5, and Lyria 3.5 are Beta. `native.live()` for GPT-Live and Gemini 3.8 Live/Extended Thinking are Experimental. Native JSON/event payloads preserve provider-specific shapes and do not carry the portable contract. The Stable `ModelApiSurface` type additively accepts `"live"` to distinguish GPT-Live from Realtime. No existing exports are removed or promoted.
+Meta Spark 1.3 is a Beta model extension; Standard 1.2 remains the reviewed Stable Meta cohort. Anthropic `native.messages()` and signed on-demand compaction, OpenAI `native.agent_sessions()`, GPT Image 2.5, and Lyria 3.5 are Beta. `native.live()` for GPT-Live and Gemini 3.8 Live/Extended Thinking are Experimental. Native JSON/event payloads preserve provider-specific shapes and do not carry the portable contract. The Stable `ModelApiSurface` type additively accepts `"live"` to distinguish GPT-Live from Realtime. That model refresh did not remove or promote existing exports; the subsequent normalized runtime promotion is described in the Stable section.
+
+The Stable realtime namespace also exports `RealtimeSessionResumptionEvent` and
+`RealtimeGoAwayEvent`, with root compatibility aliases. These data contracts were
+already members of `RealtimeEvent`; explicit exports make every emitted variant
+importable. A resumption notification is not automatic reconnection support.

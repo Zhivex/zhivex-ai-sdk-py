@@ -335,6 +335,10 @@ def _map_part(part: Any) -> dict[str, Any]:
         if part.tool_call.id:
             function_call["id"] = part.tool_call.id
         thought_signature = part.tool_call.provider_metadata.get("thought_signature")
+        if thought_signature is None and part.tool_call.provider_metadata.get("gemini_realtime") is True:
+            # Live calls have no GenerateContent reasoning state. Google's
+            # documented migration marker permits replaying this foreign history.
+            thought_signature = "skip_thought_signature_validator"
         payload = {"functionCall": function_call}
         if thought_signature is not None:
             payload["thoughtSignature"] = thought_signature
@@ -344,7 +348,8 @@ def _map_part(part: Any) -> dict[str, Any]:
             "name": part.tool_result.tool_name,
             "response": {
                 "name": part.tool_result.tool_name,
-                "content": part.tool_result.error.__dict__ if part.tool_result.is_error else part.tool_result.output,
+                "content": {"message": part.tool_result.error.message if part.tool_result.error else "Tool execution failed."}
+                if part.tool_result.is_error else part.tool_result.output,
             },
         }
         if part.tool_result.tool_call_id:
@@ -1683,7 +1688,9 @@ def _gemini_realtime_build_tool_result(result: ToolExecutionResult, _config: Rea
 
 
 def _gemini_realtime_build_update(config: RealtimeSessionConfig, model_id: str) -> list[dict[str, Any]]:
-    return [_gemini_realtime_setup(config, model_id)]
+    raise UnsupportedFeatureError(
+        "Gemini realtime configuration cannot change on an open connection; create a new session."
+    )
 
 
 def _gemini_realtime_live_connect_constraints(config: RealtimeSessionConfig, model_id: str) -> dict[str, Any] | None:
@@ -1779,6 +1786,11 @@ def _gemini_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     id=str(call.get("id") or f'{call.get("name", "")}-0'),
                     name=str(call.get("name") or ""),
                     input=call.get("args") or {},
+                    provider_metadata={
+                        "gemini_realtime": True,
+                        **({"thought_signature": _part_thought_signature(call)}
+                           if _part_thought_signature(call) is not None else {}),
+                    },
                 )
             )
             for call in calls
@@ -2969,10 +2981,10 @@ class GeminiRealtimeModel(RealtimeModel):
                 build_text_payloads=lambda text, session_config: _gemini_realtime_build_text(text, session_config, self.model_id),
                 build_tool_result_payloads=_gemini_realtime_build_tool_result,
                 build_update_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
-                build_initial_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+                build_initial_payloads=lambda session_config: [_gemini_realtime_setup(session_config, self.model_id)],
             ),
         )
-        await session.initialize()
+        await session.initialize(ready_event="setupComplete", timeout_ms=options.timeout_ms if options and options.timeout_ms is not None else 10_000)
         return session
 
     async def create_browser_token(

@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "OperationEvidence": {
+      "additionalProperties": true,
+      "properties": {
+        "connections_closed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connections Closed"
+        },
+        "durable_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Durable Status"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "sample": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Sample",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "sample",
+        "status"
+      ],
+      "title": "OperationEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "all_requested_passed": {
+      "title": "All Requested Passed",
+      "type": "boolean"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "kind": {
+      "const": "local-live-runtime-evidence",
+      "title": "Kind",
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "openai",
+        "gemini"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "recovery_runner_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Recovery Runner Sha256",
+      "type": "string"
+    },
+    "recovery_tool_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Recovery Tool Sha256",
+      "type": "string"
+    },
+    "requested_model": {
+      "title": "Requested Model",
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/OperationEvidence"
+      },
+      "title": "Results",
+      "type": "array"
+    },
+    "runner_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Runner Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_manifest": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Manifest",
+      "type": "object"
+    },
+    "wheel_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Wheel Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "provider",
+    "requested_model",
+    "created_at",
+    "wheel_sha256",
+    "runner_sha256",
+    "recovery_runner_sha256",
+    "recovery_tool_sha256",
+    "source_manifest",
+    "all_requested_passed",
+    "results"
+  ],
+  "title": "RealtimeEvidence",
+  "type": "object"
+}

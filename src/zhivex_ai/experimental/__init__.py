@@ -1,4 +1,4 @@
-"""Explicit entrypoint for Experimental APIs.
+"""Experimental APIs and compatibility aliases for Stable live-agent APIs.
 
 Experimental contracts may change between minor releases. This namespace is
 additive: the existing top-level imports remain available for compatibility.
@@ -27,6 +27,8 @@ from .realtime import (
     RealtimeSessionConfig,
     RealtimeSessionEndedEvent,
     RealtimeSessionStartedEvent,
+    RealtimeSessionResumptionEvent,
+    RealtimeGoAwayEvent,
     RealtimeTextDeltaEvent,
     RealtimeTokenResult,
     RealtimeToolCallEvent,
@@ -49,6 +51,8 @@ __all__ = [
     "RealtimeSessionConfig",
     "RealtimeSessionEndedEvent",
     "RealtimeSessionStartedEvent",
+    "RealtimeSessionResumptionEvent",
+    "RealtimeGoAwayEvent",
     "RealtimeTextDeltaEvent",
     "RealtimeTokenResult",
     "RealtimeToolCallEvent",

@@ -77,7 +77,7 @@ asyncio.run(main())
 
 The agent code uses the portable model contract while the application owns the tool and its data. Run the complete example with `.venv/bin/python examples/agents/quickstart_agent.py`. Switching to another portable provider changes provider construction and the model ID, not the agent runtime. Follow the [quickstart](./docs/QUICKSTART.md) for installation plus offline and live verification.
 
-For reproducible development and the minimum/latest dependency matrix, see [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md). Experimental websocket users should install `zhivex-ai-sdk[realtime]`; core installation no longer includes websockets.
+For reproducible development and the minimum/latest dependency matrix, see [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md). Realtime websocket users should install `zhivex-ai-sdk[realtime]`; core installation no longer includes websockets.
 
 ## Resource ownership
 
@@ -98,7 +98,7 @@ The catalog adds GPT-6 Astra (OpenAI and Azure deployment reference), Claude Fab
 | Providers and gateway | Portable adapters, native escape hatches, fallback routing | Choose only the providers your app needs |
 | Stable orchestration | `zhivex_ai.workflows` core, stores, leases, migration, resume/fork/cancel | Adopt when the application needs durable coordination |
 | Optional extensions | `zhivex_ai.evals`, `zhivex_ai.integrations`, named workflow-engine adapters | Beta; isolate behind app-owned boundaries |
-| Incubating capabilities | `zhivex_ai.experimental`, including realtime/live agents | Experimental; expect contract changes |
+| Incubating capabilities | `zhivex_ai.experimental`, including provider-native live experiments | Experimental; expect contract changes |
 
 ## Stability And Support
 
@@ -155,7 +155,7 @@ Project setup:
 - Beta repeated evaluation trials under `zhivex_ai.evals`, with concurrency, confidence intervals, cost/latency metrics, JSON/JUnit artifacts, variants, and CI gates
 - Beta A2A v1, AG-UI, and Responses-compatible hosting under `zhivex_ai.integrations`, plus packaged skills and a loopback-only CLI playground
 - Beta provider-native hosted tools, provider-data payloads, remote MCP approvals, media clients, and lifecycle clients
-- Experimental realtime/live voice sessions plus `stream_live_agent()` under `zhivex_ai.experimental`, with durable approval suspension, idempotency, middleware, tool timeouts, and cancellation for voice-first agents
+- Stable realtime/live voice sessions plus `stream_live_agent()` under `zhivex_ai.live`, with durable approval suspension, idempotency, middleware, tool timeouts, and cancellation for voice-first agents
 - Offline business reference apps that demonstrate repair/resume, human approval, fairness checks, trace replay, and app-owned storage
 
 ## Supported Providers
@@ -2011,3 +2011,7 @@ DeepSeek V4.1 Flash and Meta `muse-spark-1.3` have explicit offline contracts. T
 New native entrypoints are `openai.native.agent_sessions()` (Beta managed Agents sessions), `openai.native.live()` (Experimental GPT-Live WebSocket/WebRTC), and `anthropic.native.messages()` (Beta Messages/compaction). These do not replace the portable `Agent` runtime. See [usage, sources and evidence boundaries](docs/MODEL_REFRESH_2026_09_16.md). New model contracts do not certify a release wheel.
 
 Release candidate `0.25.0` adds the September provider refresh and native session APIs. See the [release plan](docs/releases/0.25.0.md) for migration, validation and publication gates.
+
+Realtime event consumers can import every normalized event variant from
+`zhivex_ai.live`, including `RealtimeGoAwayEvent` and
+`RealtimeSessionResumptionEvent`; these notifications are Stable.

@@ -186,6 +186,7 @@ def _smoke_code(expected_version: str) -> str:
             run_agent_evaluation_experiment,
         )
         from zhivex_ai.experimental import stream_live_agent as experimental_stream_live_agent
+        from zhivex_ai.live import stream_live_agent as stable_stream_live_agent
         from zhivex_ai.integrations.protocols import A2AAgentExecutor, ProtocolLimits, create_a2a_agent_card
         from zhivex_ai.integrations.responses import InMemoryResponsesEventStore, ResponsesAgentHost
         from zhivex_ai.providers.base import ProviderAdapter
@@ -242,6 +243,8 @@ def _smoke_code(expected_version: str) -> str:
         assert "create_a2a_app" in zhivex_ai.__all__
         assert "create_responses_app" in zhivex_ai.__all__
         assert experimental_stream_live_agent is zhivex_ai.stream_live_agent
+        assert stable_stream_live_agent is zhivex_ai.stream_live_agent
+        assert "stream_live_agent" in STABLE_EXPORTS
         assert resources.files("zhivex_ai").joinpath("py.typed").is_file()
         assert resources.files("zhivex_ai").joinpath("__init__.pyi").is_file()
         deepseek = create_deepseek(api_key="artifact-smoke-key")
@@ -572,6 +575,7 @@ def _smoke_code(expected_version: str) -> str:
 
 def _run_base_smoke(python: Path, *, expected_version: str) -> None:
     _run([str(python), "-c", _smoke_code(expected_version)])
+    _run([str(python), str(ROOT / "scripts" / "smoke_live_runtime.py")])
     cli = _venv_bin(python.parent.parent, "zhivex-skills")
     _run([str(cli), "--help"])
     general_cli = _venv_bin(python.parent.parent, "zhivex")

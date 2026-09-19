@@ -7,7 +7,8 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 
-from .errors import UnsupportedFeatureError
+from ._streaming import Broadcast
+from .errors import UnsupportedFeatureError, ValidationError
 from .types import (
     AudioFrame,
     ModelCapabilities,
@@ -49,65 +50,6 @@ class RealtimeSessionCallbacks:
     build_close_payloads: RealtimePayloadBuilder | None = None
 
 
-@dataclass
-class _Broadcast:
-    history: list[RealtimeEvent]
-    max_history_events: int = DEFAULT_MAX_REALTIME_HISTORY_EVENTS
-    max_queue_events: int = DEFAULT_MAX_REALTIME_QUEUE_EVENTS
-    done: bool = False
-    subscribers: list[asyncio.Queue[RealtimeEvent | None]] | None = None
-
-    def __post_init__(self) -> None:
-        self.subscribers = []
-
-    async def publish(self, event: RealtimeEvent) -> None:
-        self.history.append(event)
-        if len(self.history) > self.max_history_events:
-            del self.history[: len(self.history) - self.max_history_events]
-        for queue in list(self.subscribers or []):
-            _queue_put_bounded(queue, event)
-
-    async def close(self) -> None:
-        self.done = True
-        for queue in list(self.subscribers or []):
-            _queue_put_bounded(queue, None)
-
-    def stream(self) -> AsyncIterable[RealtimeEvent]:
-        async def generator() -> AsyncIterable[RealtimeEvent]:
-            queue: asyncio.Queue[RealtimeEvent | None] = asyncio.Queue(maxsize=self.max_queue_events)
-            cursor = 0
-            self.subscribers = self.subscribers or []
-            self.subscribers.append(queue)
-            try:
-                while True:
-                    while cursor < len(self.history):
-                        event = self.history[cursor]
-                        cursor += 1
-                        yield event
-                    if self.done:
-                        return
-                    item = await queue.get()
-                    if item is None:
-                        return
-            finally:
-                if self.subscribers and queue in self.subscribers:
-                    self.subscribers.remove(queue)
-
-        return generator()
-
-
-def _queue_put_bounded(queue: asyncio.Queue[RealtimeEvent | None], item: RealtimeEvent | None) -> None:
-    try:
-        queue.put_nowait(item)
-        return
-    except asyncio.QueueFull:
-        try:
-            queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
-    queue.put_nowait(item)
-
-
 class CallbackRealtimeSession(RealtimeSession):
     def __init__(
         self,
@@ -125,17 +67,36 @@ class CallbackRealtimeSession(RealtimeSession):
         self.config = config
         self._connection = connection
         self._callbacks = callbacks
-        self._broadcast = _Broadcast(history=[])
+        self._broadcast = Broadcast[RealtimeEvent](max_events=DEFAULT_MAX_REALTIME_HISTORY_EVENTS)
         self._receiver_task: asyncio.Task[None] | None = None
         self._closed = False
         self._ended = False
+        self._update_lock = asyncio.Lock()
 
-    async def initialize(self) -> None:
-        if self._receiver_task is None:
+    async def initialize(self, *, ready_event: str | None = None, timeout_ms: int = 10_000) -> None:
+        if self._receiver_task is not None:
+            return
+        try:
+            if self._callbacks.build_initial_payloads is not None:
+                await self._send_payloads(self._callbacks.build_initial_payloads(self.config))
+            if ready_event is not None:
+                async with asyncio.timeout(timeout_ms / 1000):
+                    payload = await self._connection.recv_json()
+                    if not isinstance(payload, dict) or ready_event not in payload:
+                        raise ConnectionError("Realtime provider did not acknowledge session setup.")
+            await self._broadcast.publish(RealtimeSessionStartedEvent())
             self._receiver_task = asyncio.create_task(self._receive_loop())
-        if self._callbacks.build_initial_payloads is not None:
-            await self._send_payloads(self._callbacks.build_initial_payloads(self.config))
-        await self._broadcast.publish(RealtimeSessionStartedEvent())
+        except BaseException:
+            try:
+                async with asyncio.timeout(5):
+                    await self._connection.close()
+            except Exception:
+                # Preserve the initialization failure; cleanup is best effort.
+                pass
+            finally:
+                await self._broadcast.close()
+                self._closed = True
+            raise
 
     async def send_audio(self, frame: AudioFrame) -> None:
         await self._send_payloads(self._callbacks.build_audio_payloads(frame, self.config))
@@ -157,16 +118,18 @@ class CallbackRealtimeSession(RealtimeSession):
         turn_detection: dict[str, Any] | None = None,
         provider_options: dict[str, Any] | None = None,
     ) -> None:
-        self.config = replace(
-            self.config,
-            instructions=instructions if instructions is not None else self.config.instructions,
-            voice=voice if voice is not None else self.config.voice,
-            tools=tools if tools is not None else self.config.tools,
-            tool_choice=tool_choice if tool_choice is not None else self.config.tool_choice,
-            turn_detection=turn_detection if turn_detection is not None else self.config.turn_detection,
-            provider_options=provider_options if provider_options is not None else self.config.provider_options,
-        )
-        await self._send_payloads(self._callbacks.build_update_payloads(self.config))
+        async with self._update_lock:
+            next_config = replace(
+                self.config,
+                instructions=instructions if instructions is not None else self.config.instructions,
+                voice=voice if voice is not None else self.config.voice,
+                tools=tools if tools is not None else self.config.tools,
+                tool_choice=tool_choice if tool_choice is not None else self.config.tool_choice,
+                turn_detection=turn_detection if turn_detection is not None else self.config.turn_detection,
+                provider_options=provider_options if provider_options is not None else self.config.provider_options,
+            )
+            await self._send_payloads(self._callbacks.build_update_payloads(next_config))
+            self.config = next_config
 
     def event_stream(self) -> AsyncIterable[RealtimeEvent]:
         return self._broadcast.stream()
@@ -177,20 +140,25 @@ class CallbackRealtimeSession(RealtimeSession):
         self._closed = True
         try:
             if self._callbacks.build_close_payloads is not None:
-                await self._send_payloads(self._callbacks.build_close_payloads(self.config))
+                async with asyncio.timeout(5):
+                    for payload in self._callbacks.build_close_payloads(self.config):
+                        await self._connection.send_json(payload)
         finally:
-            await self._connection.close()
-            if self._receiver_task is not None:
-                try:
-                    await self._receiver_task
-                except Exception:
-                    pass
-            if not self._ended:
-                self._ended = True
-                await self._broadcast.publish(RealtimeSessionEndedEvent(reason="client-close"))
-            await self._broadcast.close()
+            try:
+                async with asyncio.timeout(5):
+                    await self._connection.close()
+            finally:
+                if self._receiver_task is not None:
+                    self._receiver_task.cancel()
+                    await asyncio.gather(self._receiver_task, return_exceptions=True)
+                if not self._ended:
+                    self._ended = True
+                    await self._broadcast.publish(RealtimeSessionEndedEvent(reason="client-close"))
+                await self._broadcast.close()
 
     async def _send_payloads(self, payloads: list[dict[str, Any]]) -> None:
+        if self._closed or self._broadcast.done:
+            raise ValidationError("Realtime session is closed.")
         for payload in payloads:
             await self._connection.send_json(payload)
 
@@ -199,7 +167,7 @@ class CallbackRealtimeSession(RealtimeSession):
             while True:
                 payload = await self._connection.recv_json()
                 if payload is None:
-                    break
+                    raise ConnectionError("Realtime transport closed without a session-end event.")
                 if len(json.dumps(payload, separators=(",", ":")).encode("utf-8")) > DEFAULT_MAX_REALTIME_MESSAGE_BYTES:
                     raise ValueError(f"Realtime provider message exceeded maximum size of {DEFAULT_MAX_REALTIME_MESSAGE_BYTES} bytes.")
                 for event in self._callbacks.parse_event(dict(payload or {})):

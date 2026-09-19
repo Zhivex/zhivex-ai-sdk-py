@@ -1,0 +1,91 @@
+name: Realtime exact-artifact certification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+      - run: uv sync --locked --all-extras --python 3.12
+      - run: uv build --no-build-isolation
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: realtime-candidate
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 30
+
+  certify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: openai
+            model: gpt-realtime-2.1
+            resume_model: gpt-5.6-luna
+          - provider: gemini
+            model: gemini-3.8-live
+            resume_model: gemini-3.8-flash
+    env:
+      OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.ZHIVEX_RELEASE_GOOGLE_API_KEY }}
+      CERT_PROVIDER: ${{ matrix.provider }}
+      CERT_MODEL: ${{ matrix.model }}
+      CERT_RESUME_MODEL: ${{ matrix.resume_model }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: realtime-candidate
+          path: dist
+      - name: Install the candidate in isolation
+        shell: bash
+        run: |
+          uv venv /tmp/realtime-cert --python 3.12
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          echo "CERT_WHEEL=${wheels[0]}" >> "$GITHUB_ENV"
+          uv pip install --python /tmp/realtime-cert/bin/python "${wheels[0]}[realtime]" python-dotenv
+      - name: Run the complete matrix twice
+        shell: bash
+        run: |
+          /tmp/realtime-cert/bin/python scripts/certify_live_runtime.py \
+            --wheel "$CERT_WHEEL" --env-file /dev/null \
+            --provider "$CERT_PROVIDER" --model "$CERT_MODEL" --resume-model "$CERT_RESUME_MODEL" \
+            --operations response,audio-output,audio-roundtrip,tool-loop,approval-suspend,cancel,cancel-active,approval-allow-restart,approval-deny-restart,approval-concurrent \
+            --repeat 2 --output "dist/realtime-${CERT_PROVIDER}.json"
+      - name: Enforce artifact, source, runner, operation and workflow identity
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          /tmp/realtime-cert/bin/python scripts/verify_realtime_certification.py \
+            --evidence "dist/realtime-${CERT_PROVIDER}.json" --wheel "$CERT_WHEEL" \
+            --provider "$CERT_PROVIDER" --run-id "$GITHUB_RUN_ID" --revision "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: realtime-${{ matrix.provider }}-evidence
+          path: dist/realtime-*.json
+          if-no-files-found: error
+          retention-days: 30

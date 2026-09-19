@@ -99,7 +99,7 @@ The September model refresh adds distinct API IDs, not replacements for previous
 
 ## Dependency compatibility update
 
-Development and CI use a reviewed uv lock with independent minimum/latest range tests. Realtime remains Experimental and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
+Development and CI use a reviewed uv lock with independent minimum/latest range tests. Normalized realtime APIs are Stable and its default websocket transport now requires `zhivex-ai-sdk[realtime]`; core/provider imports remain available without websockets. See [dependency compatibility](./docs/DEPENDENCY_COMPATIBILITY.md) for migration and update commands.
 
 ## Local persistence and catalog compatibility
 
@@ -112,3 +112,12 @@ Catalog construction and lookup, metadata fields and literal values, identifier 
 The `ModelApiSurface` literal additively accepts `"live"`. Native provider capabilities add `messages`, `agent_sessions`, and `live` flags; existing fields and defaults remain compatible. Native clients are accessed through `provider.native`, without new package-root exports.
 
 DeepSeek's upstream Flash aliases now resolve to V4.1. The SDK does not rewrite IDs on the wire: it updates their vision/reasoning contracts and marks their catalog entries deprecated in favor of `deepseek-flash`. V4 Pro keeps its existing contract. No API-level deprecation or removal is introduced. See [migration details](docs/MODEL_REFRESH_2026_09_16.md).
+
+## Stable live-agent promotion
+
+Normalized realtime and live-agent exports move from Experimental to Stable without signature changes. New code should import from `zhivex_ai.live`; root imports and `zhivex_ai.experimental.realtime` remain identity-preserving aliases. No persisted schema changes are introduced. Abrupt EOF, session closure before response completion, provider errors, failed/incomplete/cancelled responses, and event-history overruns now fail explicitly. Repeated identical tool-call IDs execute only once per live run; conflicting reuse fails. Native provider transports retain their own classification.
+
+The realtime preparation adds root compatibility aliases for the already emitted
+`RealtimeSessionResumptionEvent` and `RealtimeGoAwayEvent` variants, alongside their
+focused `zhivex_ai.live` imports. This is an additive contract change; existing
+imports and event discriminators remain unchanged.

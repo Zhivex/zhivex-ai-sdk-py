@@ -20,6 +20,22 @@ Related documents:
 
 ## Unreleased
 
+### Changed
+
+- Expose the existing `RealtimeGoAwayEvent` and `RealtimeSessionResumptionEvent` variants through the focused live namespace and root compatibility aliases; preserve their event discriminators.
+- Promote normalized live-agent/realtime contracts to Stable through `zhivex_ai.live`, preserving existing root and experimental import aliases. Provider-native live integrations and package maturity are unchanged.
+- Realtime event retention now raises on overrun rather than silently dropping events. Session shutdown cancels blocked receivers, bounds transport-close waits, and rejects sends after closure.
+- Live agents fail on missing completion and provider failures, wait beyond tool-only responses and Gemini generation completion, and prevent repeated tool-call events from executing the same effect twice.
+
+### Fixed
+
+- Approval recovery across realtime/text runtimes now serializes assistant history as OpenAI output text and handles slotted Gemini tool errors. Gemini Live tool calls retain their origin and use the documented unsigned-history migration marker when resumed through GenerateContent, preserving real signatures when present.
+- Wait for Gemini realtime setup acknowledgement before exposing a session; bound handshake cleanup. Preserve explicit manual turn detection for OpenAI audio input so client-finalized turns can disable automatic server commits.
+- Enforce live response-step budgets and retain ordered agent trace events. Session updates preserve the last sent configuration on validation/send failures and serialize concurrent changes. Gemini rejects unsupported updates on an open connection before sending another setup message.
+- Live verification: serialize OpenAI realtime tools with their own function schema instead of Responses-only fields; wait for assistant output after intermediate tool-turn completion; collect streamed assistant transcript fragments even when the provider emits no separate final transcript.
+- Preserve the root agent's output type, mode, name, and description when resuming a human approval after a direct handoff. Invalid typed output now fails the continuation instead of completing with an unvalidated string; the delegated agent definition remains unchanged.
+- Align the agent guide with the Stable classification and local guarantees of InMemory/SQLite agent stores.
+
 ## 0.25.0
 
 ### Added

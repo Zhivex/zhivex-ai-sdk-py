@@ -21,6 +21,7 @@ from ..errors import (
     ValidationError,
 )
 from ..messages import (
+    is_callable_tool_definition,
     is_hosted_tool_definition,
     normalize_finish_reason,
     validate_file_part,
@@ -74,6 +75,7 @@ from ..types import (
     ProviderUploadPart,
     RealtimeAudioOutputEvent,
     RealtimeConnectOptions,
+    RealtimeErrorEvent,
     RealtimeModel,
     RealtimeResponseCompletedEvent,
     RealtimeSession,
@@ -277,7 +279,7 @@ def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     for part in message.parts:
         if part.type == "text":
-            content.append({"type": "input_text", "text": part.text})
+            content.append({"type": "output_text" if message.role == "assistant" else "input_text", "text": part.text})
         elif part.type == "image":
             content.append({"type": "input_image", "image_url": part.image})
         elif part.type == "file":
@@ -2386,7 +2388,21 @@ def _openai_realtime_headers(
 
 
 def _openai_realtime_tools(config: RealtimeSessionConfig) -> list[dict[str, Any]] | None:
-    return _map_tools(config.tools, provider_name="openai")
+    if not config.tools:
+        return None
+    tools = []
+    for tool in config.tools.values():
+        if not is_callable_tool_definition(tool):
+            raise UnsupportedFeatureError("Normalized realtime tools must be callable function definitions.")
+        # Realtime has its own declaration schema, without Responses' strict,
+        # output_schema, allowed_callers or defer_loading fields.
+        tools.append({
+            "type": "function",
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": create_schema_adapter(tool.schema).json_schema(),
+        })
+    return tools
 
 
 def _openai_realtime_provider_options(provider_options: dict[str, Any] | None) -> dict[str, Any]:
@@ -2432,7 +2448,10 @@ def _openai_realtime_session_config(config: RealtimeSessionConfig, *, model_id: 
         "audio": audio or None,
         **_openai_realtime_provider_options(config.provider_options),
     }
-    return drop_none(session)
+    payload = drop_none(session)
+    if config.turn_detection == {"type": "none"}:
+        payload.setdefault("audio", {}).setdefault("input", {})["turn_detection"] = None
+    return payload
 
 
 def _openai_realtime_session_payload(config: RealtimeSessionConfig) -> dict[str, Any]:
@@ -2587,8 +2606,21 @@ def _openai_realtime_parse_event(payload: dict[str, Any]) -> list[Any]:
                     )
                 )
             ]
+    if event_type == "error":
+        return [RealtimeErrorEvent(message="Realtime provider reported an error.")]
     if event_type in {"response.done", "response.completed", "response.incomplete", "response.failed"}:
-        return [RealtimeResponseCompletedEvent(reason=event_type, provider_metadata=payload)]
+        response = dict(payload.get("response") or {})
+        if event_type in {"response.incomplete", "response.failed"} or response.get("status") in {
+            "failed", "cancelled", "incomplete",
+        }:
+            return [RealtimeErrorEvent(message="Realtime response did not complete successfully.")]
+        tool_only = any(
+            isinstance(item, dict) and item.get("type") == "function_call"
+            for item in response.get("output") or []
+        )
+        return [RealtimeResponseCompletedEvent(
+            reason="tool-calls" if tool_only else event_type, provider_metadata=payload,
+        )]
     if event_type == "session.closed":
         return [RealtimeSessionEndedEvent(reason=event_type, provider_metadata=payload)]
     return []

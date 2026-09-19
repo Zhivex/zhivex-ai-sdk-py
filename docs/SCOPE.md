@@ -30,7 +30,8 @@ The repository also contains extension areas for teams that need them. They do n
 - `zhivex_ai.evals`: evaluation fixtures, experiments, metrics, gates, and artifacts
 - `zhivex_ai.workflows`: declarative workflows, durable graphs, checkpoints, leases, and external-engine adapter contracts
 - `zhivex_ai.integrations.protocols`: A2A, AG-UI, and Responses-compatible hosting adapters
-- `zhivex_ai.experimental`: realtime/live-agent and non-portable provider experiments
+- `zhivex_ai.live`: Stable normalized realtime and live-agent contracts
+- `zhivex_ai.experimental`: provider-native live and non-portable provider experiments
 
 The general CLI, local playground, packaged-skill registry, and provider-native resource clients are developer tools or provider integrations. They remain available, but they are not required to adopt the portable agent runtime.
 

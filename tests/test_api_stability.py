@@ -151,6 +151,15 @@ def _stable_dependency_violations(root_names: Iterable[str]) -> list[str]:
     return sorted(violations)
 
 
+def test_realtime_stable_cohort_has_no_unstable_transitive_contracts():
+    from zhivex_ai.api_stability import _REALTIME_STABLE_EXPORTS
+    from zhivex_ai import live
+
+    assert set(live.__all__).issubset(_REALTIME_STABLE_EXPORTS)
+    assert _REALTIME_STABLE_EXPORTS.issubset(STABLE_EXPORTS)
+    assert _stable_dependency_violations(_REALTIME_STABLE_EXPORTS) == []
+
+
 LOCAL_PERSISTENCE_AND_CATALOG_EXPORTS = frozenset(
     (
         "AgentCapabilities",

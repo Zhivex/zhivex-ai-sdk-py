@@ -48,7 +48,7 @@ These areas remain available for teams that need them. Their presence does not e
 | Agent protocols and hosting | Yes: A2A v1, AG-UI, constrained Responses hosting, trusted run context, safe errors, limits, and optional stores/replay | Yes | Yes; official protocol packages exercised | provider-dependent | beta |
 | General CLI and local playground | Yes: inspect, run, eval, Responses/A2A serve, and loopback-only playground | Yes | Yes | N/A | beta |
 | Packaged skills | Yes | Yes | Yes | N/A | beta |
-| Realtime/live agents | Yes | partial | Yes | optional | experimental |
+| Realtime/live agents | Yes | partial | Yes | optional | stable (normalized runtime) |
 | Google native media/cache clients | Yes | provider docs | provider tests | optional | beta/native |
 
 ## GA Boundary
