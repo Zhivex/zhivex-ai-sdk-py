@@ -171,3 +171,7 @@ See [the source review and usage guide](docs/MODEL_REFRESH_2026_09_16.md). DeepS
 Native additions: GPT Image 2.5, Lyria 3.5, Anthropic signed on-demand compaction, and OpenAI managed Agent session lifecycle/events are Beta. Gemini 3.8 Live/Extended Thinking and GPT-Live are Experimental SDK integrations. GPT-Live uses `/live/sessions`, not `/realtime`, and is cataloged with `api_surface="live"`. Agents API execution uses the provider's managed harness, not `run_agent`.
 
 Offline tests establish wire behavior only. Existing evidence files retain their original model, source and artifact hashes. None of these additions inherits a live certification from an older model, a different provider route, or the previous wheel.
+
+## GPT-Live certification candidate
+
+GPT-Live WebSocket audio, interruption and durable Agent client delegation have a dedicated two-round exact-artifact gate. Passing normalized `gpt-realtime-2.1` evidence does not certify `gpt-live-1`; the new workflow job must pass for its own promotion. See [scope and lifecycle](docs/agents/gpt-live.md).

@@ -212,3 +212,7 @@ the application to persist an approved trace context and restore/link it on resu
 GPT-Live uses cumulative `usage.seconds` snapshots; never sum them as deltas. Backend Responses token usage is separate. Only a `session.closed` event confirms finalization; `aclose()` merely releases the transport. Retain `started.session.id`, final reason and sanitized usage through an application-owned observer. Raw native events can contain prompts, tool results or secrets and must not be logged wholesale.
 
 OpenAI managed Agents session IDs are distinct from Zhivex `run_id`/`session_id`. Preserve the mapping in application state and recover via session retrieval and saved items after disconnection: the event stream does not replay missed events. DeepSeek telemetry preserves the caller's requested ID even when upstream serves a legacy Flash ID with V4.1. Old recorded evidence cannot certify that new behavior.
+
+## GPT-Live correlation
+
+Correlate the provider session ID and client delegation ID with the backend idempotency key `gpt-live:<session-id>:<delegation-id>` and Agent run ID. Keep transcript timestamps distinct from audio playback. An append acknowledgment is not a delivered spoken answer. Preserve durable completion even if the voice transport fails during result publication; do not rerun completed tools.

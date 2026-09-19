@@ -89,3 +89,47 @@ jobs:
           path: dist/realtime-*.json
           if-no-files-found: error
           retention-days: 30
+
+  gpt-live:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-smoke
+    env:
+      OPENAI_API_KEY: ${{ secrets.ZHIVEX_RELEASE_OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: realtime-candidate
+          path: dist
+      - name: Install the exact candidate
+        shell: bash
+        run: |
+          uv venv /tmp/gpt-live-cert --python 3.12
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          echo "CERT_WHEEL=${wheels[0]}" >> "$GITHUB_ENV"
+          uv pip install --python /tmp/gpt-live-cert/bin/python "${wheels[0]}[realtime]" python-dotenv
+      - name: Certify audio, interruption and Agent delegation twice
+        run: |
+          /tmp/gpt-live-cert/bin/python scripts/certify_gpt_live.py \
+            --wheel "$CERT_WHEEL" --repeat 2 --output dist/gpt-live.json
+      - name: Verify complete evidence and workflow provenance
+        if: ${{ always() }}
+        run: |
+          /tmp/gpt-live-cert/bin/python scripts/verify_gpt_live_certification.py \
+            --evidence dist/gpt-live.json --wheel "$CERT_WHEEL" \
+            --run-id "$GITHUB_RUN_ID" --revision "$GITHUB_SHA" --attempt "$GITHUB_RUN_ATTEMPT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: gpt-live-evidence-attempt-${{ github.run_attempt }}
+          path: dist/gpt-live.json
+          if-no-files-found: error
+          retention-days: 30

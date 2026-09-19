@@ -121,3 +121,5 @@ The realtime preparation adds root compatibility aliases for the already emitted
 `RealtimeSessionResumptionEvent` and `RealtimeGoAwayEvent` variants, alongside their
 focused `zhivex_ai.live` imports. This is an additive contract change; existing
 imports and event discriminators remain unchanged.
+
+GPT-Live native WebSocket helpers are additive; raw event payloads remain provider-owned. The proposed Stable subset is documented in [GPT-Live](docs/agents/gpt-live.md), separately from Experimental WebRTC/resource operations. Five-second send/cleanup bounds and explicit rejection of competing readers prevent indefinite ownership conflicts.

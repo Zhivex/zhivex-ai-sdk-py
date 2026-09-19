@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterable
+from typing import TYPE_CHECKING, Any, AsyncIterable
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from .._http import Fetcher, ResponseLike
@@ -19,6 +20,9 @@ from ..realtime import (
 )
 from ..types import RealtimeConnectOptions, RetryOptions
 import json
+
+if TYPE_CHECKING:
+    from ..agent import Agent, AgentRunResult
 
 
 def _id(value: str) -> str:
@@ -235,7 +239,10 @@ class OpenAIAgentSessionsClient(_NativeClient):
 
 
 class OpenAILiveSession:
-    """Experimental single-reader native event connection, with explicit finalization."""
+    """Single-reader GPT-Live WebSocket connection with bounded finalization.
+
+    Audio playback and backend task ownership remain with the application.
+    """
 
     def __init__(self, connection: RealtimeConnection, started: dict[str, Any]) -> None:
         self.connection = connection
@@ -243,27 +250,109 @@ class OpenAILiveSession:
         self.final_event: dict[str, Any] | None = None
         self.closed = False
         self.closing = False
+        self._delegations: set[str] = set()
+        self._sending = asyncio.Lock()
+        self._receiving = asyncio.Lock()
 
-    async def send(self, event: dict[str, Any]) -> None:
+    async def append_audio(self, audio: bytes) -> None:
+        """Append nonempty mono PCM16 audio in the session-configured sample rate."""
+        if not isinstance(audio, bytes) or not audio or len(audio) % 2:
+            raise ValidationError("Live audio must contain complete PCM16 samples.")
+        await self.send({"type": "session.input_audio.append", "audio": base64.b64encode(audio).decode("ascii")})
+
+    async def append_context(
+        self, content: str, *, kind: str = "commentary",
+        delegation_id: str | None = None, event_id: str,
+    ) -> None:
+        """Send a bounded update; receive the matching acknowledgment separately.
+
+        The 500-byte UTF-8 ceiling is deliberately stricter than the provider
+        500-token limit. An acknowledgment does not establish audio playback.
+        """
+        if kind not in {"commentary", "thinking", "instructions"}:
+            raise ValidationError("Unknown Live context update kind.")
+        if not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > 500:
+            raise ValidationError("Live context must contain 1 to 500 UTF-8 bytes.")
+        if not isinstance(event_id, str) or not event_id.strip():
+            raise ValidationError("Live context requires an event ID.")
+        if delegation_id is not None and (not isinstance(delegation_id, str) or not delegation_id.strip()):
+            raise ValidationError("Live delegation ID must be nonempty.")
+        await self.send({"type": f"session.{kind}.append", "content": content,
+                         "delegation_id": delegation_id, "event_id": event_id})
+
+    async def run_delegation(
+        self, event: dict[str, Any], *, agent: Agent[Any, Any], prompt: str,
+        **run_options: Any,
+    ) -> AgentRunResult[Any]:
+        """Run one client delegation with explicit application-owned context.
+
+        Requires a durable Agent store. Duplicate/failed/cancelled attempts are
+        not replayed in this voice session. Suspended approvals are returned to
+        the application without announcing success. Resume them using the normal
+        agent APIs and explicitly publish their verified result with append_context.
+        The caller owns this coroutine; keep receiving voice events concurrently.
+        """
+        from ..agent import run_agent
+
+        delegation = event.get("delegation")
+        session_id = self.started.get("session", {}).get("id")
+        if (event.get("type") != "session.delegation.created"
+                or not isinstance(delegation, dict) or delegation.get("target") != "client"
+                or not isinstance(delegation.get("id"), str) or not delegation["id"].strip()
+                or not isinstance(session_id, str) or not session_id):
+            raise ValidationError("Expected a client delegation from an identified Live session.")
+        delegation_id = delegation["id"]
         if self.closed or self.closing:
             raise ValidationError("Live session is closing or closed.")
-        if event.get("type") == "session.start":
-            raise ValidationError("Live session already started.")
-        await self.connection.send_json(deepcopy(event))
-        if event.get("type") == "session.close":
-            self.closing = True
+        if agent.run_store is None or not isinstance(prompt, str) or not prompt.strip():
+            raise ValidationError("Live delegation requires an Agent run store and explicit context.")
+        if "idempotency_key" in run_options:
+            raise ValidationError("Live delegation owns its idempotency key.")
+        if delegation_id in self._delegations:
+            raise ValidationError("Live delegation was already claimed; inspect its durable state.")
+        if len(self._delegations) >= 256:
+            raise ValidationError("Live session delegation limit reached.")
+        self._delegations.add(delegation_id)
+        result = await run_agent(
+            agent=agent, prompt=prompt,
+            idempotency_key=f"gpt-live:{session_id}:{delegation_id}", **run_options,
+        )
+        if result.state is not None and result.state.status == "completed":
+            await self.append_context(result.text, delegation_id=delegation_id,
+                                      event_id=f"result-{delegation_id}")
+        return result
+
+    async def send(self, event: dict[str, Any]) -> None:
+        async with self._sending:
+            if self.closed or self.closing:
+                raise ValidationError("Live session is closing or closed.")
+            if event.get("type") == "session.start":
+                raise ValidationError("Live session already started.")
+            async with asyncio.timeout(5):
+                await self.connection.send_json(deepcopy(event))
+            if event.get("type") == "session.close":
+                self.closing = True
 
     async def receive(self) -> dict[str, Any]:
-        payload = await self.connection.recv_json()
-        if not isinstance(payload, dict):
-            raise ParseError("Live connection ended without a session.closed event.")
-        if payload.get("type") == "session.closed":
-            self.final_event = payload
-            self.closing = True
-        return payload
+        if self.closed or self.final_event is not None:
+            raise ValidationError("Live session is closed or finalized.")
+        if self._receiving.locked():
+            raise ValidationError("Live sessions permit only one event reader.")
+        async with self._receiving:
+            payload = await self.connection.recv_json()
+            if not isinstance(payload, dict):
+                raise ParseError("Live connection ended without a session.closed event.")
+            if payload.get("type") == "session.closed":
+                self.final_event = payload
+                self.closing = True
+            return payload
 
     async def finish(self, *, timeout_ms: int = 10_000) -> dict[str, Any]:
         """Drain final events with no competing reader; always release the socket."""
+        if timeout_ms <= 0:
+            raise ValidationError("Live finalization timeout must be positive.")
+        if self._receiving.locked():
+            raise ValidationError("Stop the event reader before finalizing Live.")
         try:
             async with asyncio.timeout(timeout_ms / 1000):
                 if self.final_event is None and not self.closing:
@@ -278,7 +367,8 @@ class OpenAILiveSession:
         """Release transport; this alone does not establish provider finalization."""
         if not self.closed:
             self.closed = True
-            await self.connection.close()
+            async with asyncio.timeout(5):
+                await self.connection.close()
 
     async def __aenter__(self) -> OpenAILiveSession:
         return self
@@ -361,7 +451,11 @@ class OpenAILiveClient(_NativeClient):
                     raise ParseError("GPT-Live did not acknowledge session startup.")
             return OpenAILiveSession(connection, started)
         except BaseException:
-            await connection.close()
+            try:
+                async with asyncio.timeout(5):
+                    await connection.close()
+            except Exception:
+                pass  # Cleanup must not replace the startup failure.
             raise
 
     async def hangup(

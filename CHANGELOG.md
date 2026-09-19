@@ -20,6 +20,12 @@ Related documents:
 
 ## Unreleased
 
+### GPT-Live WebSocket candidate
+
+- Add validated PCM16 audio/context helpers and durable client delegation from GPT-Live to `Agent`, preserving approvals and rejecting duplicate delegation execution.
+- Bound native Live sends and transport cleanup, enforce one reader, preserve startup failures during cleanup, and document finalization versus playback.
+- Add synthetic audio/interruption/delegation fixtures, exact-wheel certification and a protected CI job. This is a promotion candidate pending protected evidence; native WebRTC/resource operations remain Experimental.
+
 ### Changed
 
 - Expose the existing `RealtimeGoAwayEvent` and `RealtimeSessionResumptionEvent` variants through the focused live namespace and root compatibility aliases; preserve their event discriminators.
