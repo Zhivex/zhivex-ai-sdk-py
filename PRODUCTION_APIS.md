@@ -186,3 +186,9 @@ Application-owned `ModelCatalog` construction, lookup and metadata types are Sta
 Keep managed OpenAI Agents and GPT-Live behind an application-owned API boundary. Use `provider.native.agent_sessions()` or `provider.native.live()`; never place a project API key in a browser. For WebRTC, the trusted backend calls `live().create(session=..., transport={"type": "webrtc", "sdp": offer})` and returns the provider's answer. Authorization, approval decisions, event persistence and reconciliation remain application responsibilities. These native create/input operations do not automatically retry, because delivery may already have caused work.
 
 For Anthropic on-demand compaction, retain full history until the response contains a non-null signed block. Replace only the summarized prefix, preserve the block and signature exactly, and retain the same system/tools when replaying thinking. The SDK does not compact `Agent` memory automatically. See [the full guide](docs/MODEL_REFRESH_2026_09_16.md).
+
+For Google Gemini Enterprise Agent Platform (Vertex), prefer the optional `[vertex]`
+extra and ADC for renewable service credentials. Explicit bearer tokens remain
+caller-managed. API key Express Mode is useful for scoped inference verification;
+it does not grant standard Cloud administrative permissions. See
+[the Vertex guide](./docs/providers/vertex.md).

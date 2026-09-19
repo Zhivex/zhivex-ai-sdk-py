@@ -228,6 +228,8 @@ def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[FinishReason
         return "error", status
     if status == "incomplete":
         reason = (payload.get("incomplete_details") or {}).get("reason")
+        if reason == "max_output_tokens":
+            return "length", reason
         return normalize_finish_reason(reason or status), reason or status
     return normalize_finish_reason(status), status
 

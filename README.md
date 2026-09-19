@@ -1,5 +1,11 @@
 # Zhivex AI SDK for Python
 
+Version 0.27.0 expands Google Vertex AI support (now Gemini Enterprise Agent Platform),
+including Express/ADC authentication, current Google model routes and Beta native
+services. See the [Vertex guide](docs/providers/vertex.md) and
+[release scope](docs/providers/vertex-readiness-audit.md) for supported operations
+and remaining access/verification limits. The package remains Beta.
+
 [![CI](https://img.shields.io/github/actions/workflow/status/Zhivex/zhivex-ai-sdk-py/ci.yml?branch=main&label=CI)](https://github.com/Zhivex/zhivex-ai-sdk-py/actions)
 [![PyPI](https://img.shields.io/pypi/v/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)
 [![Python](https://img.shields.io/pypi/pyversions/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)
@@ -246,7 +252,7 @@ portable providers remain `contract-supported`. Certification does not change po
 | openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | Yes |
 | openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
 | qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No |
-| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | Yes | Yes | No | No | No | Yes | No | No | No | Yes | No | No | No | No |
+| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No |
 | vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
 
 ### Agent Capabilities
@@ -288,7 +294,7 @@ Tool support now follows the same rule everywhere:
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
-- Gemini and Vertex are portable for the core contract. `gemini-3.7-flash` is the latest catalog reference; `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence and reject unsupported custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks GA Interactions-only `gemini-omni-1.1-flash`, Transcribe, and `gemini-3.1-flash-lite-image`; Omni is not claimed for Vertex. Gemini built-in tools remain native-only entrypoints.
+- Gemini and Vertex are portable for the core contract. `gemini-3.8-flash` is the latest text catalog reference; `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence and reject unsupported custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks GA Interactions-only `gemini-omni-1.1-flash`, Transcribe, and `gemini-3.1-flash-lite-image`; Vertex separately supports Preview `gemini-omni-1.1-flash-preview` through native Interactions; see the [Vertex guide](docs/providers/vertex.md). Gemini built-in tools remain native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits exactly one terminal `on_attempt` payload for each executed retry or skipped target. Terminal events carry deterministic `attemptId`, `phase="finished"`, `terminal=True`, typed `errorType`, measured `latencyMs`, retry/target indexes, and a machine-readable `reason` for policy skips or refusals; observer failures do not change provider outcomes. A configured `model_catalog` actively ranks fallbacks from typed recommendations and supplies capability, availability, and cost evidence through `result.route_decision.target_evidence`; cataloged models never use `pro`/`flash`/`lite` name heuristics. Cost ceilings and required capabilities fail closed when their catalog evidence is missing. Uncataloged routes retain the legacy scoring path, and unknown-price targets remain eligible when no ceiling is configured. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback. See [docs/GATEWAY.md](./docs/GATEWAY.md) for behavior and migration guidance.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
@@ -1571,7 +1577,7 @@ Notes:
 - `create_gemini().media()` and `create_vertex().media()` expose Lyria-style native audio/music generation where the Google model route supports it, including `lyria-3-pro-preview` and `lyria-3-clip-preview`.
 - `create_gemini().realtime_model("gemini-3.5-live-translate-preview")` exposes Gemini Live Translate with typed `RealtimeSessionConfig(translation_target_language_code="es", translation_echo_target_language=True, input_audio_media_type="audio/pcm;rate=16000", output_audio_media_type="audio/pcm")` setup. Live Translate is audio-only; text input, tools, and instructions fail fast for that model. The catalog tracks `gemini-3.7-flash` as the latest regular-generation reference while retaining exact evidence for `gemini-3.6-flash` and `gemini-3.5-flash-lite`.
 - `create_gemini().batches()` exposes Gemini Batch API generation and embedding jobs.
-- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client, including GA `gemini-omni-1.1-flash` payloads on the Gemini Developer API. The deprecated `gemini-omni-flash-preview` remains a separate lifecycle record through its announced shutdown window. Deep Research payloads default to background storage; Omni is not claimed for Vertex.
+- `create_gemini().interactions()` exposes Gemini Interactions and Deep Research polling/streaming helpers as a raw beta client, including GA `gemini-omni-1.1-flash` payloads on the Gemini Developer API. The deprecated `gemini-omni-flash-preview` remains a separate lifecycle record through its announced shutdown window. Deep Research payloads default to background storage; Vertex separately supports Preview `gemini-omni-1.1-flash-preview` through native Interactions; see the [Vertex guide](docs/providers/vertex.md).
 - `create_openai().file_search_stores()` exposes OpenAI Vector Store / File Search management.
 - `create_azure_openai().file_search_stores()` exposes Azure OpenAI Vector Store / File Search management through the versionless `/openai/v1` endpoint and works with either API key or Entra ID authentication.
 - `create_vertex()` now exports native grounding helpers such as `vertex_google_search_tool(...)`, `vertex_google_maps_tool(...)`, `vertex_vertex_ai_search_tool(...)`, and `vertex_external_search_tool(...)`.
@@ -2017,3 +2023,24 @@ Realtime event consumers can import every normalized event variant from
 `RealtimeSessionResumptionEvent`; these notifications are Stable.
 
 GPT-Live `gpt-live-1` uses a separate native WebSocket path with durable Agent client delegation. See the [GPT-Live contract and certification scope](docs/agents/gpt-live.md); it is not an alias for `realtime_model()`.
+
+Vertex's catalog distinguishes restricted targets: Gemini 3.8 Flash Cyber is
+`limited` and has no function/hosted tool support; Robotics ER 2 remains
+early-access Preview. These entries do not imply project access or live
+certification. See the [Vertex guide](docs/providers/vertex.md).
+
+For the Beta native Vertex Responses API, see
+[`examples/integrations/vertex.py`](examples/integrations/vertex.py) with
+`--adc --project PROJECT --responses`. This requires access to a compatible model;
+Grok 4.6 is not live-verified in the current integration project.
+
+Vertex also catalogs the global Preview endpoint `gemini-3.1-pro-preview-customtools`; see the [Vertex guide](docs/providers/vertex.md#gemini-pro-custom-tools-endpoint) for scope and integration evidence.
+
+Vertex also routes `openai/gpt-oss-120b-maas` (or `gpt-oss-120b-maas`) through Google's global Chat Completions endpoint. See the [coverage and integration evidence](docs/providers/vertex.md#openai-gpt-oss-120b-on-google).
+
+Vertex Mistral Medium 3 has Beta normalized text/streaming routing through regional raw prediction endpoints. See [setup and current live limitations](docs/providers/vertex.md#mistral-partner-models).
+
+Native Model Garden also exposes Beta endpoint lifecycle and explicit deploy/undeploy operations; see the [endpoint guide](docs/providers/vertex.md#endpoint-lifecycle-and-deployment-beta) for operation handling and validation limits.
+It also provides a separate [project model registry](docs/providers/vertex.md#project-model-registry-beta) for registering existing cloud artifacts and managing model metadata.
+
+Beta `vertex.native.rag()` exposes native RAG corpus/file management and retrieval; [scope and limitations](docs/providers/vertex.md#native-rag-engine-beta).

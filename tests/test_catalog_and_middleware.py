@@ -233,6 +233,7 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("gemini", "veo-3.1-fast-generate-preview", {"speed", "vision"}),
             ("gemini", "lyria-3-pro-preview", {"audio"}),
             ("vertex", "gemini-3.1-pro-preview", {"reasoning", "tools", "vision"}),
+            ("vertex", "gemini-3.1-pro-preview-customtools", {"reasoning", "tools", "vision"}),
             (
                 "vertex",
                 "gemini-3.7-flash",
@@ -606,6 +607,29 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             expected_date = "2026-09-05" if (entry.provider, entry.model_id) in reviewed else "2026-08-29"
             if (entry.provider, entry.model_id) == ("qwen", "qwen3.8-omni-flash"):
                 expected_date = "2026-09-18"
+            if entry.provider == "vertex" and entry.model_id in {
+                "openai/gpt-oss-120b-maas",
+                "mistralai/mistral-medium-3",
+                "mistralai/mistral-small-2503", "mistralai/codestral-2",
+                "gemini-3.1-pro-preview-customtools",
+                "google/gemma-4-26b-a4b-it-maas", "gemini-live-2.5-flash-native-audio",
+                "gemini-embedding-2",
+                "gemini-3.1-flash-lite-image", "gemini-2.5-flash-image",
+                "gemini-2.5-flash-tts", "gemini-2.5-pro-tts",
+                "gemini-2.5-flash-lite-preview-tts",
+                "veo-3.1-generate-001", "veo-3.1-fast-generate-001",
+                "veo-3.1-lite-generate-001",
+                "zai-org/glm-5.2-maas",
+                "deepseek-ai/deepseek-v3.2-maas", "zai-org/glm-5-maas",
+                "moonshotai/kimi-k2-thinking-maas", "minimaxai/minimax-m2-maas",
+                "qwen/qwen3-next-80b-a3b-instruct-maas",
+                "gemini-3.5-transcribe-preview",
+                "gemini-3.5-transcribe-live-preview",
+                "gemini-omni-1.1-flash-preview",
+                "gemini-3.5-live-translate-preview",
+                "gemini-3.8-flash-cyber", "gemini-robotics-er-2-preview",
+            }:
+                expected_date = "2026-09-19"
             self.assertEqual(entry.verified_at, expected_date)
         self.assertTrue(all(entry.capabilities is not None for entry in entries))
         self.assertTrue(all(entry.cost_per_1k_tokens is None for entry in entries))

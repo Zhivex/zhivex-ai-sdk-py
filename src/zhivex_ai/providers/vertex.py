@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import os
+import math
+import base64
 from dataclasses import dataclass, field, replace
 from copy import deepcopy
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from .._http import Fetcher, default_fetch
-from ..errors import ConfigurationError, ProviderHTTPError, ValidationError
+from ..errors import ConfigurationError, ProviderHTTPError, ValidationError, UnsupportedFeatureError
 from ..messages import normalize_finish_reason
 from ..realtime import CallbackRealtimeSession, RealtimeConnectionFactory, RealtimeSessionCallbacks, open_websocket_connection, unsupported_browser_token
 from ..runtime import with_retry
-from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, HostedToolDefinition, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, TokenCountDetail, TokenUsage
+from ..types import AudioInput, TranscriptionOutput, RealtimeTranscriptEvent
+from ..types import AgentCapabilities, CountTokensResult, EmbedResult, EmbeddingContent, EmbeddingModel, GroundedGenerateResult, GroundedModelGenerateInput, HostedToolDefinition, ModelCapabilities, ModelGenerateInput, PortableSupport, RealtimeConnectOptions, RealtimeSession, RealtimeSessionConfig, RealtimeTokenResult, RetryOptions, TokenCountDetail, TokenUsage
+from ._vertex_platform import VertexAgentPlatformClient, VertexModelGardenClient, VertexRagClient
+from ._vertex_native import VertexBatchesClient, VertexCachedContentsClient, VertexInteractionsClient, VertexVideosClient, VertexMediaClient
+from ._vertex_native import _request
+from ._vertex_auth import VertexAuth, default_credentials
+from ._vertex_chat import (
+    GEMMA_MAAS_MODEL, MISTRAL_VERTEX_MODELS, VertexChatLanguageModel,
+    VERTEX_MAAS_TEXT_MODELS, resolve_maas_model, maas_capabilities,
+)
 from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from ._payload import drop_none
 from .gemini import (
@@ -21,10 +33,8 @@ from .gemini import (
     GeminiImagesClient,
     GeminiGroundedLanguageModel,
     GeminiLanguageModel,
-    GeminiMediaClient,
     GeminiSpeechModel,
     GeminiTranscriptionModel,
-    GeminiVideosClient,
     gemini_code_execution_tool,
     gemini_computer_use_tool,
     gemini_google_maps_tool,
@@ -40,6 +50,7 @@ from .gemini import (
     _gemini_realtime_build_text,
     _gemini_realtime_build_tool_result,
     _gemini_realtime_build_update,
+    _gemini_realtime_setup,
     _gemini_realtime_parse_event,
     _map_messages,
     _map_reasoning,
@@ -56,23 +67,23 @@ _VERTEX_EXTERNAL_SEARCH_PROVIDER_OPTIONS = ("external_search", "externalSearch")
 
 
 def vertex_google_search_tool(*, exclude_domains: list[str] | None = None, **extra: Any) -> HostedToolDefinition:
-    return gemini_google_search_tool(exclude_domains=exclude_domains, **extra)
+    return replace(gemini_google_search_tool(exclude_domains=exclude_domains, **extra), provider="vertex")
 
 
 def vertex_google_maps_tool(**config: Any) -> HostedToolDefinition:
-    return gemini_google_maps_tool(**config)
+    return replace(gemini_google_maps_tool(**config), provider="vertex")
 
 
 def vertex_url_context_tool(**config: Any) -> HostedToolDefinition:
-    return gemini_url_context_tool(**config)
+    return replace(gemini_url_context_tool(**config), provider="vertex")
 
 
 def vertex_code_execution_tool(**config: Any) -> HostedToolDefinition:
-    return gemini_code_execution_tool(**config)
+    return replace(gemini_code_execution_tool(**config), provider="vertex")
 
 
 def vertex_computer_use_tool(**config: Any) -> HostedToolDefinition:
-    return gemini_computer_use_tool(**config)
+    return replace(gemini_computer_use_tool(**config), provider="vertex")
 
 
 def vertex_vertex_ai_search_tool(*, datastore: str, **extra: Any) -> dict[str, Any]:
@@ -164,9 +175,99 @@ class VertexEmbeddingModel(EmbeddingModel):
         return f"{self.base_url}/publishers/google/models/{self.model_id}:predict"
 
     def _headers(self) -> dict[str, str]:
-        return {"content-type": "application/json", "authorization": f"Bearer {self.access_token}"}
+        return {"content-type": "application/json"}
+
+    @staticmethod
+    def _vector(value: Any) -> list[float]:
+        if not isinstance(value, list) or not value or any(
+            isinstance(item, bool) or not isinstance(item, (int, float))
+            or not math.isfinite(item) for item in value
+        ):
+            raise ValidationError("Vertex returned an invalid or missing embedding vector.")
+        return value
+
+    async def _embed_content(self, values: list[EmbeddingContent], options: Any) -> EmbedResult:
+        config = _embedding_request_options(options)
+        if config.get("auto_truncate") is not None:
+            raise ValidationError("auto_truncate is not supported by the Vertex embedContent contract.")
+        for key in ("task_types", "titles"):
+            if key in config and (not isinstance(config[key], list) or len(config[key]) != len(values)):
+                raise ValidationError(f"{key} must contain one item per embedding input.")
+        retry = RetryOptions(
+            timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
+            max_retries=_provider_option_value(options, "max_retries", "maxRetries"),
+            retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs"),
+        )
+        embeddings = []
+        responses = []
+        # embedContent embeds one Content; list entries are independent inputs,
+        # while multiple parts inside an entry form one multimodal embedding.
+        for index, value in enumerate(values):
+            body = drop_none({
+                "content": {"parts": _embedding_content_parts(value)},
+                "taskType": config["task_types"][index] if "task_types" in config else config.get("task_type"),
+                "title": config["titles"][index] if "titles" in config else config.get("title"),
+                "outputDimensionality": config.get("output_dimensionality"),
+            })
+            payload = await _request(
+                self.fetch,
+                f"{self.base_url}/publishers/google/models/{self.model_id}:embedContent",
+                "POST", body, retry,
+            )
+            embeddings.append(self._vector((payload.get("embedding") or {}).get("values")))
+            responses.append(payload)
+        return EmbedResult(embeddings=embeddings, raw_response=responses)
+
+    async def _embed_multimodal_predict(self, values: list[EmbeddingContent], options: Any) -> EmbedResult:
+        config = _embedding_request_options(options)
+        if any(config.get(key) is not None for key in ("task_type", "task_types", "title", "titles", "auto_truncate")):
+            raise ValidationError("multimodalembedding@001 does not support text embedding task/title/truncation options.")
+        instances = []
+        fields = []
+        for value in values:
+            parts = _embedding_content_parts(value)
+            if len(parts) != 1:
+                raise ValidationError("multimodalembedding@001 requires one text or image per portable input; use native Model Garden raw_predict for combined modalities or video segments.")
+            part = parts[0]
+            if "text" in part:
+                instances.append({"text": part["text"]})
+                fields.append("textEmbedding")
+            elif "inlineData" in part and str(part["inlineData"].get("mimeType", "")).startswith("image/"):
+                instances.append({"image": {"bytesBase64Encoded": part["inlineData"]["data"]}})
+                fields.append("imageEmbedding")
+            elif "fileData" in part and str(part["fileData"].get("mimeType", "")).startswith("image/") and str(part["fileData"].get("fileUri", "")).startswith("gs://"):
+                instances.append({"image": {"gcsUri": part["fileData"]["fileUri"]}})
+                fields.append("imageEmbedding")
+            else:
+                raise ValidationError("multimodalembedding@001 portable inputs must be text, inline images, or GCS images.")
+        retry = RetryOptions(
+            timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
+            max_retries=_provider_option_value(options, "max_retries", "maxRetries"),
+            retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs"),
+        )
+        embeddings = []
+        responses = []
+        # This model accepts one instance per request and returns distinct vectors
+        # for each modality, rather than a fused vector like Embedding 2.
+        for instance, response_field in zip(instances, fields, strict=True):
+            payload = await _request(self.fetch, self._url(), "POST", {
+                "instances": [instance],
+                "parameters": drop_none({"dimension": config.get("output_dimensionality")}),
+            }, retry)
+            predictions = payload.get("predictions")
+            if not isinstance(predictions, list) or len(predictions) != 1 or not isinstance(predictions[0], dict):
+                raise ValidationError("Vertex multimodal embedding response cardinality does not match its input.")
+            embeddings.append(self._vector(predictions[0].get(response_field)))
+            responses.append(payload)
+        return EmbedResult(embeddings=embeddings, raw_response=responses)
 
     async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
+        if not values:
+            return EmbedResult(embeddings=[])
+        if self.model_id in {"gemini-embedding-2", "gemini-embedding-2-preview"}:
+            return await self._embed_content(values, options)
+        if self.model_id == "multimodalembedding@001":
+            return await self._embed_multimodal_predict(values, options)
         config = _embedding_request_options(options)
         task_type = config.get("task_type")
         title = config.get("title")
@@ -199,13 +300,21 @@ class VertexEmbeddingModel(EmbeddingModel):
             max_retries=_provider_option_value(options, "max_retries", "maxRetries") or 0,
             retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs") or 250,
         )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(f"Vertex request failed with status {response.status_code}.", response.status_code, response_body=await response.text())
         payload = await response.json()
-        return EmbedResult(embeddings=[prediction.get("embeddings", {}).get("values", []) for prediction in payload.get("predictions", [])], raw_response=payload)
+        predictions = payload.get("predictions")
+        if not isinstance(predictions, list) or len(predictions) != len(values):
+            raise ValidationError("Vertex embedding response cardinality does not match its inputs.")
+        return EmbedResult(embeddings=[self._vector(prediction.get("embeddings", {}).get("values")) for prediction in predictions], raw_response=payload)
 
 
 def create_vertex(
     *,
     access_token: str | None = None,
+    api_key: str | None = None,
+    credentials: Any = None,
+    express_mode: bool | None = None,
     project_id: str | None = None,
     location: str = "us-central1",
     api_version: str = "v1",
@@ -214,13 +323,37 @@ def create_vertex(
     realtime_url: str | None = None,
     realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ) -> ProviderBundle:
-    resolved_token = access_token or os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")
-    if not resolved_token:
-        raise ConfigurationError("Missing Vertex access token.")
+    if access_token == "" or api_key == "":
+        raise ConfigurationError("Vertex credentials must not be empty.")
+    if sum(value is not None for value in (access_token, api_key, credentials)) > 1:
+        raise ConfigurationError("Specify only one of access_token, api_key, or credentials.")
+    # Explicit authentication always wins over ambient environment credentials.
+    explicit_auth = any(value is not None for value in (access_token, api_key, credentials))
+    resolved_token = access_token
+    resolved_key = api_key
+    if not explicit_auth:
+        resolved_token = os.getenv("VERTEX_ACCESS_TOKEN") or os.getenv("GOOGLE_ACCESS_TOKEN")
+        if not resolved_token:
+            resolved_key = os.getenv("VERTEX_API_KEY") or os.getenv("GOOGLE_API_KEY")
     resolved_project = project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")
-    if not resolved_project and not base_url:
+    if not resolved_token and not resolved_key and credentials is None:
+        credentials, adc_project = default_credentials()
+        resolved_project = resolved_project or adc_project
+    express = bool(resolved_key and not resolved_project) if express_mode is None else express_mode
+    if express and not resolved_key:
+        raise ConfigurationError("Vertex Express Mode requires an API key.")
+    if not express and not resolved_project and not base_url:
         raise ConfigurationError("Missing Vertex project ID.")
-    resolved_base = base_url or f"https://{location}-aiplatform.googleapis.com/{api_version}/projects/{resolved_project}/locations/{location}"
+    host = (
+        "aiplatform.googleapis.com" if express or location == "global" else
+        f"aiplatform.{location}.rep.googleapis.com" if location in {"us", "eu"} else
+        f"{location}-aiplatform.googleapis.com"
+    )
+    resolved_base = base_url or (
+        f"https://{host}/{api_version}" if express else
+        f"https://{host}/{api_version}/projects/{resolved_project}/locations/{location}"
+    )
+    auth = VertexAuth(access_token=resolved_token, api_key=resolved_key, credentials=credentials)
     requester = fetch or default_fetch
 
     class VertexFetcher:
@@ -235,8 +368,13 @@ def create_vertex(
             timeout_ms: int | None,
             stream: bool = False,
         ):
-            merged = dict(headers)
-            merged["authorization"] = f"Bearer {resolved_token}"
+            merged = {key: value for key, value in headers.items() if key.lower() not in {"authorization", "x-goog-api-key"}}
+            destination = urlsplit(url)
+            origin = urlsplit(resolved_base)
+            storage_download = (destination.scheme == "https" and destination.netloc == "storage.googleapis.com"
+                and destination.path.startswith("/storage/v1/b/") and method == "GET" and not resolved_key)
+            if storage_download or (destination.scheme, destination.netloc) == (origin.scheme, origin.netloc):
+                merged.update(await auth.headers(method, url))
             request_kwargs: dict[str, Any] = {
                 "headers": merged,
                 "json_body": json_body,
@@ -255,11 +393,17 @@ def create_vertex(
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
 
+        def _vertex_input(self, input: ModelGenerateInput) -> ModelGenerateInput:
+            normalized = replace(input, provider_options=_normalize_vertex_provider_options(input.provider_options))
+            if self.model_id == "gemini-3.8-flash-cyber" and _map_tools(normalized.tools, normalized.provider_options):
+                raise UnsupportedFeatureError("Gemini 3.8 Flash Cyber does not support tools.")
+            return normalized
+
         async def generate(self, input: ModelGenerateInput):  # type: ignore[override]
-            return await super().generate(replace(input, provider_options=_normalize_vertex_provider_options(input.provider_options)))
+            return await super().generate(self._vertex_input(input))
 
         async def stream(self, input: ModelGenerateInput):  # type: ignore[override]
-            return await super().stream(replace(input, provider_options=_normalize_vertex_provider_options(input.provider_options)))
+            return await super().stream(self._vertex_input(input))
 
     class VertexSpeechModel(GeminiSpeechModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
@@ -268,6 +412,47 @@ def create_vertex(
     class VertexTranscriptionModel(GeminiTranscriptionModel):
         def _url(self, action: str) -> str:  # type: ignore[override]
             return f"{self.base_url}/publishers/google/models/{self.model_id}:{action}"
+
+        async def transcribe(
+            self, *, audio: AudioInput, prompt: str | None = None,
+            language: str | None = None,
+            provider_options: dict[str, Any] | None = None,
+            options: RetryOptions | None = None,
+        ) -> TranscriptionOutput:
+            if self.model_id == "gemini-3.5-transcribe-live-preview":
+                raise ValidationError("Use the realtime client for streaming Transcribe.")
+            if self.model_id != "gemini-3.5-transcribe-preview":
+                return await super().transcribe(
+                    audio=audio, prompt=prompt, language=language,
+                    provider_options=provider_options, options=options,
+                )
+            if prompt is not None:
+                raise ValidationError("Transcribe accepts audio only; use customVocabulary for speech biasing.")
+            body = deepcopy(provider_options or {})
+            if any(key in body for key in ("contents", "systemInstruction", "tools", "toolConfig")):
+                raise ValidationError("Transcribe does not accept content overrides, system instructions or tools.")
+            config = body.setdefault("generationConfig", {})
+            if not isinstance(config, dict):
+                raise ValidationError("generationConfig must be an object.")
+            transcription = config.setdefault("audioTranscriptionConfig", {})
+            if not isinstance(transcription, dict):
+                raise ValidationError("audioTranscriptionConfig must be an object.")
+            if language:
+                transcription["languageCodes"] = [language]
+            encoded = audio.data if isinstance(audio.data, str) else base64.b64encode(bytes(audio.data)).decode("ascii")
+            body["contents"] = [{"role": "user", "parts": [
+                {"inlineData": {"mimeType": audio.media_type, "data": encoded}},
+            ]}]
+            payload = await _request(self.fetch, self._url("generateContent"), "POST", body, options)
+            candidate = (payload.get("candidates") or [{}])[0]
+            parts = (candidate.get("content") or {}).get("parts") or []
+            text = "".join(
+                str(part.get("text") or (part.get("audioTranscription") or {}).get("text") or "")
+                for part in parts if isinstance(part, dict) and not part.get("thought")
+            )
+            if not text.strip():
+                raise ValidationError("Transcribe returned no transcript.")
+            return TranscriptionOutput(text=text, raw_response=payload)
 
     class VertexGroundedLanguageModel(GeminiGroundedLanguageModel):
         capabilities = GEMINI_GROUNDED_CAPABILITIES
@@ -408,6 +593,10 @@ def create_vertex(
 
         def __init__(self, model_id: str) -> None:
             self.model_id = model_id
+            if model_id == "gemini-3.5-transcribe-live-preview":
+                self.capabilities = replace(VERTEX_REALTIME_CAPABILITIES, realtime_audio_output=False, realtime_tools=False)
+            elif model_id == "gemini-3.5-live-translate-preview":
+                self.capabilities = replace(VERTEX_REALTIME_CAPABILITIES, realtime_tools=False)
 
         async def connect(
             self,
@@ -415,12 +604,44 @@ def create_vertex(
             options: RealtimeConnectOptions | None = None,
         ) -> RealtimeSession:
             resolved_config = config or RealtimeSessionConfig()
+            if express:
+                raise ConfigurationError("Vertex Live requires a standard project/location configuration.")
+            setup = _gemini_realtime_setup(resolved_config, self.model_id)
+            is_transcribe = self.model_id == "gemini-3.5-transcribe-live-preview"
+            if is_transcribe:
+                settings = setup["setup"]
+                if settings.get("systemInstruction") or settings.get("tools") or resolved_config.voice:
+                    raise ValidationError("Live Transcribe accepts audio without instructions, tools or a voice.")
+                if settings["generationConfig"].get("responseModalities") != ["TEXT"]:
+                    raise ValidationError("Live Transcribe requires TEXT output.")
+                settings.setdefault("inputAudioTranscription", {})
+
+            def parse_event(payload):
+                events = _gemini_realtime_parse_event(payload)
+                if not is_transcribe or not isinstance(payload, dict):
+                    return events
+                content = payload.get("serverContent") or payload.get("server_content") or {}
+                # Transcribe finalizes utterances independently of conversation turns.
+                for event in events:
+                    if isinstance(event, RealtimeTranscriptEvent) and event.role == "user":
+                        event.is_final = True
+                interim = content.get("interimInputTranscription") or content.get("interim_input_transcription")
+                if isinstance(interim, dict) and interim.get("text"):
+                    events.insert(0, RealtimeTranscriptEvent(text=str(interim["text"]), role="user", is_final=False, provider_metadata=payload))
+                return events
+
+            def build_text(text, session_config):
+                if is_transcribe:
+                    raise ValidationError("Live Transcribe accepts audio input only.")
+                return _gemini_realtime_build_text(text, session_config, self.model_id)
+            setup["setup"]["model"] = (self.model_id if self.model_id.startswith("projects/") else
+                f"projects/{resolved_project}/locations/{location}/publishers/google/models/{self.model_id}")
             url = realtime_url or resolved_config.provider_options.get("realtime_url") if resolved_config.provider_options else realtime_url
             if not url:
-                url = f"wss://{location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.{api_version}.PredictionService.BidiGenerateContent"
+                url = f"wss://{host}/ws/google.cloud.aiplatform.{api_version}.LlmBidiService/BidiGenerateContent"
             headers = {
-                "authorization": f"Bearer {resolved_token}",
                 **dict((resolved_config.provider_options or {}).get("headers") or {}),
+                **(await auth.headers("GET", url)),
             }
             factory = realtime_connection_factory or (lambda u, h, o: open_websocket_connection(u, headers=h, options=o))
             connection = await factory(url, headers, options)
@@ -431,15 +652,15 @@ def create_vertex(
                 config=resolved_config,
                 connection=connection,
                 callbacks=RealtimeSessionCallbacks(
-                    parse_event=_gemini_realtime_parse_event,
+                    parse_event=parse_event,
                     build_audio_payloads=_gemini_realtime_build_audio,
-                    build_text_payloads=_gemini_realtime_build_text,
+                    build_text_payloads=build_text,
                     build_tool_result_payloads=_gemini_realtime_build_tool_result,
                     build_update_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
-                    build_initial_payloads=lambda session_config: _gemini_realtime_build_update(session_config, self.model_id),
+                    build_initial_payloads=lambda session_config: [setup],
                 ),
             )
-            await session.initialize()
+            await session.initialize(ready_event="setupComplete", timeout_ms=options.timeout_ms if options and options.timeout_ms is not None else 10_000)
             return session
 
         async def create_browser_token(
@@ -449,20 +670,47 @@ def create_vertex(
         ) -> RealtimeTokenResult:
             return await unsupported_browser_token(config=config, options=options)
 
-    native = ProviderAdapter(
-        name="vertex",
-        language_model_factory=lambda model_id: VertexLanguageModel(
+    def language_model(model_id: str) -> VertexChatLanguageModel | VertexLanguageModel:
+        model_id = resolve_maas_model(model_id)
+        if model_id in MISTRAL_VERTEX_MODELS:
+            if express:
+                raise ConfigurationError("Mistral requires a standard Vertex project configuration.")
+            return VertexChatLanguageModel(
+                model_id=model_id, base_url=resolved_base.rstrip("/"),
+                fetch=wrapped_fetch, capabilities=maas_capabilities(model_id), raw_predict=True,
+            )
+        if model_id in VERTEX_MAAS_TEXT_MODELS | {GEMMA_MAAS_MODEL}:
+            if express:
+                raise ConfigurationError("MaaS requires a standard Vertex project configuration.")
+            return VertexChatLanguageModel(
+                model_id=model_id, base_url=f"{resolved_base.rstrip('/')}/endpoints/openapi",
+                fetch=wrapped_fetch, capabilities=maas_capabilities(model_id),
+            )
+        return VertexLanguageModel(
             provider="vertex",
             model_id=model_id,
             api_key="unused",
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
-        ),
+            capabilities=replace(GEMINI_CAPABILITIES, tools=False, tool_choice=False, embeddings=False, agent_capabilities=AgentCapabilities()) if model_id == "gemini-3.8-flash-cyber" else GEMINI_CAPABILITIES,
+        )
+
+    def grounded_language_model(model_id: str) -> VertexGroundedLanguageModel:
+        if model_id == "gemini-3.8-flash-cyber":
+            raise UnsupportedFeatureError("Gemini 3.8 Flash Cyber does not support grounding.")
+        return VertexGroundedLanguageModel(
+            provider="vertex", model_id=model_id, api_key="unused",
+            base_url=resolved_base.rstrip("/"), fetch=wrapped_fetch,
+        )
+
+    native = ProviderAdapter(
+        name="vertex",
+        language_model_factory=language_model,
         embedding_model_factory=lambda model_id: VertexEmbeddingModel(
             provider="vertex",
             model_id=model_id,
             base_url=resolved_base.rstrip("/"),
-            access_token=resolved_token,
+            access_token=resolved_token or "",
             fetch=wrapped_fetch,
         ),
         speech_model_factory=lambda model_id: VertexSpeechModel(
@@ -479,13 +727,7 @@ def create_vertex(
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
         ),
-        grounded_language_model_factory=lambda model_id: VertexGroundedLanguageModel(
-            provider="vertex",
-            model_id=model_id,
-            api_key="unused",
-            base_url=resolved_base.rstrip("/"),
-            fetch=wrapped_fetch,
-        ),
+        grounded_language_model_factory=grounded_language_model,
         count_tokens_client_factory=lambda: VertexCountTokensClient(
             provider="vertex",
             api_key="unused",
@@ -499,20 +741,26 @@ def create_vertex(
             fetch=wrapped_fetch,
             vertex=True,
         ),
-        videos_client_factory=lambda: GeminiVideosClient(
+        videos_client_factory=lambda: VertexVideosClient(
             provider="vertex",
             api_key=None,
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
             vertex=True,
         ),
-        media_client_factory=lambda: GeminiMediaClient(
+        media_client_factory=lambda: VertexMediaClient(
             provider="vertex",
             api_key=None,
             base_url=resolved_base.rstrip("/"),
             fetch=wrapped_fetch,
             vertex=True,
         ),
+        rag_client_factory=(lambda: VertexRagClient(resolved_base, wrapped_fetch, "ragCorpora")) if not express else None,
+        model_garden_client_factory=(lambda: VertexModelGardenClient(resolved_base, wrapped_fetch)) if not express else None,
+        agent_platform_client_factory=(lambda: VertexAgentPlatformClient(resolved_base, wrapped_fetch)) if not express else None,
+        batches_client_factory=(lambda: VertexBatchesClient(provider="vertex", api_key="", base_url=resolved_base, fetch=wrapped_fetch)) if not express else None,
+        caches_client_factory=(lambda: VertexCachedContentsClient(api_key="", base_url=resolved_base, fetch=wrapped_fetch)) if not express else None,
+        interactions_client_factory=(lambda: VertexInteractionsClient(api_key="", base_url=resolved_base.replace(f"/{api_version}/", "/v1beta1/", 1), fetch=wrapped_fetch)) if not express else None,
         realtime_model_factory=lambda model_id: VertexRealtimeModel(model_id),
     )
     return create_provider_bundle(

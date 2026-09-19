@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
 
+if TYPE_CHECKING:
+    from ._vertex_platform import VertexAgentPlatformClient, VertexModelGardenClient, VertexRagClient
 from ._native_sessions import AnthropicMessagesClient, OpenAIAgentSessionsClient, OpenAILiveClient
 
 from ..errors import UnsupportedFeatureError, ValidationError
@@ -72,6 +74,12 @@ class ProviderAdapter:
     messages_client_factory: Callable[[], AnthropicMessagesClient] | None = None
     agent_sessions_client_factory: Callable[[], OpenAIAgentSessionsClient] | None = None
     live_client_factory: Callable[[], OpenAILiveClient] | None = None
+    rag_client_factory: Callable[[], VertexRagClient] | None = None
+    _rag_client: VertexRagClient | None = field(default=None, init=False, repr=False)
+    model_garden_client_factory: Callable[[], VertexModelGardenClient] | None = None
+    _model_garden_client: VertexModelGardenClient | None = field(default=None, init=False, repr=False)
+    agent_platform_client_factory: Callable[[], VertexAgentPlatformClient] | None = None
+    _agent_platform_client: VertexAgentPlatformClient | None = field(default=None, init=False, repr=False)
     _messages_client: AnthropicMessagesClient | None = field(default=None, init=False, repr=False)
     _agent_sessions_client: OpenAIAgentSessionsClient | None = field(default=None, init=False, repr=False)
     _live_client: OpenAILiveClient | None = field(default=None, init=False, repr=False)
@@ -97,6 +105,30 @@ class ProviderAdapter:
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
     _formulas_client: FormulasClient | None = field(default=None, init=False, repr=False)
     _caches_client: CachedContentsClient | None = field(default=None, init=False, repr=False)
+
+    def rag(self) -> VertexRagClient:
+        """Beta Google-managed RAG Engine; unavailable in Express Mode."""
+        if self.rag_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose RAG Engine.')
+        if self._rag_client is None:
+            self._rag_client = self.rag_client_factory()
+        return self._rag_client
+
+    def model_garden(self) -> VertexModelGardenClient:
+        """Beta publisher-native prediction and model discovery on Google Cloud."""
+        if self.model_garden_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose Model Garden.')
+        if self._model_garden_client is None:
+            self._model_garden_client = self.model_garden_client_factory()
+        return self._model_garden_client
+
+    def agent_platform(self) -> VertexAgentPlatformClient:
+        """Beta Google-managed Agent Runtime, Sessions, and Memory Bank."""
+        if self.agent_platform_client_factory is None:
+            raise AttributeError(f'Provider "{self.name}" does not expose Google Agent Platform.')
+        if self._agent_platform_client is None:
+            self._agent_platform_client = self.agent_platform_client_factory()
+        return self._agent_platform_client
 
     def messages(self) -> AnthropicMessagesClient:
         if self.messages_client_factory is None:

@@ -70,6 +70,31 @@ class FakeResponse:
 
 
 class GeminiProviderTests(IsolatedAsyncioTestCase):
+    async def test_image_results_exclude_thought_images_but_preserve_raw_response(self):
+        from copy import deepcopy
+        from zhivex_ai import create_vertex
+
+        thought = {"thought": True, "inlineData": {"mimeType": "image/png", "data": "aW50ZXJpbQ=="}}
+        final = {"inlineData": {"mimeType": "image/png", "data": "ZmluYWw="}, "thoughtSignature": "signature"}
+        payload = {"candidates": [{"content": {"parts": [thought, final, {"thought": False, "inline_data": {"mime_type": "image/jpeg", "data": "c2Vjb25k"}}]}}]}
+        original = deepcopy(payload)
+
+        async def fetch(url, **kwargs):
+            return FakeResponse(200, payload)
+
+        for provider in (create_gemini(api_key="test", fetch=fetch), create_vertex(access_token="test", project_id="p", fetch=fetch)):
+            for edit in (False, True):
+                with self.subTest(provider=provider, edit=edit):
+                    client = provider.images()
+                    if edit:
+                        result = await client.edit(model="gemini-3.1-flash-image", prompt="edit", image=b"image", image_media_type="image/png")
+                    else:
+                        result = await client.generate(model="gemini-3.1-flash-image", prompt="draw")
+                    self.assertEqual([item.b64_json for item in result.images], ["ZmluYWw=", "c2Vjb25k"])
+                    self.assertEqual(result.images[0].metadata["thoughtSignature"], "signature")
+                    self.assertEqual(result.raw_response, original)
+                    self.assertEqual(payload, original)
+
     def test_live_call_history_migration_preserves_real_signatures(self) -> None:
         from zhivex_ai.providers.gemini import _gemini_realtime_parse_event, _map_part
         from zhivex_ai.types import ToolCall, ToolCallPart

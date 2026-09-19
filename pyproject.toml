@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.26.0"
+version = "0.27.0"
 description = "Provider-portable Python runtime for building reliable AI agents"
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,6 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vertex = ["google-auth[requests]>=2.38.0"]
 realtime = [
   "websockets>=15.0.1"
 ]

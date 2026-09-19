@@ -20,6 +20,28 @@ Related documents:
 
 ## Unreleased
 
+## 0.27.0 — 2026-09-19
+
+### Added
+
+- Vertex Express API-key authentication and optional Google Auth ADC/credential refresh via `zhivex-ai-sdk[vertex]`, preserving `create_vertex` compatibility after Google's platform rename.
+- Expanded Google model routing for Gemini 3.8 Flash, Pro Custom Tools, Gemma 4 MaaS, Embedding 2 multimodal inputs, Transcribe/Live Translate, Omni video, image generation/editing, speech and Veo workflows. Availability and integration limits are documented in the Vertex guide.
+- Beta native context caching, batch jobs, Interactions, Agent Runtime, Sessions, Memory Bank, RAG Engine, Model Garden discovery, project model registry and endpoint lifecycle/prediction clients. Deployment uses explicit caller configuration.
+- Beta partner adapters for GPT OSS, GLM, Mistral text/vision/function calls and native Codestral FIM/OCR, plus compatible Chat Completions and Responses routes. Implemented capabilities are distinct from live access and release certification.
+- Reproducible exact-wheel Vertex integration runners and a protected manual workflow, including resumable resource checks and cleanup verification.
+
+### Fixed
+
+- Vertex global/jurisdictional endpoints, Live WebSocket setup and acknowledgement, Veo operation polling, embedding validation, hosted-tool provider identity and credential isolation on downloads.
+- Gemini/Vertex image normalization excludes intermediate thought images from final results while retaining raw metadata; Vertex Lyria accepts the observed base64 response format.
+- Responses streams propagate errors and close iterators; Vertex rejects incomplete terminal events and normalizes token-limit truncation.
+
+### Changed
+
+- Catalog records retain explicit preview/restricted/deprecated status. Cyber rejects unsupported tools/grounding/batch before dispatch; deprecated MaaS IDs retain routing for existing applications.
+- Consolidate historical Vertex integration reports into one archive. They remain tied to their original wheels and are not certification of version 0.27.0.
+- Package remains Beta. Cyber/Robotics access, partner 404s, throttled operations and incomplete native service coverage are explicit release limitations; this release does not claim complete platform support.
+
 ## 0.26.0 — 2026-09-19
 
 ### GPT-Live WebSocket Stable subset
