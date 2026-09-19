@@ -35,8 +35,11 @@ into a passing report. Earlier isolated audio/recovery evidence is described in
 ## Remaining release gates
 
 1. Obtain sufficient Gemini quota and execute a complete passing two-round matrix.
-2. Configure `ZHIVEX_RELEASE_GOOGLE_API_KEY` in the GitHub `release-smoke` environment;
-   only OpenAI and Meta release secret names were present when inspected.
+2. Complete review and integration of [draft PR #47](https://github.com/Zhivex/zhivex-ai-sdk-py/pull/47).
+   The OpenAI and Google release secret names are now configured in `release-smoke`;
+   their presence does not establish credential validity or available quota.
+   That environment permits only `main` and `v*` tags, so the draft branch cannot
+   run the protected certification. GitHub currently requires review of the PR.
 3. Integrate the reviewed workflow/code and execute the protected
    `Realtime exact-artifact certification` workflow from main. Verify both jobs
    and their retained evidence against the artifact built by that run.
@@ -45,3 +48,13 @@ into a passing report. Earlier isolated audio/recovery evidence is described in
 
 The local receipts were collected before commit. A review PR carries the candidate;
 merge, protected certification, tags and package publication remain separate steps.
+
+## PR compatibility follow-up
+
+The first PR CI run exposed a schema snapshot difference with the minimum supported
+Pydantic version: it emits a redundant singleton `enum` alongside `const`. The
+verifier now canonicalizes that equivalent representation without changing the
+validation constraint. Local `minimum-core` validation passed 1,094 tests and 248
+subtests (29 optional-dependency tests skipped); the focused regression suite passed
+9 tests and 38 subtests. This tooling change does not alter package source or the
+three live runner/helper files bound to the existing receipts.
