@@ -5,6 +5,8 @@ import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import pytest
+
 from zhivex_ai import create_vertex, generate_text
 from zhivex_ai.errors import ConfigurationError, ValidationError
 from tests.test_gemini_provider import FakeResponse
@@ -505,6 +507,7 @@ class VertexProviderTests(IsolatedAsyncioTestCase):
             express.batches()
 
     async def test_credentials_refresh_is_offloaded_and_used_on_every_request(self):
+        pytest.importorskip("google.auth.transport.requests", reason="ADC refresh requires the vertex extra")
         import threading
 
         main_thread = threading.get_ident()

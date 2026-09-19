@@ -6,6 +6,11 @@ import tempfile
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import pytest
+
+pytest.importorskip("google.auth", reason="Vertex runner tests require the vertex extra")
+pytest.importorskip("google.auth.transport.requests", reason="Vertex ADC requires requests")
+
 from scripts import verify_vertex_video_integration as runner
 
 

@@ -2,6 +2,11 @@
 from copy import deepcopy
 from unittest import IsolatedAsyncioTestCase, TestCase
 
+import pytest
+
+pytest.importorskip("google.auth", reason="Vertex runner tests require the vertex extra")
+pytest.importorskip("google.auth.transport.requests", reason="Vertex ADC requires requests")
+
 from scripts.verify_vertex_batch_integration import MARKER, validate_rows
 
 

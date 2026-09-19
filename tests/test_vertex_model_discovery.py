@@ -1,6 +1,11 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
+import pytest
+
+pytest.importorskip("google.auth", reason="Vertex runner tests require the vertex extra")
+pytest.importorskip("google.auth.transport.requests", reason="Vertex ADC requires requests")
+
 from scripts.verify_vertex_model_discovery import inventory
 
 

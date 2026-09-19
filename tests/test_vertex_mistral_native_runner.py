@@ -1,5 +1,10 @@
 from unittest import TestCase
 
+import pytest
+
+pytest.importorskip("google.auth", reason="Vertex runner tests require the vertex extra")
+pytest.importorskip("google.auth.transport.requests", reason="Vertex ADC requires requests")
+
 from scripts.verify_vertex_mistral_integration import validate_fim, validate_ocr
 
 
