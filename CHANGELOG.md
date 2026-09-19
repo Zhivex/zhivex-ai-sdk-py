@@ -20,6 +20,8 @@ Related documents:
 
 ## Unreleased
 
+## 0.26.0 — 2026-09-19
+
 ### GPT-Live WebSocket Stable subset
 
 - Add validated PCM16 audio/context helpers and durable client delegation from GPT-Live to `Agent`, preserving approvals and rejecting duplicate delegation execution.
