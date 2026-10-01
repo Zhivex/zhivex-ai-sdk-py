@@ -38,6 +38,15 @@ class ReleaseArtifactToolingTests(TestCase):
             references = re.findall(r"^\s*ZHIVEX_RELEASE_SMOKE_POLICY:\s*(\S+)\s*$", workflow, re.MULTILINE)
             self.assertEqual(references, [policy_path])
         self.assertTrue((ROOT / f"docs/releases/{version}.md").is_file())
+        lock = tomllib.loads((ROOT / "uv.lock").read_text())
+        project = next(package for package in lock["package"] if package["name"] == "zhivex-ai-sdk")
+        self.assertEqual(project["version"], version)
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(f"Version {version}", readme)
+        self.assertIn(f"docs/releases/{version}.md", readme)
+        previous = json.loads((ROOT / "docs/releases/0.28.0-smoke-policy.json").read_text())
+        previous["package_version"] = version
+        self.assertEqual(policy, previous)
 
     def test_028_policy_preserves_exact_artifact_protected_provider_gates(self) -> None:
         previous = json.loads((ROOT / "docs/releases/0.27.0-smoke-policy.json").read_text())

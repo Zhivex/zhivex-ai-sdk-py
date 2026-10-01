@@ -20,8 +20,13 @@ Related documents:
 
 ## Unreleased
 
+## 0.28.2 — 2026-10-01
+
+Reissue the 0.28.0 release scope with corrected release metadata and smoke tooling. The protected 0.28.0 and 0.28.1 tags remain historical failed publication attempts.
+
 ### Fixed
 
+- Align package metadata, lockfile, README, release notes and protected smoke policy with 0.28.2.
 - Give the OpenAI release generation smoke a bounded 128-token output budget and report finish reason and text length on mismatches without logging response content. PyPI and TestPyPI workflows retain smoke evidence on failure while keeping publication blocked.
 
 ## 0.28.0 — 2026-10-01
