@@ -89,6 +89,7 @@ async def run_operations_hardening_demo() -> OperationsHardeningSummary:
     agent = apply_safety_policy_to_agent(
         Agent(
             name="operations-assistant",
+            trace_event_limit=4096,
             model=OfflineOperationsModel(),
             metadata={"request_id": request_id, "session_id": session_id, "run_id": run_id},
         ),

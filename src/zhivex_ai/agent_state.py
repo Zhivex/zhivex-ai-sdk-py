@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
+from ._postgres_store import PostgresStoreBackend
 from ._serde import deserialize_messages
 from .errors import ValidationError
 from .types import FinishReason, JsonValue, ModelMessage, TokenUsage, ToolCall, ToolExecutionResult
@@ -552,12 +553,20 @@ def _state_from_storage_row(row: Any) -> AgentRunState:
 
 
 class SQLiteAgentRunStore:
+    @classmethod
+    async def open(
+        cls, path: str, *, namespace: str = "default"
+    ) -> "SQLiteAgentRunStore":
+        """Construct and migrate the store without blocking the event loop."""
+        return await asyncio.to_thread(cls, path, namespace=namespace)
+
     def __init__(self, path: str, *, namespace: str = "default") -> None:
         self._path = path
         self._namespace = namespace
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._path)
         try:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS zhivex_agent_runs (
@@ -573,13 +582,20 @@ class SQLiteAgentRunStore:
                 )
                 """
             )
-            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(zhivex_agent_runs)").fetchall()}
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(zhivex_agent_runs)"
+                ).fetchall()
+            }
             if "schema_version" not in columns:
                 connection.execute(
                     "ALTER TABLE zhivex_agent_runs ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
                 )
             if "revision" not in columns:
-                connection.execute("ALTER TABLE zhivex_agent_runs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+                connection.execute(
+                    "ALTER TABLE zhivex_agent_runs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"
+                )
             duplicates = connection.execute(
                 """
                 SELECT namespace, idempotency_key
@@ -610,6 +626,22 @@ class SQLiteAgentRunStore:
             connection.close()
 
     async def fail_resume_claim(
+        self,
+        run_id: str,
+        *,
+        claim_token: str,
+        reason: str,
+        failed_at_ms: int | None = None,
+    ) -> AgentRunState | None:
+        return await asyncio.to_thread(
+            self._fail_resume_claim,
+            run_id,
+            claim_token=claim_token,
+            reason=reason,
+            failed_at_ms=failed_at_ms,
+        )
+
+    def _fail_resume_claim(
         self,
         run_id: str,
         *,
@@ -658,7 +690,9 @@ class SQLiteAgentRunStore:
                 ),
             )
             if cursor.rowcount != 1:
-                raise ValidationError(f'Agent run "{run_id}" changed while failing its resume claim.')
+                raise ValidationError(
+                    f'Agent run "{run_id}" changed while failing its resume claim.'
+                )
             connection.commit()
             return failed
         except BaseException:
@@ -668,6 +702,9 @@ class SQLiteAgentRunStore:
             connection.close()
 
     async def load(self, run_id: str) -> AgentRunState | None:
+        return await asyncio.to_thread(self._load, run_id)
+
+    def _load(self, run_id: str) -> AgentRunState | None:
         connection = sqlite3.connect(self._path)
         try:
             row = connection.execute(
@@ -678,7 +715,12 @@ class SQLiteAgentRunStore:
             connection.close()
         return _state_from_storage_row(row) if row else None
 
-    async def find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
+    async def find_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> AgentRunState | None:
+        return await asyncio.to_thread(self._find_by_idempotency_key, idempotency_key)
+
+    def _find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
         connection = sqlite3.connect(self._path)
         try:
             row = connection.execute(
@@ -694,6 +736,9 @@ class SQLiteAgentRunStore:
         return _state_from_storage_row(row) if row else None
 
     async def find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
+        return await asyncio.to_thread(self._find_by_parent_run_id, parent_run_id)
+
+    def _find_by_parent_run_id(self, parent_run_id: str) -> list[AgentRunState]:
         connection = sqlite3.connect(self._path)
         try:
             rows = connection.execute(
@@ -710,6 +755,14 @@ class SQLiteAgentRunStore:
         return [_state_from_storage_row(row) for row in rows]
 
     async def save(self, state: AgentRunState) -> AgentRunState:
+        # A cancelled worker may still commit: it must never retain caller-owned state.
+        snapshot = _clone_agent_run_state(state)
+        persisted = await asyncio.to_thread(self._save, snapshot)
+        state.schema_version = snapshot.schema_version
+        state.revision = snapshot.revision
+        return persisted
+
+    def _save(self, state: AgentRunState) -> AgentRunState:
         connection = sqlite3.connect(self._path)
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -764,7 +817,9 @@ class SQLiteAgentRunStore:
                     ),
                 )
                 if cursor.rowcount != 1:
-                    raise ValidationError(f'Agent run "{state.run_id}" changed during save.')
+                    raise ValidationError(
+                        f'Agent run "{state.run_id}" changed during save.'
+                    )
             connection.commit()
             return _copy_persisted_revision(state, persisted)
         except BaseException:
@@ -774,8 +829,18 @@ class SQLiteAgentRunStore:
             connection.close()
 
     async def claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
+        # A cancelled worker may still commit: it must never retain caller-owned state.
+        snapshot = _clone_agent_run_state(state)
+        persisted = await asyncio.to_thread(self._claim_idempotency_key, snapshot)
+        state.schema_version = snapshot.schema_version
+        state.revision = snapshot.revision
+        return persisted
+
+    def _claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
         if not state.idempotency_key:
-            raise ValidationError("claim_idempotency_key(...) requires state.idempotency_key.")
+            raise ValidationError(
+                "claim_idempotency_key(...) requires state.idempotency_key."
+            )
         connection = sqlite3.connect(self._path)
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -818,6 +883,22 @@ class SQLiteAgentRunStore:
             connection.close()
 
     async def claim_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        claim_token: str,
+        claimed_at_ms: int,
+    ) -> AgentRunState | None:
+        return await asyncio.to_thread(
+            self._claim_pending_approval,
+            run_id,
+            approval_id,
+            claim_token=claim_token,
+            claimed_at_ms=claimed_at_ms,
+        )
+
+    def _claim_pending_approval(
         self,
         run_id: str,
         approval_id: str,
@@ -884,6 +965,17 @@ class SQLiteAgentRunStore:
         reason: str | None = None,
         cancelled_at_ms: int | None = None,
     ) -> AgentRunState | None:
+        return await asyncio.to_thread(
+            self._cancel_run, run_id, reason=reason, cancelled_at_ms=cancelled_at_ms
+        )
+
+    def _cancel_run(
+        self,
+        run_id: str,
+        *,
+        reason: str | None = None,
+        cancelled_at_ms: int | None = None,
+    ) -> AgentRunState | None:
         connection = sqlite3.connect(self._path)
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -899,7 +991,9 @@ class SQLiteAgentRunStore:
                 connection.rollback()
                 return None
             current = _state_from_storage_row(row)
-            cancelled = _cancel_state(current, reason=reason, cancelled_at_ms=cancelled_at_ms)
+            cancelled = _cancel_state(
+                current, reason=reason, cancelled_at_ms=cancelled_at_ms
+            )
             if cancelled.revision == current.revision:
                 connection.commit()
                 return cancelled
@@ -920,7 +1014,9 @@ class SQLiteAgentRunStore:
                 ),
             )
             if cursor.rowcount != 1:
-                raise ValidationError(f'Agent run "{run_id}" changed during cancellation.')
+                raise ValidationError(
+                    f'Agent run "{run_id}" changed during cancellation.'
+                )
             connection.commit()
             return cancelled
         except BaseException:
@@ -930,76 +1026,78 @@ class SQLiteAgentRunStore:
             connection.close()
 
 
-class PostgresAgentRunStore:
-    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_agent") -> None:
-        self._dsn = dsn
+class PostgresAgentRunStore(PostgresStoreBackend):
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        table_prefix: str = "zhivex_agent",
+        pool: Any | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 5,
+    ) -> None:
         self._table = f"{_validate_postgres_table_prefix(table_prefix)}_runs"
+        self._configure_pool(
+            dsn, pool=pool, pool_min_size=pool_min_size, pool_max_size=pool_max_size
+        )
 
-    async def _connect(self) -> Any:
-        try:
-            import asyncpg  # type: ignore[import-not-found,import-untyped]
-        except Exception as error:
-            raise RuntimeError('Postgres support requires the optional dependency "asyncpg".') from error
-        connection = await asyncpg.connect(self._dsn)
-        try:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))",
-                    f"zhivex-agent-run-schema:{self._table}",
+    async def _ensure_schema(self, connection: Any) -> None:
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-agent-run-schema:{self._table}",
+            )
+            await connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self._table} (
+                    run_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT,
+                    parent_run_id TEXT,
+                    state_json JSONB NOT NULL,
+                    schema_version INTEGER NOT NULL DEFAULT 1,
+                    revision BIGINT NOT NULL DEFAULT 0,
+                    updated_at_ms BIGINT NOT NULL
                 )
-                await connection.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {self._table} (
-                        run_id TEXT PRIMARY KEY,
-                        idempotency_key TEXT,
-                        parent_run_id TEXT,
-                        state_json JSONB NOT NULL,
-                        schema_version INTEGER NOT NULL DEFAULT 1,
-                        revision BIGINT NOT NULL DEFAULT 0,
-                        updated_at_ms BIGINT NOT NULL
-                    )
-                    """
+                """
+            )
+            await connection.execute(
+                f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1"
+            )
+            await connection.execute(
+                f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
+            )
+            duplicate = await connection.fetchrow(
+                f"""
+                SELECT idempotency_key
+                FROM {self._table}
+                WHERE idempotency_key IS NOT NULL
+                GROUP BY idempotency_key
+                HAVING COUNT(*) > 1
+                LIMIT 1
+                """
+            )
+            if duplicate is not None:
+                raise ValidationError(
+                    "Cannot migrate the Postgres agent run store: duplicate idempotency keys exist. "
+                    "Resolve duplicates before reconnecting."
                 )
-                await connection.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1"
-                )
-                await connection.execute(
-                    f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
-                )
-                duplicate = await connection.fetchrow(
-                    f"""
-                    SELECT idempotency_key
-                    FROM {self._table}
-                    WHERE idempotency_key IS NOT NULL
-                    GROUP BY idempotency_key
-                    HAVING COUNT(*) > 1
-                    LIMIT 1
-                    """
-                )
-                if duplicate is not None:
-                    raise ValidationError(
-                        "Cannot migrate the Postgres agent run store: duplicate idempotency keys exist. "
-                        "Resolve duplicates before reconnecting."
-                    )
-                await connection.execute(
-                    f"""
-                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table}_idempotency_unique
-                    ON {self._table} (idempotency_key)
-                    WHERE idempotency_key IS NOT NULL
-                    """
-                )
-                await connection.execute(
-                    f"CREATE INDEX IF NOT EXISTS {self._table}_parent_idx ON {self._table} (parent_run_id)"
-                )
-        except BaseException:
-            await connection.close()
-            raise
-        return connection
+            await connection.execute(
+                f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS {self._table}_idempotency_unique
+                ON {self._table} (idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                """
+            )
+            await connection.execute(
+                f"CREATE INDEX IF NOT EXISTS {self._table}_parent_idx ON {self._table} (parent_run_id)"
+            )
 
     @staticmethod
     def _state_from_row(row: Any) -> AgentRunState:
         payload = row["state_json"]
-        state = deserialize_agent_run_state(payload if isinstance(payload, dict) else json.loads(payload))
+        state = deserialize_agent_run_state(
+            payload if isinstance(payload, dict) else json.loads(payload)
+        )
         try:
             schema_version = int(row["schema_version"])
             revision = int(row["revision"])
@@ -1024,7 +1122,9 @@ class PostgresAgentRunStore:
         finally:
             await connection.close()
 
-    async def find_by_idempotency_key(self, idempotency_key: str) -> AgentRunState | None:
+    async def find_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> AgentRunState | None:
         connection = await self._connect()
         try:
             row = await connection.fetchrow(
@@ -1103,14 +1203,18 @@ class PostgresAgentRunStore:
                         current.revision,
                     )
                     if status != "UPDATE 1":
-                        raise ValidationError(f'Agent run "{state.run_id}" changed during save.')
+                        raise ValidationError(
+                            f'Agent run "{state.run_id}" changed during save.'
+                        )
             return _copy_persisted_revision(state, persisted)
         finally:
             await connection.close()
 
     async def claim_idempotency_key(self, state: AgentRunState) -> AgentRunState:
         if not state.idempotency_key:
-            raise ValidationError("claim_idempotency_key(...) requires state.idempotency_key.")
+            raise ValidationError(
+                "claim_idempotency_key(...) requires state.idempotency_key."
+            )
         connection = await self._connect()
         try:
             async with connection.transaction():
@@ -1224,7 +1328,9 @@ class PostgresAgentRunStore:
                 if row is None:
                     return None
                 current = self._state_from_row(row)
-                cancelled = _cancel_state(current, reason=reason, cancelled_at_ms=cancelled_at_ms)
+                cancelled = _cancel_state(
+                    current, reason=reason, cancelled_at_ms=cancelled_at_ms
+                )
                 if cancelled.revision == current.revision:
                     return cancelled
                 status = await connection.execute(
@@ -1241,7 +1347,9 @@ class PostgresAgentRunStore:
                     current.revision,
                 )
                 if status != "UPDATE 1":
-                    raise ValidationError(f'Agent run "{run_id}" changed during cancellation.')
+                    raise ValidationError(
+                        f'Agent run "{run_id}" changed during cancellation.'
+                    )
                 return cancelled
         finally:
             await connection.close()
@@ -1291,7 +1399,9 @@ class PostgresAgentRunStore:
                     current.revision,
                 )
                 if status != "UPDATE 1":
-                    raise ValidationError(f'Agent run "{run_id}" changed while failing its resume claim.')
+                    raise ValidationError(
+                        f'Agent run "{run_id}" changed while failing its resume claim.'
+                    )
                 return failed
         finally:
             await connection.close()
@@ -1301,12 +1411,27 @@ def create_in_memory_agent_run_store() -> InMemoryAgentRunStore:
     return InMemoryAgentRunStore()
 
 
-def create_sqlite_agent_run_store(path: str, *, namespace: str = "default") -> SQLiteAgentRunStore:
+def create_sqlite_agent_run_store(
+    path: str, *, namespace: str = "default"
+) -> SQLiteAgentRunStore:
     return SQLiteAgentRunStore(path, namespace=namespace)
 
 
-def create_postgres_agent_run_store(dsn: str, *, table_prefix: str = "zhivex_agent") -> PostgresAgentRunStore:
-    return PostgresAgentRunStore(dsn, table_prefix=table_prefix)
+def create_postgres_agent_run_store(
+    dsn: str | None = None,
+    *,
+    table_prefix: str = "zhivex_agent",
+    pool: Any | None = None,
+    pool_min_size: int = 1,
+    pool_max_size: int = 5,
+) -> PostgresAgentRunStore:
+    return PostgresAgentRunStore(
+        dsn,
+        table_prefix=table_prefix,
+        pool=pool,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+    )
 
 
 async def get_pending_agent_approvals(store: AgentRunStore, run_id: str) -> list[PendingApproval]:

@@ -86,6 +86,9 @@ class ModelPricing:
     cached_input_per_1m_tokens: float | None = None
     effective_from: str | None = None
     effective_until: str | None = None
+    long_context_threshold_tokens: int | None = None
+    long_context_input_per_1m_tokens: float | None = None
+    long_context_output_per_1m_tokens: float | None = None
 
     def __post_init__(self) -> None:
         currency = self.currency.strip().upper()
@@ -100,8 +103,16 @@ class ModelPricing:
             "input_per_1m_tokens",
             "output_per_1m_tokens",
             "cached_input_per_1m_tokens",
+            "long_context_input_per_1m_tokens",
+            "long_context_output_per_1m_tokens",
         ):
             _validate_rate(f"ModelPricing.{name}", getattr(self, name))
+        threshold = self.long_context_threshold_tokens
+        long_rates = (self.long_context_input_per_1m_tokens, self.long_context_output_per_1m_tokens)
+        if threshold is not None and (isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1):
+            raise ValidationError("ModelPricing.long_context_threshold_tokens must be a positive integer.")
+        if any(rate is not None for rate in long_rates) != (threshold is not None):
+            raise ValidationError("Long-context pricing requires both a threshold and at least one rate.")
         if self.input_per_1m_tokens is None and self.output_per_1m_tokens is None:
             raise ValidationError(
                 "ModelPricing requires an input or output token rate."
@@ -136,7 +147,10 @@ class ModelPricing:
             self.effective_until
         ):
             return None
-        rates = (self.input_per_1m_tokens, self.output_per_1m_tokens)
+        rates = (
+            self.input_per_1m_tokens, self.output_per_1m_tokens,
+            self.long_context_input_per_1m_tokens, self.long_context_output_per_1m_tokens,
+        )
         known_rates = [float(rate) for rate in rates if rate is not None]
         return max(known_rates) / 1_000 if known_rates else None
 
@@ -501,6 +515,61 @@ def _usd(
 
 default_model_catalog = create_model_catalog(
     [
+        *(
+            _entry(
+                "openai", model_id,
+                recommended_for=("chat", "reasoning", "tools", "vision"),
+                capabilities=_OPENAI_LANGUAGE,
+                source_urls=(f"https://developers.openai.com/api/docs/models/{model_id}",),
+                support_evidence="offline-contract", verified_at="2026-09-30",
+                pricing=ModelPricing(
+                    currency="USD", source_url=f"https://developers.openai.com/api/docs/models/{model_id}",
+                    input_per_1m_tokens=input_rate, output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=cached_rate, effective_from=launched,
+                    long_context_threshold_tokens=272_000,
+                    long_context_input_per_1m_tokens=input_rate * 2,
+                    long_context_output_per_1m_tokens=output_rate * 1.5,
+                ),
+            )
+            for model_id, input_rate, output_rate, cached_rate, launched in (
+                ("gpt-6-sol", 2, 10, 0.20, "2026-09-22"),
+                ("gpt-6-luna", 0.10, 0.50, 0.01, "2026-09-22"),
+                ("gpt-6.1-sol", 2, 10, 0.10, "2026-09-29"),
+            )
+        ),
+        *(
+            _entry(
+                "anthropic", model_id,
+                recommended_for=("chat", "reasoning", "tools", "vision"),
+                capabilities=_ANTHROPIC_LANGUAGE,
+                source_urls=(f"https://platform.claude.com/docs/en/models/{page}/overview",),
+                support_evidence="offline-contract", verified_at="2026-09-30",
+                pricing=ModelPricing(
+                    currency="USD", source_url=f"https://platform.claude.com/docs/en/models/{page}/overview",
+                    input_per_1m_tokens=input_rate, output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=0.20, effective_from=launched,
+                ),
+            )
+            for model_id, page, input_rate, output_rate, launched in (
+                ("claude-opus-5-5", "opus-5-5", 4, 20, "2026-09-22"),
+                ("claude-sonnet-5-5", "sonnet-5-5", 2, 10, "2026-09-28"),
+            )
+        ),
+        *(
+            _entry(
+                "gemini", model_id, api_surface="speech",
+                recommended_for=("audio",), capabilities=_SPEECH,
+                source_urls=("https://ai.google.dev/gemini-api/docs/generate-content/speech-generation", _GEMINI_PRICING),
+                support_evidence="offline-contract", verified_at="2026-09-30",
+            )
+            for model_id in ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts")
+        ),
+        _entry(
+            "qwen", "qwen3.7-text-rerank", api_surface="rerank",
+            recommended_for=("retrieval",), capabilities=_capabilities(), regions=("cn",),
+            source_urls=("https://help.aliyun.com/en/model-studio/text-rerank-api",),
+            support_evidence="offline-contract", verified_at="2026-09-30",
+        ),
         *(
             _entry(
                 "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
@@ -1566,6 +1635,15 @@ default_model_catalog = create_model_catalog(
             verified_at="2026-09-18",
             capabilities=replace(_QWEN_LANGUAGE, files=True, audio_input=True,
                                  web_search=True, structured_output=False, json_mode=False),
+        ),
+        _entry(
+            "qwen", "qwen3.8-livetranslate-flash-realtime",
+            recommended_for=("translation", "audio", "realtime"),
+            api_surface="realtime", regions=("cn", "intl"),
+            support_evidence="offline-contract", verified_at="2026-09-20",
+            source_urls=("https://help.aliyun.com/en/model-studio/qwen3-5-livetranslate-flash-realtime",),
+            capabilities=_capabilities(streaming=True, vision=True, audio_input=True, audio_output=True,
+                                       realtime=True, realtime_audio_input=True, realtime_audio_output=True),
         ),
         _entry(
             "qwen",

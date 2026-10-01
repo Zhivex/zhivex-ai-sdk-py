@@ -802,6 +802,16 @@ class AgentExtensionsTests(IsolatedAsyncioTestCase):
 class FakeAsyncPGConnection:
     store: dict[str, dict[str, object]] = {"memory": {}, "checkpoints": []}
 
+    def transaction(self):
+        class Transaction:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+        return Transaction()
+
     async def execute(self, sql: str, *args):
         lowered = " ".join(sql.split()).lower()
         if "insert into zhivex_ai_agent_memory" in lowered:
@@ -947,10 +957,20 @@ class PostgresStoreTests(IsolatedAsyncioTestCase):
     async def test_postgres_stores_work_with_asyncpg_driver(self) -> None:
         FakeAsyncPGConnection.store = {"memory": {}, "checkpoints": []}
 
-        async def connect(dsn: str):
-            return FakeAsyncPGConnection()
+        class FakePool:
+            async def acquire(self):
+                return FakeAsyncPGConnection()
 
-        fake_asyncpg = types.SimpleNamespace(connect=connect)
+            async def release(self, connection):
+                await connection.close()
+
+            async def close(self):
+                return None
+
+        async def create_pool(**kwargs):
+            return FakePool()
+
+        fake_asyncpg = types.SimpleNamespace(create_pool=create_pool)
         previous = sys.modules.get("asyncpg")
         sys.modules["asyncpg"] = fake_asyncpg
         try:
@@ -991,6 +1011,7 @@ class PostgresIntegrationTests(IsolatedAsyncioTestCase):
         from zhivex_ai import create_postgres_agent_memory_store
 
         store = create_postgres_agent_memory_store(os.environ["ZHIVEX_TEST_POSTGRES_DSN"])
+        self.addAsyncCleanup(store.close)
         session_id = "integration-session"
         await store.save(
             session_id,

@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable
+from copy import deepcopy
 from functools import lru_cache
 from typing import Any, cast
 
@@ -30,6 +31,7 @@ from .messages import (
     tool_result_part,
     validate_message_parts,
 )
+from .runtime import budgeted, execution_scope, validate_execution_options
 from .schema import create_schema_adapter
 from .types import (
     GenerateResult,
@@ -48,6 +50,7 @@ from .types import (
     StreamToolCallEvent,
     StreamToolResultEvent,
     StreamTextDeltaEvent,
+    TextPart,
     HostedToolDefinition,
     ToolCall,
     ToolChoice,
@@ -70,8 +73,6 @@ _HOSTED_TOOL_CAPABILITY_FLAGS = {
     "code-execution": "code_execution",
     "toolset": "toolsets",
 }
-_NAMED_HOSTED_TOOL_CHOICE_PROVIDERS = {"anthropic"}
-_REQUIRED_HOSTED_TOOL_CHOICE_ONLY_UNSUPPORTED_PROVIDERS = {"gemini", "vertex"}
 
 
 def _is_provider_managed_tool_call(call: ToolCall) -> bool:
@@ -112,11 +113,11 @@ def _validate_tool_choice(model: LanguageModel, tools: ToolSet | None, tool_choi
         if (
             selected is not None
             and is_hosted_tool_definition(selected)
-            and model.provider not in _NAMED_HOSTED_TOOL_CHOICE_PROVIDERS
+            and not get_agent_capabilities(model).named_hosted_tool_choice
         ):
             raise ValidationError(
                 f'The selected tool "{tool_choice.tool_name}" is provider-managed. '
-                f'ToolChoiceName(...) only supports hosted tools for {", ".join(sorted(_NAMED_HOSTED_TOOL_CHOICE_PROVIDERS))}.'
+                'This model does not support named hosted tool choice.'
             )
 
 
@@ -138,9 +139,7 @@ def _validate_hosted_tools(model: LanguageModel, tools: ToolSet | None, tool_cho
         )
 
     capabilities = get_agent_capabilities(model)
-    accepted_providers = {None, model.provider}
-    if model.provider == "azure-openai":
-        accepted_providers.add("openai")
+    accepted_providers = {None, model.provider, *capabilities.hosted_tool_provider_aliases}
 
     for hosted in hosted_tools:
         if hosted.provider not in accepted_providers:
@@ -161,7 +160,7 @@ def _validate_hosted_tools(model: LanguageModel, tools: ToolSet | None, tool_cho
     if (
         tool_choice == "required"
         and not callable_tools
-        and model.provider in _REQUIRED_HOSTED_TOOL_CHOICE_ONLY_UNSUPPORTED_PROVIDERS
+        and not capabilities.required_hosted_tool_choice
     ):
         raise UnsupportedFeatureError(
             f'Model "{model.provider}/{model.model_id}" cannot guarantee `tool_choice=\"required\"` when only hosted tools are registered.'
@@ -505,6 +504,7 @@ def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
     return tool_calls
 
 
+@budgeted
 async def generate_text(
     *,
     model: LanguageModel,
@@ -522,6 +522,8 @@ async def generate_text(
     retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
+    total_timeout_ms: int | None = None,
+    retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
 ) -> GenerateTextOutput:
@@ -635,11 +637,14 @@ def stream_text(
     retrieval: PortableRetrievalConfig | None = None,
     structured_output: Any = None,
     timeout_ms: int | None = None,
+    total_timeout_ms: int | None = None,
+    retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
     stream_buffer_size: int | None = DEFAULT_STREAM_BUFFER_SIZE,
     on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> _StreamTextResult:
+    validate_execution_options(total_timeout_ms, retry_jitter)
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
     base_messages = _apply_retrieval(base_messages, retrieval)
     validate_message_parts(model, base_messages)
@@ -662,101 +667,117 @@ def stream_text(
         tool_results: list[ToolExecutionResult] = []
         final_result: GenerateResult | None = None
 
+        budget = None
+
         try:
-            for _ in range(steps_limit):
-                request = _to_request(
-                    messages=all_messages,
-                    tools=tools,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning=reasoning,
-                    provider_options=provider_options,
-                    structured_output=structured_output,
-                    tool_choice=tool_choice,
-                    retry=retry,
-                )
-                stream = await model.stream(request)
-                assistant_parts: list[Any] = []
-                text_buffer = ""
-                finish_reason = normalize_finish_reason("stop")
-                provider_finish_reason: str | None = None
-                usage = None
-
-                async for event in stream:
-                    if on_event is not None:
-                        await on_event(event)
-                    await broadcast.publish(event)
-                    if isinstance(event, StreamTextDeltaEvent):
-                        text_buffer += event.text_delta
-                        assistant_parts.append(create_text_message("assistant", event.text_delta).parts[0])
-                    elif isinstance(event, StreamToolCallEvent):
-                        assistant_parts.append(tool_call_part(event.tool_call))
-                    elif isinstance(event, StreamProviderDataEvent):
-                        assistant_parts.append(provider_data_part(event.provider, event.data))
-                    elif isinstance(event, StreamFinishEvent):
-                        finish_reason = event.finish_reason
-                        provider_finish_reason = event.provider_finish_reason
-                        usage = event.usage
-                        if finish_reason == "refusal":
-                            text_buffer = ""
-                            assistant_parts = [part for part in assistant_parts if part.type != "text"]
-
-                response_messages = [ModelMessage(role="assistant", parts=assistant_parts)] if assistant_parts else []
-                response = GenerateResult(
-                    messages=response_messages,
-                    text=text_buffer,
-                    finish_reason=finish_reason,
-                    provider_finish_reason=provider_finish_reason,
-                    usage=usage,
-                )
-                steps.append(GenerateTextStep(request=request, response=response))
-                final_result = response
-                if response_messages:
-                    all_messages.extend(response_messages)
-                step_tool_calls = _extract_tool_calls(response_messages)
-                if not step_tool_calls:
-                    break
-                _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
-                try:
-                    current_results = await _execute_tools(
-                        step_tool_calls,
-                        tools,
-                        options=tool_execution,
-                        default_parallel=model.capabilities.parallel_tool_calls,
-                    )
-                except ToolExecutionSuspended as suspended:
-                    _record_suspended_tool_state(
-                        suspended,
+            async with execution_scope(total_timeout_ms, retry_jitter=retry_jitter) as budget:
+                for _ in range(steps_limit):
+                    request = _to_request(
                         messages=all_messages,
-                        steps=steps,
-                        previous_tool_results=tool_results,
+                        tools=tools,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning=reasoning,
+                        provider_options=provider_options,
+                        structured_output=structured_output,
+                        tool_choice=tool_choice,
+                        retry=retry,
                     )
-                    raise
-                tool_results.extend(current_results)
-                for result in current_results:
-                    all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
-                    tool_result_event = StreamToolResultEvent(tool_result=result)
-                    if on_event is not None:
-                        await on_event(tool_result_event)
-                    await broadcast.publish(tool_result_event)
-            if final_result is None:
-                raise ParseError("Model did not return a result.")
-            merged_usage = _merge_usage([step.response.usage for step in steps])
-            final_text = get_text_from_result(final_result)
-            return GenerateTextOutput(
-                text=final_text,
-                finish_reason=final_result.finish_reason,
-                provider_finish_reason=final_result.provider_finish_reason,
-                usage=merged_usage,
-                steps=steps,
-                messages=all_messages,
-                tool_results=tool_results,
-            )
+                    stream = await model.stream(request)
+                    assistant_parts: list[Any] = []
+                    text_buffer = ""
+                    finish_reason = normalize_finish_reason("stop")
+                    provider_finish_reason: str | None = None
+                    usage = None
+
+                    iterator = aiter(stream)
+                    try:
+                        async for event in iterator:
+                            if on_event is not None:
+                                await on_event(event)
+                            await broadcast.publish(event)
+                            if isinstance(event, StreamTextDeltaEvent):
+                                text_buffer += event.text_delta
+                                text_part = TextPart(text=event.text_delta, provider_metadata=deepcopy(event.provider_metadata))
+                                assistant_parts.append(text_part)
+                            elif isinstance(event, StreamToolCallEvent):
+                                assistant_parts.append(tool_call_part(event.tool_call))
+                            elif isinstance(event, StreamProviderDataEvent):
+                                assistant_parts.append(provider_data_part(event.provider, event.data))
+                            elif isinstance(event, StreamFinishEvent):
+                                finish_reason = event.finish_reason
+                                provider_finish_reason = event.provider_finish_reason
+                                usage = event.usage
+                                if finish_reason == "refusal":
+                                    text_buffer = ""
+                                    assistant_parts = [part for part in assistant_parts if part.type != "text"]
+                    finally:
+                        close = getattr(iterator, "aclose", None)
+                        if close is not None:
+                            await close()
+
+                    response_messages = [ModelMessage(role="assistant", parts=assistant_parts)] if assistant_parts else []
+                    response = GenerateResult(
+                        messages=response_messages,
+                        text=text_buffer,
+                        finish_reason=finish_reason,
+                        provider_finish_reason=provider_finish_reason,
+                        usage=usage,
+                    )
+                    steps.append(GenerateTextStep(request=request, response=response))
+                    final_result = response
+                    if response_messages:
+                        all_messages.extend(response_messages)
+                    step_tool_calls = _extract_tool_calls(response_messages)
+                    if not step_tool_calls:
+                        break
+                    _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
+                    try:
+                        current_results = await _execute_tools(
+                            step_tool_calls,
+                            tools,
+                            options=tool_execution,
+                            default_parallel=model.capabilities.parallel_tool_calls,
+                        )
+                    except ToolExecutionSuspended as suspended:
+                        _record_suspended_tool_state(
+                            suspended,
+                            messages=all_messages,
+                            steps=steps,
+                            previous_tool_results=tool_results,
+                        )
+                        raise
+                    tool_results.extend(current_results)
+                    for result in current_results:
+                        all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
+                        tool_result_event = StreamToolResultEvent(tool_result=result)
+                        if on_event is not None:
+                            await on_event(tool_result_event)
+                        await broadcast.publish(tool_result_event)
+                if final_result is None:
+                    raise ParseError("Model did not return a result.")
+                merged_usage = _merge_usage([step.response.usage for step in steps])
+                final_text = get_text_from_result(final_result)
+                return GenerateTextOutput(
+                    text=final_text,
+                    finish_reason=final_result.finish_reason,
+                    provider_finish_reason=final_result.provider_finish_reason,
+                    usage=merged_usage,
+                    steps=steps,
+                    messages=all_messages,
+                    tool_results=tool_results,
+                )
         except Exception as error:
             error_event = StreamErrorEvent(error=error)
-            if on_event is not None:
-                await on_event(error_event)
-            await broadcast.publish(error_event)
+            try:
+                if on_event is not None:
+                    if budget is None:
+                        await on_event(error_event)
+                    elif budget.deadline > time.monotonic():
+                        async with asyncio.timeout(budget.remaining_seconds()):
+                            await on_event(error_event)
+            finally:
+                await broadcast.publish(error_event)
             raise
         finally:
             await broadcast.close()

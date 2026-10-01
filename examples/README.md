@@ -284,3 +284,16 @@ uvicorn examples.production.fastapi_agent_api:app --reload
 - `transcribe_audio.py` expects a WAV file at `examples/audio/sample.wav`.
 - `dev_gemini_grounded_search.py` and `dev_agent_gemini_search_tool.py` are handy local smoke tests when iterating on Gemini search support without publishing a package.
 - `make smoke` runs a stricter live pass against OpenAI, Anthropic, Azure OpenAI, Gemini, Vertex, Qwen, Kimi, DeepSeek, vLLM, and optional local Ollama when the corresponding credentials and model IDs are configured.
+
+## Qwen live translation
+
+Run `realtime/qwen_live_translate.py` with a mono PCM16/16 kHz WAV to translate speech to text or a 24 kHz WAV. Optional JPEG context and voice cloning use the Beta native session. See [configuration](../docs/providers/qwen-live-translate.md).
+
+## September 2026 provider examples
+
+- [OpenAI hosted multi-agent](text/openai_multi_agent.py): native GPT-6.1 Sol with final-answer collection and continuation history.
+- [Claude 5.5 reasoning](text/anthropic_55.py): direct Opus adaptive and Sonnet between-tools behavior.
+- [Gemini Voices](audio/gemini_voices.py): voice design, 3.8 TTS synthesis and cleanup.
+- [Qwen rerank](retrieval/qwen_rerank.py): native Beijing text ranking and document indices.
+
+These require exported provider credentials and model access. The offline test suite covers request contracts; examples are not live-certification evidence.

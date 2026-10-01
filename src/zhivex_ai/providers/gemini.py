@@ -106,6 +106,7 @@ from ..types import (
     VideosClient,
     PortableSupport,
 )
+from ._gemini_voices import GeminiVoicesClient
 from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from ._payload import drop_none
 from ._url_security import validate_provider_url
@@ -127,6 +128,7 @@ GEMINI_CAPABILITIES = ModelCapabilities(
     agent_capabilities=AgentCapabilities(
         support_tier="tier-b",
         tool_choice_none=True,
+        required_hosted_tool_choice=False,
         hosted_web_search=True,
         hosted_file_search=True,
         computer_use=True,
@@ -151,6 +153,7 @@ GEMINI_GROUNDED_CAPABILITIES = ModelCapabilities(
     agent_capabilities=AgentCapabilities(
         support_tier="tier-b",
         tool_choice_none=True,
+        required_hosted_tool_choice=False,
         hosted_web_search=True,
         hosted_file_search=True,
         computer_use=True,
@@ -198,6 +201,7 @@ GEMINI_REALTIME_CAPABILITIES = ModelCapabilities(
     agent_capabilities=AgentCapabilities(
         support_tier="tier-b",
         tool_choice_none=True,
+        required_hosted_tool_choice=False,
         hosted_web_search=True,
         hosted_file_search=True,
         computer_use=True,
@@ -683,6 +687,7 @@ def _gemini_speech_generation_config(
     provider: str,
     voice: str | None,
     provider_options: dict[str, Any] | None,
+    unified_voice: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     remaining = deepcopy(provider_options or {})
     generation_config = deepcopy(dict(remaining.pop("generationConfig", {}) or {}))
@@ -693,13 +698,19 @@ def _gemini_speech_generation_config(
             raise ValidationError(
                 f'Provider "{provider}" does not support passing both "voice" and provider_options["speechConfig"]["multiSpeakerVoiceConfig"].'
             )
-        speech_config["voiceConfig"] = {
-            **dict(speech_config.get("voiceConfig") or {}),
-            "prebuiltVoiceConfig": {
-                **dict((speech_config.get("voiceConfig") or {}).get("prebuiltVoiceConfig") or {}),
-                "voiceName": voice,
-            },
-        }
+        if unified_voice:
+            voice_config = dict(speech_config.get("voiceConfig") or {})
+            voice_config.pop("prebuiltVoiceConfig", None)
+            voice_config["voice"] = voice
+            speech_config["voiceConfig"] = voice_config
+        else:
+            speech_config["voiceConfig"] = {
+                **dict(speech_config.get("voiceConfig") or {}),
+                "prebuiltVoiceConfig": {
+                    **dict((speech_config.get("voiceConfig") or {}).get("prebuiltVoiceConfig") or {}),
+                    "voiceName": voice,
+                },
+            }
     if not speech_config:
         raise ValidationError(
             f'Provider "{provider}" requires a "voice" argument or provider_options["speechConfig"] for speech generation.'
@@ -2075,6 +2086,7 @@ class GeminiSpeechModel(SpeechModel):
             provider=self.provider,
             voice=voice or "Kore",
             provider_options=provider_options,
+            unified_voice=self.provider == "gemini" and self.model_id.removeprefix("models/").startswith("gemini-3.8-") and "tts" in self.model_id,
         )
         response = await with_retry(
             lambda: self.fetch(
@@ -3127,6 +3139,7 @@ def create_gemini(
             base_url=base,
             fetch=requester,
         ),
+        voices_client_factory=lambda: GeminiVoicesClient(api_key=resolved_key, base_url=base, fetch=requester),
         interactions_client_factory=lambda: GeminiInteractionsClient(
             api_key=resolved_key,
             base_url=base,

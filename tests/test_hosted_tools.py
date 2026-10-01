@@ -245,7 +245,7 @@ class HostedToolRuntimeTests(IsolatedAsyncioTestCase):
             agent_capabilities=AgentCapabilities(hosted_web_search=True),
         )
 
-        with self.assertRaisesRegex(ValidationError, "only supports hosted tools for anthropic"):
+        with self.assertRaisesRegex(ValidationError, "does not support named hosted tool choice"):
             await generate_text(
                 model=model,
                 prompt="hello",
@@ -256,7 +256,7 @@ class HostedToolRuntimeTests(IsolatedAsyncioTestCase):
     async def test_named_tool_choice_allows_hosted_tools_for_anthropic(self) -> None:
         model = _HostedValidationModel(
             provider="anthropic",
-            agent_capabilities=AgentCapabilities(hosted_web_search=True, toolsets=True),
+            agent_capabilities=AgentCapabilities(hosted_web_search=True, toolsets=True, named_hosted_tool_choice=True),
         )
 
         result = await generate_text(
@@ -271,7 +271,7 @@ class HostedToolRuntimeTests(IsolatedAsyncioTestCase):
     async def test_required_tool_choice_rejects_hosted_only_gemini_runs(self) -> None:
         model = _HostedValidationModel(
             provider="gemini",
-            agent_capabilities=AgentCapabilities(hosted_web_search=True, tool_choice_none=True),
+            agent_capabilities=AgentCapabilities(hosted_web_search=True, tool_choice_none=True, required_hosted_tool_choice=False),
         )
 
         with self.assertRaisesRegex(Exception, 'tool_choice="required"'):
@@ -285,7 +285,7 @@ class HostedToolRuntimeTests(IsolatedAsyncioTestCase):
     async def test_azure_accepts_openai_targeted_hosted_tools_but_other_providers_reject_them(self) -> None:
         azure_model = _HostedValidationModel(
             provider="azure-openai",
-            agent_capabilities=AgentCapabilities(hosted_web_search=True),
+            agent_capabilities=AgentCapabilities(hosted_web_search=True, hosted_tool_provider_aliases=("openai",)),
         )
         anthropic_model = _HostedValidationModel(
             provider="anthropic",

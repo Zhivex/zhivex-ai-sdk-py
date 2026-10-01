@@ -10,6 +10,9 @@ async def main() -> None:
             model=provider("gpt-6-astra"),
             prompt="Reply in two short sentences about SDK portability.",
             stream_buffer_size=4096,
+            timeout_ms=10_000,
+            total_timeout_ms=30_000,
+            retry_jitter=0.2,
         ) as result:
             async for chunk in result.text_stream():
                 print(chunk, end="")

@@ -23,6 +23,8 @@ Related documents:
 - [docs/PROTOCOLS.md](./docs/PROTOCOLS.md)
 - [docs/SCOPE.md](./docs/SCOPE.md)
 
+Internal execution/storage modules are implementation details; use the documented entrypoints after the architecture refactor. Additive budgets, retention and pool ownership options inherit the stability of their owning API and do not promote any native resource or the distribution to GA.
+
 ## Import Boundaries
 
 The recommended public import paths are:
@@ -203,3 +205,13 @@ importable. A resumption notification is not automatic reconnection support.
 The `/live/sessions` WebSocket subset now includes validated audio/context helpers and durable Agent client delegation, with bounded sends, cleanup and single-reader enforcement. This WebSocket subset is Stable after [protected exact-artifact certification](docs/releases/2026-09-19-gpt-live-protected.md), with 6/6 GPT-Live scenarios passed. WebRTC creation/fork, recording downloads, SIP, Responses-managed delegation and automatic reconnect retain their separate Experimental classification. See [the exact contract](docs/agents/gpt-live.md). No root exports change.
 
 `vertex.native.rag()` is a Beta native Google RAG Engine client. It does not extend the Stable portable retrieval guarantee.
+
+## Qwen3.8 LiveTranslate
+
+The Qwen3.8 LiveTranslate native WebSocket adapter and the focused `zhivex_ai.experimental.qwen` model/session types are Beta. Normalized `zhivex_ai.live` contracts remain Stable. Provider-owned session options, speaker metadata, image input and voice cloning retain the native Beta boundary. See [scope and validation](docs/providers/qwen-live-translate.md).
+
+## September 2026 additive contracts
+
+`StreamTextDeltaEvent.provider_metadata` is an additive optional dictionary on the existing Stable event (default empty); it preserves OpenAI agent/phase correlation through collection. `NativeSupport.voices` and `NativeSupport.rerank` default to False and describe native capabilities only. `ModelPricing` optionally records a long-context threshold and input/output rates; conservative routing includes the highest applicable advertised rate. Existing constructor positions remain valid.
+
+Gemini Voices types use the documented focused Beta namespace `zhivex_ai.experimental.gemini`. `provider.native.voices()`, Qwen `provider.native.rerank()`, Anthropic 5.5 native features and OpenAI hosted multi-agent remain Beta native extensions. They add no package-root exports or cross-provider guarantee. See the [refresh guide](docs/MODEL_REFRESH_2026_09_30.md) for offline evidence and scope.

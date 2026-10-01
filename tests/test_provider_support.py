@@ -31,7 +31,7 @@ from zhivex_ai.provider_support import (
     get_tier_1_provider_rows,
     render_provider_support_markdown,
 )
-from zhivex_ai.types import ModelGenerateInput, StructuredOutputConfig
+from zhivex_ai.types import ModelGenerateInput, NativeSupport, StructuredOutputConfig
 
 
 class _FakeBedrockClient:
@@ -40,6 +40,46 @@ class _FakeBedrockClient:
 
 
 class ProviderSupportTests(TestCase):
+    def test_native_voices_and_rerank_support_and_cached_accessors(self) -> None:
+        gemini = create_gemini(api_key="test")
+        qwen = create_qwen(api_key="test")
+        azure = create_azure_openai(api_key="test", endpoint="https://example.openai.azure.com")
+        bedrock = create_bedrock(client=_FakeBedrockClient())
+        defaults = NativeSupport()
+        self.assertFalse(defaults.voices)
+        self.assertFalse(defaults.rerank)
+        self.assertTrue(gemini.native_support.voices)
+        self.assertFalse(gemini.native_support.rerank)
+        self.assertFalse(qwen.native_support.voices)
+        self.assertTrue(qwen.native_support.rerank)
+        self.assertIs(gemini.native.voices(), gemini.native.voices())
+        self.assertIs(qwen.native.rerank(), qwen.native.rerank())
+        for provider in (azure, bedrock):
+            with self.subTest(provider=provider.name):
+                self.assertFalse(provider.native_support.voices)
+                self.assertFalse(provider.native_support.rerank)
+                with self.assertRaises(AttributeError):
+                    provider.native.voices()
+                with self.assertRaises(AttributeError):
+                    provider.native.rerank()
+        markdown = render_provider_support_markdown(build_provider_support_rows([gemini, qwen, azure, bedrock]))
+        native_table = markdown.split("### Native Extras\n\n", 1)[1].split("\n\n### Agent Capabilities", 1)[0]
+        lines = native_table.splitlines()
+        headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        self.assertEqual(headers[-2:], ["Voices", "Rerank"])
+        support = {}
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            self.assertEqual(len(cells), len(headers))
+            support[cells[0]] = dict(zip(headers, cells, strict=True))
+        self.assertEqual(support["gemini"]["Voices"], "Yes")
+        self.assertEqual(support["gemini"]["Rerank"], "No")
+        self.assertEqual(support["qwen"]["Voices"], "No")
+        self.assertEqual(support["qwen"]["Rerank"], "Yes")
+        for name in ("azure-openai", "bedrock"):
+            self.assertEqual(support[name]["Voices"], "No")
+            self.assertEqual(support[name]["Rerank"], "No")
+
     def test_build_provider_support_rows_reports_portable_tiers(self) -> None:
         rows = build_provider_support_rows(
             [

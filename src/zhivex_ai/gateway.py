@@ -11,6 +11,7 @@ from .errors import ProviderHTTPError, ZhivexAIError, redact_provider_error_body
 from .generate_object import generate_object, stream_object
 from .generate_text import generate_text, stream_text
 from .providers.base import resolve_provider_adapter
+from .runtime import execution_scope, retry_delay_ms, retry_sleep
 from .types import FinishReason, ModelMessage, TokenUsage
 
 GatewayProviderId = Literal[
@@ -152,6 +153,8 @@ class GatewayConfig:
     model_costs_per_1k_tokens: dict[GatewayProviderId, dict[str, float]] = field(
         default_factory=dict
     )
+    total_timeout_ms: int | None = None
+    retry_jitter: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -703,169 +706,179 @@ def create_gateway(config: GatewayConfig):
             GatewayRouteDecision,
             float,
         ]:
-            attempts: list[GatewayAttempt] = []
-            started_at = time.monotonic()
-            ordered_targets = _order_targets(
-                routing_mode, task_intent, primary, fallbacks or [], config
-            )
-            route_decision = create_route_decision(
-                routing_mode,
-                task_intent,
-                ordered_targets,
-                config=config,
-                required_capabilities=required_capabilities,
-            )
-            refusal_result: (
-                tuple[
-                    Any,
-                    GatewayProviderId,
-                    str,
-                    list[GatewayAttempt],
-                    GatewayRouteDecision,
-                    float,
-                ]
-                | None
-            ) = None
-
-            async def record_skipped_attempt(
-                target: GatewayModelTarget,
-                target_index: int,
-                error_message: str,
-                reason: _GatewayAttemptReason,
-            ) -> None:
-                attempts.append(
-                    GatewayAttempt(
-                        provider=target.provider,
-                        model_id=target.model_id,
-                        ok=False,
-                        latency_ms=0,
-                        error_message=error_message,
-                        retryable=False,
-                        reason=reason,
-                        error_type="policy_skip",
-                    )
+            async with execution_scope(config.total_timeout_ms, retry_jitter=config.retry_jitter):
+                attempts: list[GatewayAttempt] = []
+                started_at = time.monotonic()
+                ordered_targets = _order_targets(
+                    routing_mode, task_intent, primary, fallbacks or [], config
                 )
-                await _emit_attempt(config.on_attempt, attempts[-1], 0, target_index)
-
-            for target_index, target in enumerate(ordered_targets):
-                catalog_entry = _find_catalog_entry(config, target)
-                if (
-                    catalog_entry is not None
-                    and catalog_entry.availability == "retired"
-                ):
-                    replacement = (
-                        f' Use "{catalog_entry.replacement_model_id}" instead.'
-                        if catalog_entry.replacement_model_id
-                        else ""
-                    )
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        f"Skipped because the catalog marks this model as retired.{replacement}",
-                        "model_unavailable",
-                    )
-                    continue
-                if (
-                    catalog_entry is not None
-                    and catalog_entry.api_surface != "language"
-                ):
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        f'Skipped because catalog surface "{catalog_entry.api_surface}" is not language generation.',
-                        "unsupported_api_surface",
-                    )
-                    continue
-                adapter = config.adapters.get(target.provider)
-                if adapter is None:
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        f'No adapter registered for provider "{target.provider}".',
-                        "missing_adapter",
-                    )
-                    if config.fail_on_missing_adapter:
-                        raise _final_gateway_error(attempts)
-                    continue
-                cost_budget_reason = _cost_budget_reason(
-                    config, max_cost_per_1k_tokens, target
+                route_decision = create_route_decision(
+                    routing_mode,
+                    task_intent,
+                    ordered_targets,
+                    config=config,
+                    required_capabilities=required_capabilities,
                 )
-                if cost_budget_reason is not None:
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        (
-                            "Skipped because model cost is unknown under the configured budget."
-                            if cost_budget_reason == "cost_unknown"
-                            else "Skipped because model cost exceeds the configured budget."
-                        ),
-                        cost_budget_reason,
-                    )
-                    continue
-                if _messages_require_vision(messages) and not _target_supports_vision(
-                    adapter, target, config
-                ):
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        "Skipped because the request contains images and the target does not support vision input.",
-                        "vision_unsupported",
-                    )
-                    continue
-                if not _supports_required_capabilities(
-                    adapter, target, required_capabilities, config
-                ):
-                    await record_skipped_attempt(
-                        target,
-                        target_index,
-                        "Skipped because model capabilities do not satisfy the request.",
-                        "capability_mismatch",
-                    )
-                    continue
-                for retry in range(max(0, config.max_retries) + 1):
-                    attempt_started_ns = time.monotonic_ns()
-                    try:
+                refusal_result: (
+                    tuple[
+                        Any,
+                        GatewayProviderId,
+                        str,
+                        list[GatewayAttempt],
+                        GatewayRouteDecision,
+                        float,
+                    ]
+                    | None
+                ) = None
 
-                        async def invoke() -> Any:
-                            return await _maybe_await(
-                                run(
-                                    adapter,
-                                    target,
-                                    messages,
-                                    system_prompt,
-                                    temperature,
-                                    max_tokens,
-                                )
-                            )
-
-                        result = await asyncio.wait_for(
-                            invoke(),
-                            timeout=(
-                                config.attempt_timeouts_ms.get(
-                                    target.provider, config.attempt_timeout_ms
-                                )
-                                / 1000
-                            ),
+                async def record_skipped_attempt(
+                    target: GatewayModelTarget,
+                    target_index: int,
+                    error_message: str,
+                    reason: _GatewayAttemptReason,
+                ) -> None:
+                    attempts.append(
+                        GatewayAttempt(
+                            provider=target.provider,
+                            model_id=target.model_id,
+                            ok=False,
+                            latency_ms=0,
+                            error_message=error_message,
+                            retryable=False,
+                            reason=reason,
+                            error_type="policy_skip",
                         )
-                        latency_ms = _attempt_latency_ms(attempt_started_ns)
-                        if _is_refusal_result(result):
-                            attempts.append(
-                                GatewayAttempt(
-                                    provider=target.provider,
-                                    model_id=target.model_id,
-                                    ok=False,
-                                    latency_ms=latency_ms,
-                                    error_message="Provider returned refusal stop reason.",
-                                    retryable=False,
-                                    reason="provider_refusal",
-                                    error_type="refusal",
+                    )
+                    await _emit_attempt(config.on_attempt, attempts[-1], 0, target_index)
+
+                for target_index, target in enumerate(ordered_targets):
+                    catalog_entry = _find_catalog_entry(config, target)
+                    if (
+                        catalog_entry is not None
+                        and catalog_entry.availability == "retired"
+                    ):
+                        replacement = (
+                            f' Use "{catalog_entry.replacement_model_id}" instead.'
+                            if catalog_entry.replacement_model_id
+                            else ""
+                        )
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            f"Skipped because the catalog marks this model as retired.{replacement}",
+                            "model_unavailable",
+                        )
+                        continue
+                    if (
+                        catalog_entry is not None
+                        and catalog_entry.api_surface != "language"
+                    ):
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            f'Skipped because catalog surface "{catalog_entry.api_surface}" is not language generation.',
+                            "unsupported_api_surface",
+                        )
+                        continue
+                    adapter = config.adapters.get(target.provider)
+                    if adapter is None:
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            f'No adapter registered for provider "{target.provider}".',
+                            "missing_adapter",
+                        )
+                        if config.fail_on_missing_adapter:
+                            raise _final_gateway_error(attempts)
+                        continue
+                    cost_budget_reason = _cost_budget_reason(
+                        config, max_cost_per_1k_tokens, target
+                    )
+                    if cost_budget_reason is not None:
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            (
+                                "Skipped because model cost is unknown under the configured budget."
+                                if cost_budget_reason == "cost_unknown"
+                                else "Skipped because model cost exceeds the configured budget."
+                            ),
+                            cost_budget_reason,
+                        )
+                        continue
+                    if _messages_require_vision(messages) and not _target_supports_vision(
+                        adapter, target, config
+                    ):
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            "Skipped because the request contains images and the target does not support vision input.",
+                            "vision_unsupported",
+                        )
+                        continue
+                    if not _supports_required_capabilities(
+                        adapter, target, required_capabilities, config
+                    ):
+                        await record_skipped_attempt(
+                            target,
+                            target_index,
+                            "Skipped because model capabilities do not satisfy the request.",
+                            "capability_mismatch",
+                        )
+                        continue
+                    for retry in range(max(0, config.max_retries) + 1):
+                        attempt_started_ns = time.monotonic_ns()
+                        try:
+
+                            async def invoke() -> Any:
+                                return await _maybe_await(
+                                    run(
+                                        adapter,
+                                        target,
+                                        messages,
+                                        system_prompt,
+                                        temperature,
+                                        max_tokens,
+                                    )
                                 )
+
+                            result = await asyncio.wait_for(
+                                invoke(),
+                                timeout=(
+                                    config.attempt_timeouts_ms.get(
+                                        target.provider, config.attempt_timeout_ms
+                                    )
+                                    / 1000
+                                ),
                             )
-                            await _emit_attempt(
-                                config.on_attempt, attempts[-1], retry, target_index
-                            )
-                            if config.fallback_on_refusal:
-                                refusal_result = (
+                            latency_ms = _attempt_latency_ms(attempt_started_ns)
+                            if _is_refusal_result(result):
+                                attempts.append(
+                                    GatewayAttempt(
+                                        provider=target.provider,
+                                        model_id=target.model_id,
+                                        ok=False,
+                                        latency_ms=latency_ms,
+                                        error_message="Provider returned refusal stop reason.",
+                                        retryable=False,
+                                        reason="provider_refusal",
+                                        error_type="refusal",
+                                    )
+                                )
+                                await _emit_attempt(
+                                    config.on_attempt, attempts[-1], retry, target_index
+                                )
+                                if config.fallback_on_refusal:
+                                    refusal_result = (
+                                        result,
+                                        target.provider,
+                                        target.model_id,
+                                        attempts,
+                                        route_decision,
+                                        started_at,
+                                    )
+                                    break
+                                return (
                                     result,
                                     target.provider,
                                     target.model_id,
@@ -873,7 +886,17 @@ def create_gateway(config: GatewayConfig):
                                     route_decision,
                                     started_at,
                                 )
-                                break
+                            attempts.append(
+                                GatewayAttempt(
+                                    provider=target.provider,
+                                    model_id=target.model_id,
+                                    ok=True,
+                                    latency_ms=latency_ms,
+                                )
+                            )
+                            await _emit_attempt(
+                                config.on_attempt, attempts[-1], retry, target_index
+                            )
                             return (
                                 result,
                                 target.provider,
@@ -882,58 +905,40 @@ def create_gateway(config: GatewayConfig):
                                 route_decision,
                                 started_at,
                             )
-                        attempts.append(
-                            GatewayAttempt(
-                                provider=target.provider,
-                                model_id=target.model_id,
-                                ok=True,
-                                latency_ms=latency_ms,
+                        except Exception as error:
+                            normalized = _normalize_error(error)
+                            latency_ms = _attempt_latency_ms(attempt_started_ns)
+                            timeout_ms = config.attempt_timeouts_ms.get(
+                                target.provider, config.attempt_timeout_ms
                             )
-                        )
-                        await _emit_attempt(
-                            config.on_attempt, attempts[-1], retry, target_index
-                        )
-                        return (
-                            result,
-                            target.provider,
-                            target.model_id,
-                            attempts,
-                            route_decision,
-                            started_at,
-                        )
-                    except Exception as error:
-                        normalized = _normalize_error(error)
-                        latency_ms = _attempt_latency_ms(attempt_started_ns)
-                        timeout_ms = config.attempt_timeouts_ms.get(
-                            target.provider, config.attempt_timeout_ms
-                        )
-                        error_message = _safe_attempt_error_message(
-                            error, normalized, target, timeout_ms
-                        )
-                        attempts.append(
-                            GatewayAttempt(
-                                provider=target.provider,
-                                model_id=target.model_id,
-                                ok=False,
-                                latency_ms=latency_ms,
-                                error_message=str(normalized),
-                                retryable=normalized.retryable,
-                                error_type=_attempt_error_type(error),
+                            error_message = _safe_attempt_error_message(
+                                error, normalized, target, timeout_ms
                             )
-                        )
-                        attempts[-1].error_message = error_message
-                        await _emit_attempt(
-                            config.on_attempt, attempts[-1], retry, target_index
-                        )
-                        if retry < max(0, config.max_retries) and normalized.retryable:
-                            await asyncio.sleep(
-                                config.retry_backoff_ms * (retry + 1) / 1000
+                            attempts.append(
+                                GatewayAttempt(
+                                    provider=target.provider,
+                                    model_id=target.model_id,
+                                    ok=False,
+                                    latency_ms=latency_ms,
+                                    error_message=str(normalized),
+                                    retryable=normalized.retryable,
+                                    error_type=_attempt_error_type(error),
+                                )
                             )
-                            continue
-                        break
-            if refusal_result is not None:
-                return refusal_result
-            raise _final_gateway_error(attempts)
+                            attempts[-1].error_message = error_message
+                            await _emit_attempt(
+                                config.on_attempt, attempts[-1], retry, target_index
+                            )
+                            if retry < max(0, config.max_retries) and normalized.retryable:
+                                await retry_sleep(retry_delay_ms(
+                                    error, attempt=retry, retry_backoff_ms=config.retry_backoff_ms,
+                                    exponential=False,
+                                ))
+                                continue
+                            break
+                if refusal_result is not None:
+                    return refusal_result
+                raise _final_gateway_error(attempts)
 
         def _build_response(
             self,

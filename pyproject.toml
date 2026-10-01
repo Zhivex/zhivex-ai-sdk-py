@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhivex-ai-sdk"
-version = "0.27.0"
+version = "0.28.0"
 description = "Provider-portable Python runtime for building reliable AI agents"
 readme = "README.md"
 license = { text = "MIT" }
@@ -103,6 +103,9 @@ include = [
   "/tests",
   "/examples",
   "/docs",
+  "/scripts",
+  "/Makefile",
+  "/uv.lock",
   "/CHANGELOG.md",
   "/CONTRIBUTING.md",
   "/PRODUCTION_APIS.md",
@@ -142,6 +145,17 @@ files = [
   "src/zhivex_ai/_sse.py",
   "src/zhivex_ai/_streaming.py",
   "src/zhivex_ai/_agent_persistence.py",
+  "src/zhivex_ai/_agent_contracts.py",
+  "src/zhivex_ai/_agent_context.py",
+  "src/zhivex_ai/_agent_execution.py",
+  "src/zhivex_ai/_agent_tools.py",
+  "src/zhivex_ai/_agent_approvals.py",
+  "src/zhivex_ai/_agent_skills.py",
+  "src/zhivex_ai/_agent_memory.py",
+  "src/zhivex_ai/_agent_run_state.py",
+  "src/zhivex_ai/_agent_streams.py",
+  "src/zhivex_ai/_agent_live.py",
+  "src/zhivex_ai/_postgres_store.py",
   "src/zhivex_ai/catalog.py",
   "src/zhivex_ai/embed.py",
   "src/zhivex_ai/api_stability.py",
@@ -182,8 +196,11 @@ files = [
   "src/zhivex_ai/providers/anthropic.py",
   "src/zhivex_ai/providers/azure_openai.py",
   "src/zhivex_ai/providers/base.py",
+  "src/zhivex_ai/providers/_native_extensions.py",
   "src/zhivex_ai/providers/deepseek.py",
   "src/zhivex_ai/providers/gemini.py",
+  "src/zhivex_ai/providers/_gemini_voices.py",
+  "src/zhivex_ai/experimental/gemini.py",
   "src/zhivex_ai/providers/kimi.py",
   "src/zhivex_ai/providers/meta.py",
   "src/zhivex_ai/providers/openai.py",
@@ -196,6 +213,9 @@ files = [
   "src/zhivex_ai/providers/ollama.py",
   "src/zhivex_ai/providers/openrouter.py",
   "src/zhivex_ai/providers/qwen.py",
+  "src/zhivex_ai/providers/_qwen_realtime.py",
+  "src/zhivex_ai/providers/_qwen_rerank.py",
+  "src/zhivex_ai/experimental/qwen.py",
   "src/zhivex_ai/providers/vertex.py",
   "src/zhivex_ai/providers/vllm.py",
   "tests/typecheck_agent_dx.py",

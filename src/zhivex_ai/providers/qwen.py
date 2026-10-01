@@ -21,6 +21,7 @@ from ..messages import (
     validate_message_parts,
 )
 from ..runtime import with_retry
+from ..realtime import RealtimeConnectionFactory
 from ..schema import create_schema_adapter
 from ..types import (
     AgentCapabilities,
@@ -55,6 +56,8 @@ from ..types import (
 )
 from ._qwen_omni import is_qwen_omni, omni_file_content, prepare_omni_input, validate_omni_input
 from .base import ProviderBundle, create_provider_bundle
+from ._qwen_realtime import QwenLiveTranslateModel
+from ._qwen_rerank import QwenRerankClient, qwen_rerank_base_url
 from .openai_compat import (
     OPENAI_COMPAT_CAPABILITIES,
     OPENAI_COMPAT_SPEECH_CAPABILITIES,
@@ -953,6 +956,9 @@ def create_qwen(
     base_url: str | None = None,
     responses_base_url: str | None = None,
     fetch: Fetcher | None = None,
+    workspace_id: str | None = None,
+    realtime_url: str | None = None,
+    realtime_connection_factory: RealtimeConnectionFactory | None = None,
 ) -> ProviderBundle:
     resolved_key = api_key or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
     if not resolved_key:
@@ -960,6 +966,7 @@ def create_qwen(
     requester = fetch or default_fetch
     resolved_base_url = (base_url or _qwen_base_url(region)).rstrip("/")
     resolved_responses_base_url = (responses_base_url or _qwen_responses_base_url(resolved_base_url)).rstrip("/")
+    rerank_workspace_id = workspace_id or os.getenv("DASHSCOPE_WORKSPACE_ID") or None
     capabilities = replace(
         OPENAI_COMPAT_CAPABILITIES,
         tools=True,
@@ -1002,6 +1009,8 @@ def create_qwen(
     shared_capabilities = native.language_model("").capabilities
 
     def qwen_language_model(model_id: str) -> LanguageModel:
+        if model_id == "qwen3.8-livetranslate-flash-realtime":
+            raise UnsupportedFeatureError("Use provider.native.realtime_model for Qwen LiveTranslate.")
         responses_model = responses_language_model_factory(model_id)
         if is_qwen_omni(model_id):
             omni_capabilities = replace(
@@ -1043,6 +1052,18 @@ def create_qwen(
     native = replace(
         native,
         language_model_factory=qwen_language_model,
+        rerank_client_factory=lambda: QwenRerankClient(
+            api_key=resolved_key,
+            base_url=qwen_rerank_base_url(
+                resolved_base_url, region, rerank_workspace_id,
+            ),
+            fetch=requester,
+        ),
+        realtime_model_factory=lambda model_id: QwenLiveTranslateModel(
+            model_id, api_key=resolved_key, base_url=resolved_base_url, region=region,
+            workspace_id=workspace_id or os.getenv("DASHSCOPE_WORKSPACE_ID"),
+            realtime_endpoint=realtime_url, connection_factory=realtime_connection_factory,
+        ),
         transcription_model_factory=lambda model_id: QwenTranscriptionModel(
             provider="qwen",
             model_id=model_id,

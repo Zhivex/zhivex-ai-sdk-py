@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from typing import TYPE_CHECKING, Any
 
+from ._postgres_store import PostgresStoreBackend
 from .errors import ValidationError
 from ._serde import (
     deserialize_generate_result,
@@ -18,13 +20,12 @@ from ._serde import (
 )
 
 if TYPE_CHECKING:
-    from .agent import Agent, AgentMemoryState, AgentCheckpoint, SummaryConfig
+    from .agent import Agent
+    from ._agent_contracts import AgentMemoryState, AgentCheckpoint, SummaryConfig
 
 
 def _now_ms() -> int:
-    from .agent import _now_ms as now_ms
-
-    return now_ms()
+    return int(time.time() * 1000)
 
 
 def _json_dumps(value: Any) -> str:
@@ -53,7 +54,7 @@ def _serialize_agent_memory_state(state: AgentMemoryState) -> dict[str, Any]:
 
 
 def _deserialize_agent_memory_state(payload: dict[str, Any] | None) -> AgentMemoryState:
-    from .agent import AgentMemoryState
+    from ._agent_contracts import AgentMemoryState
 
     if payload is None:
         return AgentMemoryState()
@@ -84,7 +85,7 @@ def _serialize_agent_checkpoint(checkpoint: AgentCheckpoint) -> dict[str, Any]:
 
 
 def _deserialize_agent_checkpoint(payload: dict[str, Any]) -> AgentCheckpoint:
-    from .agent import AgentCheckpoint
+    from ._agent_contracts import AgentCheckpoint
 
     return AgentCheckpoint(
         run_id=str(payload.get("run_id", "")),
@@ -106,7 +107,7 @@ class SQLiteAgentMemoryStore:
         summary_config: SummaryConfig | None = None,
         namespace: str = "default",
     ) -> None:
-        from .agent import SummaryConfig
+        from ._agent_contracts import SummaryConfig
 
         self.summary_config = summary_config or SummaryConfig()
         self._path = path
@@ -171,7 +172,7 @@ class SQLiteAgentMemoryStore:
         state: AgentMemoryState,
         agent: "Agent",
     ) -> str | None:
-        from .agent import InMemoryAgentMemory
+        from ._agent_memory import InMemoryAgentMemory
 
         return await InMemoryAgentMemory(summary_config=self.summary_config).summarize(
             session_id=session_id,
@@ -316,53 +317,53 @@ class SQLiteAgentCheckpointStore:
         ]
 
 
-class PostgresAgentMemoryStore:
+class PostgresAgentMemoryStore(PostgresStoreBackend):
     def __init__(
         self,
-        dsn: str,
+        dsn: str | None = None,
         *,
         summary_config: SummaryConfig | None = None,
         table_prefix: str = "zhivex_ai",
+        pool: Any | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 5,
     ) -> None:
-        from .agent import SummaryConfig
+        from ._agent_contracts import SummaryConfig
 
         self.summary_config = summary_config or SummaryConfig()
-        self._dsn = dsn
-        from .agent import _validate_postgres_table_prefix
+        self._configure_pool(
+            dsn, pool=pool, pool_min_size=pool_min_size, pool_max_size=pool_max_size
+        )
+        from .agent_state import _validate_postgres_table_prefix
 
         self._table_prefix = _validate_postgres_table_prefix(table_prefix)
 
     def _table(self) -> str:
         return f"{self._table_prefix}_agent_memory"
 
-    async def _connect(self) -> Any:
-        try:
-            import asyncpg  # type: ignore[import-not-found,import-untyped]
-        except Exception as error:
-            raise RuntimeError(
-                'Postgres support requires the optional dependency "asyncpg".'
-            ) from error
-        return await asyncpg.connect(self._dsn)
-
     async def _ensure_schema(self, connection: Any) -> None:
         table = self._table()
-        await connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {table} (
-                session_id TEXT PRIMARY KEY,
-                state_json JSONB NOT NULL,
-                updated_at_ms BIGINT NOT NULL
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-agent-schema:{table}",
             )
-            """
-        )
-        await connection.execute(
-            f"CREATE INDEX IF NOT EXISTS {table}_updated_idx ON {table} (updated_at_ms)"
-        )
+            await connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {table} (
+                    session_id TEXT PRIMARY KEY,
+                    state_json JSONB NOT NULL,
+                    updated_at_ms BIGINT NOT NULL
+                )
+                """
+            )
+            await connection.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_updated_idx ON {table} (updated_at_ms)"
+            )
 
     async def load(self, session_id: str) -> AgentMemoryState:
         connection = await self._connect()
         try:
-            await self._ensure_schema(connection)
             row = await connection.fetchrow(
                 f"SELECT state_json FROM {self._table()} WHERE session_id = $1",
                 session_id,
@@ -376,7 +377,6 @@ class PostgresAgentMemoryStore:
     async def save(self, session_id: str, state: AgentMemoryState) -> None:
         connection = await self._connect()
         try:
-            await self._ensure_schema(connection)
             await connection.execute(
                 f"""
                 INSERT INTO {self._table()} (session_id, state_json, updated_at_ms)
@@ -398,7 +398,7 @@ class PostgresAgentMemoryStore:
         state: AgentMemoryState,
         agent: "Agent",
     ) -> str | None:
-        from .agent import InMemoryAgentMemory
+        from ._agent_memory import InMemoryAgentMemory
 
         return await InMemoryAgentMemory(summary_config=self.summary_config).summarize(
             session_id=session_id,
@@ -407,51 +407,56 @@ class PostgresAgentMemoryStore:
         )
 
 
-class PostgresAgentCheckpointStore:
-    def __init__(self, dsn: str, *, table_prefix: str = "zhivex_ai") -> None:
-        self._dsn = dsn
-        from .agent import _validate_postgres_table_prefix
+class PostgresAgentCheckpointStore(PostgresStoreBackend):
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        table_prefix: str = "zhivex_ai",
+        pool: Any | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 5,
+    ) -> None:
+        self._configure_pool(
+            dsn, pool=pool, pool_min_size=pool_min_size, pool_max_size=pool_max_size
+        )
+        from .agent_state import _validate_postgres_table_prefix
 
         self._table_prefix = _validate_postgres_table_prefix(table_prefix)
 
     def _table(self) -> str:
         return f"{self._table_prefix}_agent_checkpoints"
 
-    async def _connect(self) -> Any:
-        try:
-            import asyncpg  # type: ignore[import-not-found,import-untyped]
-        except Exception as error:
-            raise RuntimeError(
-                'Postgres support requires the optional dependency "asyncpg".'
-            ) from error
-        return await asyncpg.connect(self._dsn)
-
     async def _ensure_schema(self, connection: Any) -> None:
         table = self._table()
-        await connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {table} (
-                run_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                agent_name TEXT NOT NULL,
-                step_index INTEGER NOT NULL,
-                saved_at_ms BIGINT NOT NULL,
-                is_final BOOLEAN NOT NULL,
-                checkpoint_json JSONB NOT NULL
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"zhivex-agent-schema:{table}",
             )
-            """
-        )
-        await connection.execute(
-            f"CREATE INDEX IF NOT EXISTS {table}_session_idx ON {table} (session_id, saved_at_ms, step_index)"
-        )
-        await connection.execute(
-            f"CREATE INDEX IF NOT EXISTS {table}_run_idx ON {table} (run_id, saved_at_ms, step_index)"
-        )
+            await connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {table} (
+                    run_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    step_index INTEGER NOT NULL,
+                    saved_at_ms BIGINT NOT NULL,
+                    is_final BOOLEAN NOT NULL,
+                    checkpoint_json JSONB NOT NULL
+                )
+                """
+            )
+            await connection.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_session_idx ON {table} (session_id, saved_at_ms, step_index)"
+            )
+            await connection.execute(
+                f"CREATE INDEX IF NOT EXISTS {table}_run_idx ON {table} (run_id, saved_at_ms, step_index)"
+            )
 
     async def save(self, checkpoint: AgentCheckpoint) -> None:
         connection = await self._connect()
         try:
-            await self._ensure_schema(connection)
             await connection.execute(
                 f"""
                 INSERT INTO {self._table()} (
@@ -482,7 +487,6 @@ class PostgresAgentCheckpointStore:
             )
         connection = await self._connect()
         try:
-            await self._ensure_schema(connection)
             if session_id is not None:
                 row = await connection.fetchrow(
                     f"""
@@ -521,7 +525,6 @@ class PostgresAgentCheckpointStore:
     ) -> list[AgentCheckpoint]:
         connection = await self._connect()
         try:
-            await self._ensure_schema(connection)
             if session_id is not None and run_id is not None:
                 rows = await connection.fetch(
                     f"""
@@ -587,19 +590,36 @@ def create_sqlite_checkpoint_store(
 
 
 def create_postgres_agent_memory_store(
-    dsn: str,
+    dsn: str | None = None,
     *,
     summary_config: SummaryConfig | None = None,
     table_prefix: str = "zhivex_ai",
+    pool: Any | None = None,
+    pool_min_size: int = 1,
+    pool_max_size: int = 5,
 ) -> PostgresAgentMemoryStore:
     return PostgresAgentMemoryStore(
-        dsn, summary_config=summary_config, table_prefix=table_prefix
+        dsn,
+        summary_config=summary_config,
+        table_prefix=table_prefix,
+        pool=pool,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
     )
 
 
 def create_postgres_checkpoint_store(
-    dsn: str,
+    dsn: str | None = None,
     *,
     table_prefix: str = "zhivex_ai",
+    pool: Any | None = None,
+    pool_min_size: int = 1,
+    pool_max_size: int = 5,
 ) -> PostgresAgentCheckpointStore:
-    return PostgresAgentCheckpointStore(dsn, table_prefix=table_prefix)
+    return PostgresAgentCheckpointStore(
+        dsn,
+        table_prefix=table_prefix,
+        pool=pool,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+    )

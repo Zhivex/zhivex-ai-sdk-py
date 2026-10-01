@@ -39,6 +39,10 @@ Recommended log fields:
 
 Do not log raw prompts, tool inputs, provider payloads, or response bodies unless your application has redacted and classified them.
 
+## Retained agent events
+
+`Agent(trace_event_limit=4096, ...)` retains only the latest trace events and supplies the default agent stream replay limit. `trace.events_dropped` reports evictions; run IDs, session IDs and event payloads retain their existing shapes. Stream consumers exceeding retained history fail explicitly. Export complete histories incrementally through observer/emit hooks; a retained trace is not an audit archive. Final text/messages and individual payload sizes require their own application limits.
+
 ## OpenTelemetry
 
 Install the optional extra when exporting OpenTelemetry spans:
@@ -216,3 +220,11 @@ OpenAI managed Agents session IDs are distinct from Zhivex `run_id`/`session_id`
 ## GPT-Live correlation
 
 Correlate the provider session ID and client delegation ID with the backend idempotency key `gpt-live:<session-id>:<delegation-id>` and Agent run ID. Keep transcript timestamps distinct from audio playback. An append acknowledgment is not a delivered spoken answer. Preserve durable completion even if the voice transport fails during result publication; do not rerun completed tools.
+
+## Qwen LiveTranslate correlation
+
+Native Qwen events retain session, response and item identifiers; `previous_item_id` pairs original speech with its translation. Speaker and voice fields remain provider metadata. Read usage from `response.done`, and require `session.finished` for successful finalization. Do not log native events, audio, transcripts, terminology or provider errors wholesale. The integration smoke stores only event counts, boolean checks, fixture/artifact digests and error classes.
+
+## OpenAI hosted multi-agent correlation
+
+The native Responses stream retains collaboration events as `StreamProviderDataEvent` and raw output items in provider-data history. Root final-answer text deltas carry `provider_metadata.agent` and `provider_metadata.phase`; collection copies that metadata into text parts. Subagent output and root commentary remain available as raw data but are excluded from normalized user-facing text. Correlate the provider's agent name with the SDK run/session/request IDs; hosted subagents are not local SDK handoffs. Do not log encrypted collaboration content, voice keys, raw consent audio or credentials. Preserve opaque items in private continuation state rather than using logs as replay storage.

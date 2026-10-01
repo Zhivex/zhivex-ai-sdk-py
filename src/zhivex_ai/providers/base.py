@@ -4,8 +4,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, TypeVar
 
 if TYPE_CHECKING:
-    from ._vertex_platform import VertexAgentPlatformClient, VertexModelGardenClient, VertexRagClient
-from ._native_sessions import AnthropicMessagesClient, OpenAIAgentSessionsClient, OpenAILiveClient
+    from ._native_extensions import (
+        AnthropicMessagesClient,
+        GeminiVoicesClient,
+        OpenAIAgentSessionsClient,
+        OpenAILiveClient,
+        QwenRerankClient,
+        VertexAgentPlatformClient,
+        VertexModelGardenClient,
+        VertexRagClient,
+    )
+
+from ._native_extensions import NativeExtensions, NativeServiceAccess
 
 from ..errors import UnsupportedFeatureError, ValidationError
 from ..types import (
@@ -47,7 +57,7 @@ _ModelT = TypeVar("_ModelT")
 
 
 @dataclass(slots=True)
-class ProviderAdapter:
+class ProviderAdapter(NativeServiceAccess):
     name: str
     language_model_factory: Callable[[str], LanguageModel]
     embedding_model_factory: Callable[[str], EmbeddingModel] | None = None
@@ -75,14 +85,8 @@ class ProviderAdapter:
     agent_sessions_client_factory: Callable[[], OpenAIAgentSessionsClient] | None = None
     live_client_factory: Callable[[], OpenAILiveClient] | None = None
     rag_client_factory: Callable[[], VertexRagClient] | None = None
-    _rag_client: VertexRagClient | None = field(default=None, init=False, repr=False)
     model_garden_client_factory: Callable[[], VertexModelGardenClient] | None = None
-    _model_garden_client: VertexModelGardenClient | None = field(default=None, init=False, repr=False)
     agent_platform_client_factory: Callable[[], VertexAgentPlatformClient] | None = None
-    _agent_platform_client: VertexAgentPlatformClient | None = field(default=None, init=False, repr=False)
-    _messages_client: AnthropicMessagesClient | None = field(default=None, init=False, repr=False)
-    _agent_sessions_client: OpenAIAgentSessionsClient | None = field(default=None, init=False, repr=False)
-    _live_client: OpenAILiveClient | None = field(default=None, init=False, repr=False)
     _language_model_cache: dict[str, LanguageModel] = field(default_factory=dict, init=False, repr=False)
     _embedding_model_cache: dict[str, EmbeddingModel] = field(default_factory=dict, init=False, repr=False)
     _transcription_model_cache: dict[str, TranscriptionModel] = field(default_factory=dict, init=False, repr=False)
@@ -105,51 +109,10 @@ class ProviderAdapter:
     _conversations_client: ConversationsClient | None = field(default=None, init=False, repr=False)
     _formulas_client: FormulasClient | None = field(default=None, init=False, repr=False)
     _caches_client: CachedContentsClient | None = field(default=None, init=False, repr=False)
+    voices_client_factory: Callable[[], GeminiVoicesClient] | None = None
+    rerank_client_factory: Callable[[], QwenRerankClient] | None = None
 
-    def rag(self) -> VertexRagClient:
-        """Beta Google-managed RAG Engine; unavailable in Express Mode."""
-        if self.rag_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose RAG Engine.')
-        if self._rag_client is None:
-            self._rag_client = self.rag_client_factory()
-        return self._rag_client
-
-    def model_garden(self) -> VertexModelGardenClient:
-        """Beta publisher-native prediction and model discovery on Google Cloud."""
-        if self.model_garden_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose Model Garden.')
-        if self._model_garden_client is None:
-            self._model_garden_client = self.model_garden_client_factory()
-        return self._model_garden_client
-
-    def agent_platform(self) -> VertexAgentPlatformClient:
-        """Beta Google-managed Agent Runtime, Sessions, and Memory Bank."""
-        if self.agent_platform_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose Google Agent Platform.')
-        if self._agent_platform_client is None:
-            self._agent_platform_client = self.agent_platform_client_factory()
-        return self._agent_platform_client
-
-    def messages(self) -> AnthropicMessagesClient:
-        if self.messages_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose native Messages.')
-        if self._messages_client is None:
-            self._messages_client = self.messages_client_factory()
-        return self._messages_client
-
-    def agent_sessions(self) -> OpenAIAgentSessionsClient:
-        if self.agent_sessions_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose managed agent sessions.')
-        if self._agent_sessions_client is None:
-            self._agent_sessions_client = self.agent_sessions_client_factory()
-        return self._agent_sessions_client
-
-    def live(self) -> OpenAILiveClient:
-        if self.live_client_factory is None:
-            raise AttributeError(f'Provider "{self.name}" does not expose GPT-Live.')
-        if self._live_client is None:
-            self._live_client = self.live_client_factory()
-        return self._live_client
+    extensions: NativeExtensions = field(default_factory=NativeExtensions, kw_only=True, repr=False)
 
     def __call__(self, model_id: str) -> LanguageModel:
         return self.language_model(model_id)
@@ -592,6 +555,8 @@ def build_native_support(adapter: ProviderAdapter) -> NativeSupport:
         messages=adapter.messages_client_factory is not None,
         agent_sessions=adapter.agent_sessions_client_factory is not None,
         live=adapter.live_client_factory is not None,
+        voices=adapter.voices_client_factory is not None,
+        rerank=adapter.rerank_client_factory is not None,
     )
 
 

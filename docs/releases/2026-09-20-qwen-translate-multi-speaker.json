@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "provider": "qwen",
+  "model": "qwen3.8-livetranslate-flash-realtime",
+  "recorded_at": "2026-09-20T13:05:05.953934+00:00",
+  "region": "intl",
+  "evidence_status": "integration-only",
+  "artifact": {
+    "filename": "zhivex_ai_sdk-0.27.0-py3-none-any.whl",
+    "sha256": "d3c1d445af8bac0f1b1b29829eebac159472164c99a99c6f27cefd0deea7244b",
+    "package_version": "0.27.0"
+  },
+  "fixture_sha256": "8791c28b4bd4e1d794b39c93521a58c9543a2ca76aeefab95385ce2f204f7f12",
+  "operations": {
+    "text_translation": {
+      "status": "passed",
+      "checks": {
+        "setup_ack": true,
+        "source_transcript": true,
+        "translated_text": true,
+        "spanish_marker": true,
+        "source_marker": true,
+        "output_audio": true,
+        "bilingual_correlation": true,
+        "session_finished": true,
+        "no_errors": true,
+        "source_segments": true
+      },
+      "event_counts": {
+        "session.created": 1,
+        "session.updated": 1,
+        "input_audio_buffer.speech_started": 1,
+        "conversation.item.created": 2,
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "conversation.item.input_audio_transcription.delta": 5,
+        "response.text.delta": 4,
+        "input_audio_buffer.speech_stopped": 1,
+        "conversation.item.input_audio_transcription.completed": 1,
+        "response.text.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1,
+        "session.finished": 1
+      },
+      "source_segment_count": 1
+    },
+    "speech_translation": {
+      "status": "passed",
+      "checks": {
+        "setup_ack": true,
+        "source_transcript": true,
+        "translated_text": true,
+        "spanish_marker": true,
+        "source_marker": true,
+        "output_audio": true,
+        "bilingual_correlation": true,
+        "session_finished": true,
+        "no_errors": true,
+        "source_segments": true
+      },
+      "event_counts": {
+        "session.created": 1,
+        "session.updated": 1,
+        "input_audio_buffer.speech_started": 1,
+        "conversation.item.created": 2,
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "response.content_part.added": 1,
+        "conversation.item.input_audio_transcription.delta": 5,
+        "response.audio_transcript.delta": 6,
+        "response.audio.delta": 5,
+        "input_audio_buffer.speech_stopped": 1,
+        "conversation.item.input_audio_transcription.completed": 1,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1,
+        "session.finished": 1
+      },
+      "source_segment_count": 1
+    },
+    "multi_speaker_translation": {
+      "status": "passed",
+      "checks": {
+        "setup_ack": true,
+        "source_transcript": true,
+        "translated_text": true,
+        "spanish_marker": true,
+        "source_marker": true,
+        "output_audio": true,
+        "bilingual_correlation": true,
+        "session_finished": true,
+        "no_errors": true,
+        "source_segments": true
+      },
+      "event_counts": {
+        "session.created": 1,
+        "session.updated": 1,
+        "input_audio_buffer.speech_started": 2,
+        "conversation.item.created": 4,
+        "response.created": 2,
+        "response.output_item.added": 2,
+        "response.content_part.added": 2,
+        "conversation.item.input_audio_transcription.delta": 11,
+        "response.audio_transcript.delta": 13,
+        "input_audio_buffer.speech_stopped": 2,
+        "response.audio.delta": 21,
+        "conversation.item.input_audio_transcription.completed": 2,
+        "response.audio_transcript.done": 2,
+        "response.audio.done": 2,
+        "response.content_part.done": 2,
+        "response.output_item.done": 2,
+        "response.done": 2,
+        "session.finished": 1
+      },
+      "source_segment_count": 2
+    }
+  },
+  "multi_speaker_fixture_sha256": "e48e067fb2f60763d56c6fa88ae06f032e1ae2e025f2a8e60952691a875a5240",
+  "status": "passed"
+}

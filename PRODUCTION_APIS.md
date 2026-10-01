@@ -70,6 +70,10 @@ For production services, prefer:
 - shorter timeouts for interactive chat routes
 - longer timeouts only for explicitly long-running operations
 
+`timeout_ms` remains the timeout passed to individual model calls. Use `total_timeout_ms=30_000` on foundation or agent APIs for an endpoint-wide monotonic budget, including tools and retry waits. Configure `GatewayConfig(total_timeout_ms=30_000)` to share that budget across fallback targets. Nested operations inherit the remaining budget and cannot extend it. Set `retry_jitter=0.2` when distributing retry waits; the gateway preserves its linear backoff and adapters preserve exponential backoff by default. Both respect provider `Retry-After`.
+
+Budget expiry cancels awaited work and raises `TimeoutError`. Closing streams still requires the ownership pattern below. Cancellation cannot roll back an external side effect; reconcile using the tool idempotency key before retrying a write.
+
 ## Streaming
 
 The SDK already exposes transport helpers that map cleanly to FastAPI:
@@ -82,6 +86,12 @@ The streaming example adapts those helpers into `fastapi.responses.StreamingResp
 ### Stream and HTTP shutdown
 
 For request-owned streams, use `async with stream_text(..., stream_buffer_size=4096) as result`, or call `await result.aclose()` in the response generator's `finally` block. Closing only `result.text_stream()` or `result.event_stream()` does not stop shared production. The same explicit ownership applies to `stream_object` and `stream_agent`. Finite retention bounds event count; enforce model token/output limits separately. Consumers falling behind the retained history receive `ValidationError`; use durable application storage for unlimited replay.
+
+For agent streams, set `Agent(trace_event_limit=4096, ...)` to limit the trace and inherit a finite stream buffer when `stream_buffer_size` is omitted. `trace.events` remains a list, and `trace.events_dropped` records evicted events. An explicit stream buffer can override event replay retention independently. Export events incrementally through the existing observer/emit hooks if full history is required. Event limits do not bound full response text, messages, artifacts or payload bytes; combine them with model output and run limits.
+
+Initialize PostgreSQL memory, checkpoint and run stores in the application lifespan with `await store.initialize()`, then call `await store.close()` on shutdown. `async with store` initializes and closes an owned pool; injected `pool=` remains application-owned. Pool sizes are configurable through `pool_min_size` and `pool_max_size`; the default is 1–5 per store, so share an application pool when using multiple stores. Schema setup runs once per store instance, with transactional schema locking between instances.
+
+SQLite run operations execute their entire transaction in a worker thread. Use `await SQLiteAgentRunStore.open(path)` for asynchronous construction/migration; instantiate the legacy constructor before entering the request loop. Worker-thread cancellation does not roll back a transaction already executing: reload the persisted revision or claim before deciding whether to retry.
 
 For reusable connections, own one `HTTPTransport` per application lifespan and event loop, pass it through provider `fetch=`, and close it after in-flight streams end. An injected httpx client is borrowed. Without an owned transport, `await aclose_default_clients()` closes the current loop's default pool during application shutdown. Request timeouts are applied independently on each request while sharing that pool.
 
@@ -192,3 +202,13 @@ extra and ADC for renewable service credentials. Explicit bearer tokens remain
 caller-managed. API key Express Mode is useful for scoped inference verification;
 it does not grant standard Cloud administrative permissions. See
 [the Vertex guide](./docs/providers/vertex.md).
+
+## Qwen LiveTranslate session ownership
+
+For native Qwen speech translation, keep the account key on the server, consume events concurrently with input, and await `aclose()` to drain `session.finish` through `session.finished`. A timeout or provider error means the final segment is not confirmed; do not report success. Pace PCM input, enforce request budgets, and use application persistence for long transcripts. See [the native Beta guide](docs/providers/qwen-live-translate.md).
+
+## Latest native provider extensions (Beta)
+
+Use the [September 30 refresh guide](docs/MODEL_REFRESH_2026_09_30.md) before adopting OpenAI hosted multi-agent, [Claude 5.5](docs/providers/anthropic-5-5.md), [Gemini Voices](docs/providers/gemini-voices.md) or [Qwen rerank](docs/providers/qwen-rerank.md). Keep provider-specific options on native paths. For stateless OpenAI continuation replay complete SDK messages, including opaque collaboration items; do not reconstruct history from final text alone. Only the root `final_answer` contributes normalized text, while client functions from subagents retain the application's existing execution/approval rules. Native hosted collaboration is provider-owned execution; local tool approvals do not govern provider-internal operations.
+
+Voice replication requires explicit source and consent audio; stored voices require explicit deletion when no longer needed. Qwen rerank returns native document indices and scores, not embeddings. No credentialed release certification was added by this refresh.

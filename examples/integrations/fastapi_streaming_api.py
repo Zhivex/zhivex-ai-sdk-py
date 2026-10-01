@@ -89,6 +89,8 @@ async def stream_chat(request: StreamRequest) -> StreamingResponse:
             prompt=request.prompt,
             system=request.system,
             timeout_ms=request.timeout_ms,
+            total_timeout_ms=request.timeout_ms,
+            retry_jitter=0.2,
             stream_buffer_size=4096,
         )
         return _to_fastapi_stream(to_text_stream_response(result), result)
@@ -105,6 +107,8 @@ async def stream_chat_ui(request: StreamRequest) -> StreamingResponse:
             prompt=request.prompt,
             system=request.system,
             timeout_ms=request.timeout_ms,
+            total_timeout_ms=request.timeout_ms,
+            retry_jitter=0.2,
             stream_buffer_size=4096,
         )
         return _to_fastapi_stream(to_ui_message_stream_response(result), result)
