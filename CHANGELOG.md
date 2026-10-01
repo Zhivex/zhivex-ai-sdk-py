@@ -43,6 +43,7 @@ Related documents:
 
 ### Fixed
 
+- Preserve global gateway deadline errors on Python 3.11 instead of reporting them as retryable per-attempt timeouts.
 - Refresh the locked PyJWT and urllib3 dependencies to patched releases and preserve release-check build ordering under parallel make.
 - Reject unsupported latest-model reasoning/sampling/cache combinations before dispatch, preserve Anthropic native request constraints after merging options, and keep OpenAI hosted collaboration separate from executable client functions.
 

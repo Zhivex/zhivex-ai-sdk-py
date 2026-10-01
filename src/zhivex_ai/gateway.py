@@ -706,7 +706,7 @@ def create_gateway(config: GatewayConfig):
             GatewayRouteDecision,
             float,
         ]:
-            async with execution_scope(config.total_timeout_ms, retry_jitter=config.retry_jitter):
+            async with execution_scope(config.total_timeout_ms, retry_jitter=config.retry_jitter) as budget:
                 attempts: list[GatewayAttempt] = []
                 started_at = time.monotonic()
                 ordered_targets = _order_targets(
@@ -827,6 +827,8 @@ def create_gateway(config: GatewayConfig):
                         )
                         continue
                     for retry in range(max(0, config.max_retries) + 1):
+                        if budget is not None:
+                            budget.remaining_seconds()
                         attempt_started_ns = time.monotonic_ns()
                         try:
 
@@ -851,6 +853,8 @@ def create_gateway(config: GatewayConfig):
                                     / 1000
                                 ),
                             )
+                            if budget is not None:
+                                budget.remaining_seconds()
                             latency_ms = _attempt_latency_ms(attempt_started_ns)
                             if _is_refusal_result(result):
                                 attempts.append(
@@ -906,6 +910,12 @@ def create_gateway(config: GatewayConfig):
                                 started_at,
                             )
                         except Exception as error:
+                            # Python 3.11 wait_for can surface a child scope
+                            # TimeoutError when the request deadline cancels it.
+                            # An exhausted request must never become a target
+                            # failure eligible for retries or fallback.
+                            if budget is not None:
+                                budget.remaining_seconds()
                             normalized = _normalize_error(error)
                             latency_ms = _attempt_latency_ms(attempt_started_ns)
                             timeout_ms = config.attempt_timeouts_ms.get(
@@ -936,6 +946,8 @@ def create_gateway(config: GatewayConfig):
                                 ))
                                 continue
                             break
+                if budget is not None:
+                    budget.remaining_seconds()
                 if refusal_result is not None:
                     return refusal_result
                 raise _final_gateway_error(attempts)

@@ -38,21 +38,29 @@ class SlowModel:
 
 class ExecutionBudgetTests(IsolatedAsyncioTestCase):
     async def test_fallbacks_share_one_total_deadline(self) -> None:
-        first, second = SlowModel(), SlowModel()
+        first, second, third = SlowModel(), SlowModel(), SlowModel()
+        attempts = []
         gateway = create_gateway(GatewayConfig(
             adapters={
                 "openai": ProviderAdapter(name="openai", language_model_factory=lambda _: first),
                 "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda _: second),
-            }, max_retries=0, total_timeout_ms=55, attempt_timeout_ms=1000,
+                "gemini": ProviderAdapter(name="gemini", language_model_factory=lambda _: third),
+            }, max_retries=0, total_timeout_ms=55, attempt_timeout_ms=1000, on_attempt=attempts.append,
         ))
         with self.assertRaises(TimeoutError):
             await gateway.generate(
                 messages=[GatewayMessage(role="user", content="hello")],
                 primary=GatewayModelTarget(provider="openai", model_id="slow"),
-                fallbacks=[GatewayModelTarget(provider="anthropic", model_id="slow")],
+                fallbacks=[
+                    GatewayModelTarget(provider="anthropic", model_id="slow"),
+                    GatewayModelTarget(provider="gemini", model_id="slow"),
+                ],
             )
         self.assertEqual((first.calls, second.calls), (1, 1))
         self.assertTrue(first.inherited_budget and second.inherited_budget)
+        self.assertEqual(third.calls, 0)
+        self.assertEqual(len(attempts), 1)
+        self.assertNotEqual(attempts[0]["errorType"], "timeout")
 
     async def test_foundation_budget_reaches_adapter_retry(self) -> None:
         class RetryingModel(SlowModel):
@@ -119,3 +127,85 @@ class ExecutionBudgetTests(IsolatedAsyncioTestCase):
             )
         self.assertTrue(tool_started.is_set())
         self.assertTrue(tool_stopped.is_set())
+
+    async def test_attempt_timeout_can_fallback_with_remaining_total_budget(self) -> None:
+        class SuccessfulModel(SlowModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                self.calls += 1
+                return GenerateResult(text="fallback")
+
+        first, second = SlowModel(), SuccessfulModel()
+        attempts = []
+        gateway = create_gateway(GatewayConfig(
+            adapters={
+                "openai": ProviderAdapter(name="openai", language_model_factory=lambda _: first),
+                "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda _: second),
+            }, max_retries=0, total_timeout_ms=500, attempt_timeout_ms=20, on_attempt=attempts.append,
+        ))
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="slow"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="working")],
+        )
+        self.assertEqual(result.text, "fallback")
+        self.assertEqual(first.calls, 1)
+        self.assertEqual(second.calls, 1)
+        self.assertEqual(attempts[0]["errorType"], "timeout")
+        self.assertTrue(attempts[1]["ok"])
+
+    async def test_external_gateway_cancellation_stays_cancellation_and_joins_attempt(self) -> None:
+        entered = asyncio.Event()
+        exited = asyncio.Event()
+
+        class BlockingModel(SlowModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                entered.set()
+                try:
+                    await asyncio.sleep(10)
+                    return GenerateResult(text="late")
+                finally:
+                    exited.set()
+
+        model, fallback = BlockingModel(), SlowModel()
+        attempts = []
+        gateway = create_gateway(GatewayConfig(
+            adapters={
+                "openai": ProviderAdapter(name="openai", language_model_factory=lambda _: model),
+                "anthropic": ProviderAdapter(name="anthropic", language_model_factory=lambda _: fallback),
+            }, total_timeout_ms=500, attempt_timeout_ms=400, on_attempt=attempts.append,
+        ))
+        task = asyncio.create_task(gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="blocking"),
+            fallbacks=[GatewayModelTarget(provider="anthropic", model_id="unused")],
+        ))
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(exited.is_set())
+        self.assertEqual(fallback.calls, 0)
+        self.assertEqual(attempts, [])
+
+    async def test_attempt_timeout_can_retry_with_remaining_total_budget(self) -> None:
+        class RetryModel(SlowModel):
+            async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+                self.calls += 1
+                if self.calls == 1:
+                    await asyncio.sleep(10)
+                return GenerateResult(text="retry")
+
+        model = RetryModel()
+        attempts = []
+        gateway = create_gateway(GatewayConfig(
+            adapters={"openai": ProviderAdapter(name="openai", language_model_factory=lambda _: model)},
+            max_retries=1, retry_backoff_ms=0, total_timeout_ms=500, attempt_timeout_ms=20, on_attempt=attempts.append,
+        ))
+        result = await gateway.generate(
+            messages=[GatewayMessage(role="user", content="hello")],
+            primary=GatewayModelTarget(provider="openai", model_id="retry"),
+        )
+        self.assertEqual(result.text, "retry")
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(attempts[0]["errorType"], "timeout")
+        self.assertTrue(attempts[1]["ok"])
