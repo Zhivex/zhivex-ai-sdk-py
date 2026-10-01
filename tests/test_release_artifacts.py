@@ -405,7 +405,13 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn("scripts/collect_release_evidence.py", makefile)
         self.assertIn("tests/test_agent_safety_runtime.py", makefile)
         self.assertIn("tests/test_tool_timeout_safety.py", makefile)
-        self.assertIn("release-check: check test-release build release-install-check security-check", makefile)
+        dry_run = subprocess.run(
+            ["make", "--dry-run", "-j2", "release-check"], cwd=ROOT,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        build_position = dry_run.index("-m build --no-isolation")
+        self.assertLess(build_position, dry_run.index("scripts/verify_release_artifacts.py"))
+        self.assertLess(build_position, dry_run.index("-m twine check"))
         self.assertIn("rm -rf dist build", makefile)
         self.assertIn("security-check:", makefile)
         self.assertIn("scripts/audit_dependencies.py", makefile)
