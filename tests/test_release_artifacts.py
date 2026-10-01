@@ -46,6 +46,7 @@ class ReleaseArtifactToolingTests(TestCase):
         self.assertIn(f"docs/releases/{version}.md", readme)
         previous = json.loads((ROOT / "docs/releases/0.28.0-smoke-policy.json").read_text())
         previous["package_version"] = version
+        previous["required_providers"]["openai"]["model"] = "gpt-6-luna"
         self.assertEqual(policy, previous)
 
     def test_028_policy_preserves_exact_artifact_protected_provider_gates(self) -> None:
@@ -481,7 +482,7 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn("environment: release-smoke", workflow)
             self.assertIn("ZHIVEX_SMOKE_USE_INSTALLED: \"1\"", workflow)
             self.assertIn("ZHIVEX_SMOKE_PROVIDERS: openai,meta", workflow)
-            self.assertIn("ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna", workflow)
+            self.assertIn("ZHIVEX_SMOKE_OPENAI_MODEL: gpt-6-luna", workflow)
             self.assertIn(
                 "ZHIVEX_SMOKE_META_MODEL: muse-spark-1.2-contributor",
                 workflow,
@@ -609,7 +610,7 @@ class ReleaseArtifactToolingTests(TestCase):
         )
         self.assertEqual(
             policy["required_providers"]["openai"]["model"],
-            "gpt-5.6-luna",
+            "gpt-6-luna",
         )
         self.assertEqual(
             policy["required_providers"]["meta"]["model"],

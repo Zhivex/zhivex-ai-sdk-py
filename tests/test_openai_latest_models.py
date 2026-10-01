@@ -35,6 +35,25 @@ class Lookup(BaseModel):
 
 
 class OpenAILatestModelTests(IsolatedAsyncioTestCase):
+    async def test_ordinary_final_phase_without_agent_preserves_generation_and_stream_text(self):
+        final = {"type": "message", "id": "ordinary-final", "role": "assistant",
+                 "phase": "final_answer", "content": [{"type": "output_text", "text": "OPENAI_SMOKE_OK."}]}
+        for model_id in ("gpt-5.6-luna", "gpt-6-luna"):
+            async def fetch(url, **kwargs):
+                if kwargs.get("stream"):
+                    return sse([
+                        {"type": "response.output_item.added", "output_index": 0, "item": {**final, "content": []}},
+                        {"type": "response.output_text.delta", "output_index": 0, "delta": "OPENAI_SMOKE_OK."},
+                        {"type": "response.output_item.done", "output_index": 0, "item": final},
+                        {"type": "response.completed", "response": {"status": "completed", "output": [final]}},
+                    ])
+                return FakeResponse(200, payload={"status": "completed", "output": [final]})
+            with self.subTest(model=model_id):
+                model = create_openai(api_key="test", fetch=fetch)(model_id)
+                self.assertEqual((await generate_text(model=model, prompt="test")).text, "OPENAI_SMOKE_OK.")
+                async with stream_text(model=model, prompt="test") as stream:
+                    self.assertEqual((await stream.collect()).text, "OPENAI_SMOKE_OK.")
+
     async def test_each_new_model_generates_and_streams(self):
         for model_id in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"):
             requests = []

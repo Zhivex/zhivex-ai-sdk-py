@@ -472,7 +472,7 @@ def _agent_smoke_generation_options(provider: str) -> dict[str, int | None]:
 
 
 def _openai_smoke_reasoning(model_id: str) -> ReasoningConfig | None:
-    if model_id.startswith("gpt-5.6"):
+    if model_id.startswith(("gpt-5.6", "gpt-6-luna")):
         return ReasoningConfig(effort="none")
     return None
 

@@ -41,6 +41,9 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(luna)
         self.assertEqual(luna.effort, "none")
+        self.assertEqual(run_live_smoke._openai_smoke_reasoning("gpt-6-luna").effort, "none")
+        self.assertEqual(run_live_smoke._openai_smoke_reasoning("gpt-6-luna-2026-09-29").effort, "none")
+        self.assertIsNone(run_live_smoke._openai_smoke_reasoning("gpt-6.1-sol"))
         self.assertIsNone(run_live_smoke._openai_smoke_reasoning("gpt-4.1-mini"))
 
     def test_selected_providers_normalizes_azure_alias(self) -> None:

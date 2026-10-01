@@ -251,7 +251,9 @@ def _parse_output_content_part(content: dict[str, Any]) -> list[Any]:
     return []
 
 def _is_openai_attributed_item(item: dict[str, Any]) -> bool:
-    return isinstance(item.get("agent"), dict) or "phase" in item or item.get("type") in {
+    # Ordinary Responses messages also carry phase="final_answer" without an agent.
+    # Explicit multi-agent requests are handled separately by the caller.
+    return isinstance(item.get("agent"), dict) or item.get("type") in {
         "multi_agent_call", "multi_agent_call_output", "agent_message",
     }
 
