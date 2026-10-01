@@ -310,6 +310,32 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
         self.assertEqual(result, ("qwen", True, "ok: qwen3.8-max, region=intl", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
 
+    async def test_openai_generation_failure_reports_safe_diagnostics_and_blocks_agent(self) -> None:
+        for text, finish_reason in [("", "length"), ("private unexpected output", "stop")]:
+            with self.subTest(finish_reason=finish_reason):
+                response = GenerateResult(text=text, messages=[], finish_reason=finish_reason)
+                with (
+                    patch.dict(
+                        os.environ,
+                        {
+                            "OPENAI_API_KEY": "test-key",
+                            "ZHIVEX_SMOKE_OPENAI_MODEL": "gpt-5.6-luna",
+                            "ZHIVEX_SMOKE_AGENTS": "1",
+                        },
+                        clear=True,
+                    ),
+                    patch.object(run_live_smoke, "create_openai", return_value=MagicMock()),
+                    patch.object(run_live_smoke, "generate_text", new=AsyncMock(return_value=response)),
+                    patch.object(run_live_smoke, "_run_agent_tool_smoke", new=AsyncMock()) as agent,
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        f"finish_reason={finish_reason}, text_length={len(text)}",
+                    ) as caught:
+                        await run_live_smoke._run_openai()
+                self.assertNotIn("private unexpected output", str(caught.exception))
+                agent.assert_not_awaited()
+
     async def test_deepseek_smoke_disables_thinking_for_exact_token_check(self) -> None:
         provider = MagicMock()
         provider.return_value = object()
@@ -536,6 +562,7 @@ class LiveSmokeControlTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, ("openai", True, "ok: gpt-5.6-luna", False))
         self.assertEqual(generate.await_args.kwargs["reasoning"].effort, "none")
+        self.assertEqual(generate.await_args.kwargs["max_tokens"], 128)
 
     async def test_portable_certification_covers_stream_and_structured_output(self) -> None:
         language_model = MagicMock(model_id="gpt-5.6-luna")

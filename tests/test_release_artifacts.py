@@ -482,6 +482,10 @@ class ReleaseArtifactToolingTests(TestCase):
             self.assertIn("ZHIVEX_SMOKE_ARTIFACT_PATH: dist", workflow)
             self.assertIn("release-smoke-evidence.json", workflow)
             self.assertIn("name: release-smoke-evidence", workflow)
+            self.assertIn(
+                "- name: Upload exact-artifact smoke evidence\n        if: ${{ always() }}",
+                workflow,
+            )
             self.assertIn("python scripts/run_live_smoke.py", workflow)
             self.assertIn("needs: [build, live-agent-smoke]", workflow)
 

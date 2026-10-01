@@ -20,6 +20,10 @@ Related documents:
 
 ## Unreleased
 
+### Fixed
+
+- Give the OpenAI release generation smoke a bounded 128-token output budget and report finish reason and text length on mismatches without logging response content. PyPI and TestPyPI workflows retain smoke evidence on failure while keeping publication blocked.
+
 ## 0.28.0 — 2026-10-01
 
 ### Architecture and execution

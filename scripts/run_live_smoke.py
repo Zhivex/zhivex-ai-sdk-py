@@ -714,13 +714,16 @@ async def _run_openai() -> tuple[str, bool, str, bool]:
         model=language_model,
         prompt="Reply with exactly OPENAI_SMOKE_OK.",
         reasoning=_openai_smoke_reasoning(model),
-        max_tokens=20,
+        max_tokens=128,
         max_retries=1,
         retry_backoff_ms=250,
         timeout_ms=20_000,
     )
     if not _matches_smoke_token(result.text, "OPENAI_SMOKE_OK."):
-        raise RuntimeError("OpenAI generation smoke returned unexpected text")
+        raise RuntimeError(
+            "OpenAI generation smoke returned unexpected text "
+            f"(finish_reason={result.finish_reason}, text_length={len(result.text)})"
+        )
     certification_ran = _enabled("ZHIVEX_SMOKE_PORTABLE_CERTIFICATION")
     if certification_ran:
         await _run_portable_certification(
