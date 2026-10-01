@@ -250,7 +250,53 @@ def _parse_output_content_part(content: dict[str, Any]) -> list[Any]:
         return [image_part] if image_part is not None else []
     return []
 
-def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
+def _is_openai_attributed_item(item: dict[str, Any]) -> bool:
+    return isinstance(item.get("agent"), dict) or "phase" in item or item.get("type") in {
+        "multi_agent_call", "multi_agent_call_output", "agent_message",
+    }
+
+
+def _is_openai_final_message(item: dict[str, Any]) -> bool:
+    agent = item.get("agent") or {}
+    return (
+        item.get("type") == "message"
+        and item.get("role") == "assistant"
+        and isinstance(agent, dict)
+        and agent.get("agent_name") == "/root"
+        and item.get("phase") == "final_answer"
+    )
+
+
+def _openai_attributed_parts(item: dict[str, Any]) -> list[Any]:
+    # Retain opaque hosted collaboration items and encrypted content for replay.
+    # Only the root final answer belongs in the normalized user-visible text.
+    parts: list[Any] = [ProviderDataPart(
+        provider="openai", data={"type": "openai_multi_agent_item", "item": deepcopy(item)},
+    )]
+    if _is_openai_final_message(item):
+        for content in item.get("content") or []:
+            if isinstance(content, dict):
+                parts.extend(_parse_output_content_part(content))
+    elif item.get("type") == "function_call":
+        # Client functions from root and subagents still run in the app's tool loop.
+        ordinary = {key: value for key, value in item.items() if key not in {"agent", "phase"}}
+        parts.extend(_parse_output_item(ordinary, "openai"))
+    for part in parts[1:]:
+        metadata = getattr(part, "provider_metadata", None)
+        if isinstance(part, ToolCallPart):
+            metadata = part.tool_call.provider_metadata
+        if isinstance(metadata, dict):
+            metadata.update(drop_none({
+                "openai_multi_agent_item": True,
+                "agent": deepcopy(item.get("agent")), "phase": item.get("phase"),
+                "response_item_id": item.get("id"),
+            }))
+    return parts
+
+
+def _parse_output_item(item: dict[str, Any], provider_name: str, *, multi_agent: bool = False) -> list[Any]:
+    if provider_name == "openai" and (multi_agent or _is_openai_attributed_item(item)):
+        return _openai_attributed_parts(item)
     parts: list[Any] = []
     item_type = str(item.get("type") or "")
     provider_data_part = _parse_provider_data_output_item(item, provider_name)
@@ -344,11 +390,11 @@ def _parse_output_item(item: dict[str, Any], provider_name: str) -> list[Any]:
         parts.append(ToolCallPart(tool_call=_provider_managed_tool_call(item)))
     return parts
 
-def _parse_responses_message(payload: dict[str, Any], provider_name: str) -> ModelMessage:
+def _parse_responses_message(payload: dict[str, Any], provider_name: str, *, multi_agent: bool = False) -> ModelMessage:
     parts: list[Any] = []
     response_reference = _response_reference_part(payload, provider_name)
     if response_reference is not None:
         parts.append(response_reference)
     for item in payload.get("output") or []:
-        parts.extend(_parse_output_item(item, provider_name))
+        parts.extend(_parse_output_item(item, provider_name, multi_agent=multi_agent))
     return ModelMessage(role="assistant", parts=parts)

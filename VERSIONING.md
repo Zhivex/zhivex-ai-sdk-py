@@ -24,6 +24,8 @@ Related documents:
 
 ## Stable surface rules
 
+Internal agent extraction preserves public symbol identity paths and persistence formats. Execution budgets, retry jitter, trace limits and PostgreSQL pool injection are additive options; existing per-call timeouts, positional constructors and unlimited replay defaults remain compatible.
+
 The stable surface is defined in [STABILITY.md](./STABILITY.md) and enforced by `src/zhivex_ai/api_stability.py`. For that surface:
 
 - Prefer additive changes over behavioral changes.
@@ -132,3 +134,11 @@ Google platform branding uses Gemini Enterprise Agent Platform while preserving
 `create_vertex` and provider ID `vertex`. API key/ADC configuration is additive;
 existing explicit access-token calls remain supported. New Cloud-native clients
 remain Beta and do not promote partner models to the Stable Google contract.
+
+## Qwen LiveTranslate compatibility
+
+`create_qwen` additively accepts `workspace_id`, `realtime_url` and `realtime_connection_factory`. Existing calls and normalized realtime event types are unchanged. New Qwen native model/session types live in `zhivex_ai.experimental.qwen` with Beta guarantees; no new root exports or Stable provider capability promises are introduced.
+
+## September 2026 model compatibility
+
+The latest-model refresh adds catalog entries, optional native support flags, optional stream metadata and long-context pricing fields without renaming root exports. Provider requests remain subject to each model's upstream contract. GPT-6 Sol/Luna reject `minimal` effort; Astra/GPT-6.1 Sol reject `none` and `minimal`. Sampling requires a model supporting effort `none`. Replace GPT-6 `prompt_cache_retention` with native `prompt_cache_options.ttl`. Claude 5.5 rejects manual thinking budgets and forced tool selection; Sonnet 5.5 maps normalized effort `none` to upstream `between_tools`. Invalid combinations now fail before HTTP dispatch. These checks do not change Azure or Bedrock adapter contracts.

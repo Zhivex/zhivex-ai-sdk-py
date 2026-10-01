@@ -42,9 +42,12 @@ class ReleaseMetadata:
 
 
 DEFAULT_CHECKS = (
+    ReleaseCheck("lock consistency", ("make", "lock-check")),
     ReleaseCheck("compile", ("make", "compile")),
     ReleaseCheck("lint", ("make", "lint")),
     ReleaseCheck("typecheck", ("make", "typecheck")),
+    ReleaseCheck("architecture boundaries", ("make", "test-architecture")),
+    ReleaseCheck("certification schema", ("make", "certification-check")),
     ReleaseCheck("support matrix", ("make", "support-matrix-check")),
     ReleaseCheck("public contract", ("make", "test-contract")),
     ReleaseCheck("core runtime", ("make", "test-core")),
@@ -52,9 +55,11 @@ DEFAULT_CHECKS = (
     ReleaseCheck("agents and workflows", ("make", "test-agents")),
     ReleaseCheck("examples", ("make", "test-examples")),
     ReleaseCheck("release tooling", ("make", "test-release")),
+    ReleaseCheck("full regression coverage", ("make", "test-cov")),
     ReleaseCheck("build artifacts", ("make", "build")),
     ReleaseCheck("artifact install smoke", ("make", "release-install-check")),
     ReleaseCheck("dependency audit", ("make", "security-check")),
+    ReleaseCheck("distribution metadata", ("make", "release-metadata-check")),
 )
 
 

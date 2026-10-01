@@ -71,6 +71,8 @@ class NativeSupport:
     messages: bool = False
     agent_sessions: bool = False
     live: bool = False
+    voices: bool = False
+    rerank: bool = False
 
 
 @dataclass(slots=True)
@@ -84,6 +86,10 @@ class AgentCapabilities:
     computer_use: bool = False
     code_execution: bool = False
     toolsets: bool = False
+    # Request constraints are declared by the adapter, including custom providers.
+    named_hosted_tool_choice: bool = False
+    required_hosted_tool_choice: bool = True
+    hosted_tool_provider_aliases: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -1425,6 +1431,7 @@ class ToolGuardrailTripwireTriggered(RuntimeError):
 class StreamTextDeltaEvent:
     type: Literal["text-delta"] = "text-delta"
     text_delta: str = ""
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

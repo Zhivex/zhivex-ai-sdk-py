@@ -49,6 +49,9 @@ jobs:
       - name: Run Ruff
         run: uv run --no-sync make PYTHON=python lint
 
+      - name: Validate SDK architecture boundaries
+        run: uv run --no-sync make PYTHON=python test-architecture
+
       - name: Run Mypy
         run: uv run --no-sync python -m mypy
 

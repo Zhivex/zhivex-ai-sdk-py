@@ -1131,3 +1131,50 @@ whose response status is inconsistent. The adapter closes its line iterator on
 completion, failure, or interruption after streaming starts. An incomplete
 response caused by `max_output_tokens` maps to `length`; a failed response maps
 to `error`. These behaviors have offline contract coverage, not live Grok evidence.
+
+### September 30 model update: Claude 5.5 and Google TTS boundaries
+
+Google documents `claude-opus-5-5` (September 22) and `claude-sonnet-5-5`
+(September 28) as generally available partner models. The existing Beta native
+Model Garden client supports both exact IDs through Google publisher
+`rawPredict`/`streamRawPredict`. Enable the selected partner model in your project
+and use the documented global, US multi-region (`location="us"`), or EU
+multi-region (`location="eu"`) route with Google authentication. Model availability
+and successful offline routing do not certify project access or live behavior.
+
+```python
+from zhivex_ai import create_vertex
+
+vertex = create_vertex(project_id="your-project", location="global")
+result = await vertex.native.model_garden().anthropic_messages(
+    model="claude-sonnet-5-5",  # Also supports claude-opus-5-5.
+    body={
+        "messages": [{"role": "user", "content": "Summarize this document."}],
+        "max_tokens": 1024,
+        "thinking": {"type": "adaptive"},
+    },
+)
+```
+
+The client preserves the Anthropic body and response; it inserts
+`anthropic_version="vertex-2023-10-16"` and omits a body `model`, since the ID is
+part of the publisher URL. Native streaming returns the response object for
+application-owned SSE consumption. Use these models through
+`native.model_garden().anthropic_messages`, rather than a Gemini
+`generateContent` language model. Native callers own Anthropic's current
+thinking, tool-choice and response-replay configuration; the portable Anthropic
+adapter's request normalization is not applied to raw Google requests.
+
+The September 22 Gemini Developer API launch of `gemini-3.8-flash-tts`,
+`gemini-3.8-flash-lite-tts`, and its `/v1beta/voices` service does not establish
+availability on Vertex. The reviewed Google Cloud TTS reference continues to list
+`gemini-3.1-flash-tts-preview` and the Gemini 2.5 TTS families. Vertex retains
+its existing prebuilt voice configuration; no Developer API Voices endpoint or
+new 3.8 TTS catalogue entry is claimed for this Google Cloud route.
+
+Sources reviewed September 30, 2026:
+
+- [Google Claude request contract](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude)
+- [Opus 5.5 on Google Cloud](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/opus-5-5)
+- [Sonnet 5.5 on Google Cloud](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5)
+- [Google Cloud Gemini TTS availability](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts)

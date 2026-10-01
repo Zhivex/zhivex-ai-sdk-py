@@ -108,8 +108,11 @@ from ..types import (
 )
 from ._openai_responses_normalization import (
     _image_media_type_from_format,
+    _is_openai_attributed_item,
+    _is_openai_final_message,
     _is_provider_managed_output_item,
     _normalize_tool_call_input,
+    _parse_output_item,
     _parse_provider_data_output_item,
     _parse_provider_data_value,
     _parse_response_finish_reason,
@@ -139,6 +142,7 @@ def _openai_compat_agent_capabilities(provider_name: str) -> AgentCapabilities:
             remote_mcp=True,
             computer_use=True,
             code_execution=provider_name == "openai",
+            hosted_tool_provider_aliases=("openai",) if provider_name == "azure-openai" else (),
         )
     if provider_name == "openrouter":
         return AgentCapabilities(
@@ -338,6 +342,10 @@ def _serialize_provider_data_input(message: ModelMessage, provider_name: str) ->
         data = getattr(part, "data", None)
         if provider not in accepted_providers:
             continue
+        if provider_name == "openai" and isinstance(data, dict) and data.get("type") == "openai_multi_agent_item":
+            if isinstance(data.get("item"), dict):
+                items.append(deepcopy(data["item"]))
+            continue
         if isinstance(data, dict) and data.get("type") in {"program", "program_output"}:
             items.append(deepcopy(data))
             continue
@@ -369,7 +377,18 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
             items.extend(_serialize_provider_data_input(message, provider_name))
             continue
 
-        content = _map_message_content(message)
+        if provider_name == "openai" and message.role == "assistant":
+            # Opaque attributed items already carry their text and client calls.
+            ordinary_parts = [
+                part for part in message.parts
+                if not (
+                    getattr(part, "provider_metadata", {}).get("openai_multi_agent_item")
+                    or isinstance(part, ToolCallPart) and part.tool_call.provider_metadata.get("openai_multi_agent_item")
+                )
+            ]
+            content = _map_message_content(ModelMessage(role=message.role, parts=ordinary_parts))
+        else:
+            content = _map_message_content(message)
         if content:
             items.append(
                 {
@@ -386,6 +405,8 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
             items.extend(_serialize_provider_data_input(message, provider_name))
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
+                    if provider_name == "openai" and part.tool_call.provider_metadata.get("openai_multi_agent_item"):
+                        continue
                     payload = {
                             "type": "function_call",
                             "call_id": part.tool_call.id,
@@ -718,6 +739,47 @@ def _validate_qwen_responses_tools(
         )
 
 
+def _validate_openai_response_body(body: dict[str, Any]) -> None:
+    model_id = str(body.get("model") or "").strip().lower()
+    family = next((name for name in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
+                   if model_id == name or model_id.startswith(name + "-")), None)
+    reasoning = body.get("reasoning") or {}
+    if family:
+        if not isinstance(reasoning, dict):
+            raise ValidationError("GPT-6 reasoning must be an object.")
+        effort = reasoning.get("effort")
+        allowed = {None, "low", "medium", "high", "xhigh", "max"}
+        if family in {"gpt-6-sol", "gpt-6-luna"}:
+            allowed.add("none")
+        if effort not in allowed:
+            raise UnsupportedFeatureError(f'{family} does not support reasoning effort {effort!r}.')
+        unsupported: set[str] = set()
+        if effort != "none":
+            unsupported.update(key for key in ("temperature", "top_p", "top_logprobs", "logprobs") if body.get(key) is not None)
+            if "message.output_text.logprobs" in (body.get("include") or []):
+                unsupported.add("message.output_text.logprobs")
+        if body.get("prompt_cache_retention") is not None:
+            unsupported.add("prompt_cache_retention; use prompt_cache_options.ttl")
+        if unsupported:
+            raise UnsupportedFeatureError(f'{family} does not support: ' + ", ".join(sorted(unsupported)))
+    multi_agent = body.get("multi_agent")
+    if multi_agent is None:
+        return
+    if not isinstance(multi_agent, dict) or not isinstance(multi_agent.get("enabled", False), bool):
+        raise ValidationError("multi_agent must be an object with a boolean enabled field.")
+    if not multi_agent.get("enabled"):
+        return
+    if not (family == "gpt-6.1-sol" or model_id.startswith("gpt-5.6")):
+        raise UnsupportedFeatureError("OpenAI Multi-agent is supported on GPT-6.1 Sol and GPT-5.6 models.")
+    concurrency = multi_agent.get("max_concurrent_subagents")
+    if concurrency is not None and (isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1):
+        raise ValidationError("multi_agent.max_concurrent_subagents must be a positive integer.")
+    if isinstance(reasoning, dict) and reasoning.get("summary") is not None:
+        raise UnsupportedFeatureError("OpenAI Multi-agent does not support reasoning.summary.")
+    if body.get("max_tool_calls") is not None:
+        raise UnsupportedFeatureError("OpenAI Multi-agent does not support max_tool_calls.")
+
+
 def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
     if provider_name == "qwen" and is_qwen_omni(model_id):
         validate_omni_input(input)
@@ -750,7 +812,9 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         **(_qwen_reasoning_options(model_id, input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
-    if provider_name in {"openai", "azure-openai"} and model_id.startswith("gpt-6-astra"):
+    if provider_name == "openai":
+        _validate_openai_response_body(body)
+    if provider_name == "azure-openai" and model_id.startswith("gpt-6-astra"):
         unsupported = {key for key in ("temperature", "top_p", "top_logprobs", "prompt_cache_retention") if body.get(key) is not None}
         if "message.output_text.logprobs" in (body.get("include") or []):
             unsupported.add("message.output_text.logprobs")
@@ -2644,6 +2708,13 @@ class _BaseOpenAICompatible:
             headers["content-type"] = "application/json"
         return headers
 
+    def _responses_headers(self, body: dict[str, Any]) -> dict[str, str]:
+        headers = self._headers()
+        multi_agent = body.get("multi_agent")
+        if self.provider == "openai" and isinstance(multi_agent, dict) and multi_agent.get("enabled") is True:
+            headers["OpenAI-Beta"] = "responses_multi_agent=v1"
+        return headers
+
 
 @dataclass(slots=True)
 class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
@@ -2657,7 +2728,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses",
-                headers=self._headers(),
+                headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
             ),
@@ -2667,7 +2738,8 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
-        assistant_message = _parse_responses_message(payload, self.provider)
+        multi_agent = self.provider == "openai" and bool((body.get("multi_agent") or {}).get("enabled"))
+        assistant_message = _parse_responses_message(payload, self.provider, multi_agent=multi_agent)
         finish_reason, provider_finish_reason = _parse_response_finish_reason(payload)
         return GenerateResult(
             messages=[assistant_message],
@@ -2684,7 +2756,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses",
-                headers=self._headers(),
+                headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
                 stream=True,
@@ -2697,6 +2769,8 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 
         async def generator() -> AsyncIterable[StreamEvent]:
             terminal = False
+            attributed_items: dict[Any, dict[str, Any]] = {}
+            multi_agent = self.provider == "openai" and bool((body.get("multi_agent") or {}).get("enabled"))
             lines = response.iter_lines()
             try:
                 async for event in parse_sse(lines):
@@ -2708,7 +2782,17 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                     if payload.get("type") == "error":
                         raise ZhivexAIError("Responses stream reported an error.")
                     if payload.get("type") == "response.output_text.delta":
-                        yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""))
+                        text_metadata: dict[str, Any] = {}
+                        attributed = attributed_items.get(payload.get("output_index"), {})
+                        if self.provider == "openai" and (multi_agent or attributed or isinstance(payload.get("agent"), dict)):
+                            context = {**attributed, **{key: payload[key] for key in ("agent", "phase") if key in payload}}
+                            yield StreamProviderDataEvent(provider="openai", data={"type": "openai_multi_agent_event", "event": deepcopy(payload)})
+                            if multi_agent and not context:
+                                raise ZhivexAIError("Multi-agent text arrived without output-item attribution.")
+                            if not _is_openai_final_message({"type": "message", "role": "assistant", **context}):
+                                continue
+                            text_metadata = {"openai_multi_agent_item": True, **deepcopy(context)}
+                        yield StreamTextDeltaEvent(text_delta=payload.get("delta", ""), provider_metadata=text_metadata)
                         continue
                     if payload.get("type") in {
                         "response.reasoning_summary_text.delta",
@@ -2718,6 +2802,21 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                         continue
                     if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
                         item = payload.get("item") or {}
+                        if self.provider == "openai" and isinstance(item, dict) and (multi_agent or _is_openai_attributed_item(item)):
+                            if isinstance(payload.get("agent"), dict) and "agent" not in item:
+                                item = {**item, "agent": deepcopy(payload["agent"])}
+                            attributed_items[payload.get("output_index")] = {
+                                key: deepcopy(item[key]) for key in ("agent", "phase") if key in item
+                            }
+                            if payload["type"] == "response.output_item.done":
+                                for part in _parse_output_item(item, "openai", multi_agent=multi_agent):
+                                    if part.type == "provider-data":
+                                        yield StreamProviderDataEvent(provider=part.provider, data=part.data)
+                                    elif isinstance(part, ToolCallPart):
+                                        yield StreamToolCallEvent(tool_call=part.tool_call)
+                            else:
+                                yield StreamProviderDataEvent(provider="openai", data={"type": "openai_multi_agent_event", "event": deepcopy(payload)})
+                            continue
                         provider_data_part = _parse_provider_data_output_item(item, self.provider) if isinstance(item, dict) else None
                         if provider_data_part is not None:
                             yield StreamProviderDataEvent(provider=provider_data_part.provider, data=provider_data_part.data)
@@ -3004,10 +3103,12 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
 @dataclass(slots=True)
 class OpenAICompatibleResponsesClient(_BaseOpenAICompatible, ResponsesClient):
     async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        if self.provider == "openai":
+            _validate_openai_response_body(body)
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses",
-                headers=self._headers(),
+                headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=options.timeout_ms if options else None,
             ),
@@ -3181,6 +3282,9 @@ class OpenAICompatibleResponsesClient(_BaseOpenAICompatible, ResponsesClient):
         body: dict[str, Any],
         options: RetryOptions | None = None,
     ) -> dict[str, Any]:
+        multi_agent = body.get("multi_agent")
+        if self.provider == "openai" and isinstance(multi_agent, dict) and multi_agent.get("enabled") is True:
+            raise UnsupportedFeatureError("OpenAI Multi-agent does not support Responses compaction.")
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/responses/compact",

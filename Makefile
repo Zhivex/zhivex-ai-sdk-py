@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 RELEASE_ARTIFACT_FLAGS ?=
 
-.PHONY: dev test test-contract test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile lock-check catalog-freshness-check certification-check support-matrix-check security-check check build release-install-check release-evidence release-check clean
+.PHONY: dev test test-contract test-architecture test-provider-contracts test-agent-contracts test-core test-providers test-examples test-agents test-evals test-docs test-release test-cov lint typecheck public-stub-check smoke smoke-agents compile lock-check catalog-freshness-check certification-check support-matrix-check security-check check build release-install-check release-evidence release-metadata-check release-check clean
 
 dev:
 	uv sync --locked --all-extras
@@ -11,6 +11,9 @@ test:
 
 test-contract:
 	$(PYTHON) -m pytest tests/test_public_contract.py tests/test_api_stability.py tests/test_provider_support.py tests/test_agent_capabilities.py tests/contracts/test_tier1_provider_contracts.py -q
+
+test-architecture:
+	$(PYTHON) -m pytest tests/test_architecture_boundaries.py tests/test_provider_architecture.py -q
 
 test-provider-contracts:
 	$(PYTHON) -m pytest tests/contracts/test_tier1_provider_contracts.py -q
@@ -22,7 +25,7 @@ test-core:
 	$(PYTHON) -m pytest tests/test_core.py tests/test_gateway.py tests/test_runtime.py tests/test_transport.py tests/test_http.py tests/test_catalog_and_middleware.py -q
 
 test-providers:
-	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_deepseek_provider.py tests/test_kimi_provider.py tests/test_meta_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_qwen_omni.py tests/test_hosted_tools.py tests/test_realtime.py -q
+	$(PYTHON) -m pytest tests/test_openai_provider.py tests/test_anthropic_provider.py tests/test_azure_openai_provider.py tests/test_gemini_provider.py tests/test_vllm_provider.py tests/test_bedrock_provider.py tests/test_deepseek_provider.py tests/test_kimi_provider.py tests/test_meta_provider.py tests/test_ollama_provider.py tests/test_qwen_provider.py tests/test_qwen_omni.py tests/test_qwen_realtime.py tests/test_hosted_tools.py tests/test_realtime.py -q
 
 test-examples:
 	$(PYTHON) -m pytest tests/test_small_business_loan_example.py tests/test_hr_candidate_selection_example.py tests/test_workflow_examples.py tests/test_operations_hardening_example.py tests/test_production_examples.py -q
@@ -37,7 +40,7 @@ test-docs:
 	$(PYTHON) -m pytest tests/test_docs_onboarding.py tests/test_operations_docs.py -q
 
 test-release:
-	$(PYTHON) -m pytest tests/test_release_artifacts.py tests/test_live_smoke.py tests/test_provider_certification.py -q
+	$(PYTHON) -m pytest tests/test_release_artifacts.py tests/test_release_artifacts_architecture.py tests/test_live_smoke.py tests/test_provider_certification.py -q
 
 test-cov:
 	$(PYTHON) -m pytest --cov=src/zhivex_ai --cov-report=term-missing:skip-covered --cov-fail-under=80 -q
@@ -78,7 +81,7 @@ security-check:
 lock-check:
 	uv lock --check
 
-check: lock-check compile lint typecheck certification-check support-matrix-check test-cov
+check: lock-check compile lint typecheck test-architecture certification-check support-matrix-check test-cov
 
 build:
 	rm -rf dist build
@@ -90,8 +93,12 @@ release-install-check:
 release-evidence:
 	$(PYTHON) scripts/collect_release_evidence.py
 
-release-check: check test-release build release-install-check security-check
+release-metadata-check:
 	$(PYTHON) -m twine check dist/*
+
+release-check: check test-release
+	$(MAKE) build
+	$(MAKE) release-install-check security-check release-metadata-check
 
 clean:
 	rm -rf .venv dist build src/*.egg-info .pytest_cache

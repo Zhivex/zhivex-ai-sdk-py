@@ -18,6 +18,8 @@ class DocsOnboardingTests(TestCase):
             "zhivex_ai.experimental",
             "zhivex_ai.experimental.providers",
             "zhivex_ai.experimental.realtime",
+            "zhivex_ai.experimental.qwen",
+            "zhivex_ai.experimental.gemini",
             "zhivex_ai.integrations",
             "zhivex_ai.integrations.protocols",
             "zhivex_ai.integrations.responses",

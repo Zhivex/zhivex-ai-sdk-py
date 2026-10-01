@@ -1,10 +1,11 @@
 # Zhivex AI SDK for Python
 
-Version 0.27.0 expands Google Vertex AI support (now Gemini Enterprise Agent Platform),
-including Express/ADC authentication, current Google model routes and Beta native
-services. See the [Vertex guide](docs/providers/vertex.md) and
-[release scope](docs/providers/vertex-readiness-audit.md) for supported operations
-and remaining access/verification limits. The package remains Beta.
+Version 0.28.0 improves agent execution and persistence with shared total budgets,
+bounded trace retention, nonblocking SQLite transactions and pooled PostgreSQL
+stores. It also adds current direct-provider models and Beta native multi-agent,
+voice, rerank and Qwen LiveTranslate integrations. The package remains Beta.
+See the [release scope](docs/releases/0.28.0.md), [architecture guide](docs/ARCHITECTURE.md)
+and [model refresh](docs/MODEL_REFRESH_2026_09_30.md) for guarantees and evidence.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Zhivex/zhivex-ai-sdk-py/ci.yml?branch=main&label=CI)](https://github.com/Zhivex/zhivex-ai-sdk-py/actions)
 [![PyPI](https://img.shields.io/pypi/v/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)
@@ -90,6 +91,12 @@ For reproducible development and the minimum/latest dependency matrix, see [depe
 Use `async with HTTPTransport() as transport` and pass `fetch=transport` to provider factories when the application owns the connection pool. For default pools, call `await aclose_default_clients()` on the same event loop during shutdown. Both helpers are available from `zhivex_ai`.
 
 Use stream results as async context managers, or call `await result.aclose()` in a `finally` block, to cancel upstream work on disconnect. Set `stream_buffer_size=4096` for bounded event retention; full replay remains the compatibility default. A lagging consumer receives `ValidationError` instead of silently missing events. See [the streaming example](./examples/text/stream_text.py) and [production guidance](./PRODUCTION_APIS.md).
+
+The agent runtime, foundation and gateway accept `total_timeout_ms` for one monotonic budget across awaited work, tools, retries and fallbacks. `timeout_ms` retains its per-call meaning; `retry_jitter` is opt-in. Set `Agent(trace_event_limit=4096, ...)` to bound retained trace events and supply the default agent stream buffer limit. Full response text and messages remain available; apply output and run limits separately.
+
+Postgres agent stores now own a bounded lazy pool, or borrow an injected `pool=`. Initialize them during startup and close owned stores during shutdown with `await store.close()` or an async context manager. Use `await SQLiteAgentRunStore.open(path)` when constructing a run store on the event loop; the existing synchronous constructor remains compatible.
+
+The internal module boundaries and validation commands are documented in [SDK architecture](./docs/ARCHITECTURE.md).
 
 ## September model refresh
 
@@ -239,21 +246,21 @@ portable providers remain `contract-supported`. Certification does not change po
 
 ### Native Extras
 
-| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches | Token Count | Formulas | Messages | Managed Agent Sessions | GPT-Live |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| anthropic | Yes | Yes | Yes | Yes | No | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | Yes | No | No |
-| azure-openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No | No | No | No | No | No |
-| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
-| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No |
-| kimi | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | No | No | No |
-| meta | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No |
-| ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | Yes |
-| openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No |
-| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No |
-| vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No |
+| Provider | Text | Streaming | Structured Output | Tools | Embeddings | Grounding | Transcription | Speech | Files | File Search | Images | Uploads | Moderations | Batches | Videos | Media | Interactions | Containers | Skills | Realtime | Responses | Conversations | Caches | Token Count | Formulas | Messages | Managed Agent Sessions | GPT-Live | Voices | Rerank |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| anthropic | Yes | Yes | Yes | Yes | No | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | Yes | No | No | No | No |
+| azure-openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | Yes | No | No | No | No | No | No | No | No |
+| bedrock | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No |
+| deepseek | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| gemini | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No | Yes | No |
+| kimi | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | Yes | Yes | No | No | No | No | No |
+| meta | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No |
+| ollama | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| openai | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | Yes | No | No |
+| openrouter | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No | No |
+| qwen | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | Yes | No | No | No | No | No | Yes | Yes | No | No | No | No | No | No | No | No | Yes |
+| vertex | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | Yes | Yes | No | No | Yes | No | No | Yes | Yes | No | No | No | No | No | No |
+| vllm | Yes | Yes | Yes | Yes | Yes | No | Yes | No | No | No | No | No | No | No | No | No | No | No | No | Yes | No | No | No | No | No | No | No | No | No | No |
 
 ### Agent Capabilities
 
@@ -1336,6 +1343,11 @@ asyncio.run(main())
 
 `create_qwen()` reads `QWEN_API_KEY` or the official `DASHSCOPE_API_KEY`. By default it targets Alibaba Cloud Model Studio's Singapore-compatible endpoint with `region="intl"` and uses the current `/compatible-mode/v1/responses` path; use `region="us"` for US Virginia or `region="cn"` for China Beijing. Existing DashScope domains remain supported, while a workspace-specific domain can be supplied with `base_url=...`; reserve `responses_base_url=...` for a gateway whose Responses root differs. GA `qwen3.8-max` uses Responses for text, streaming, images, reasoning, functions, and hosted tools. The adapter selects `/chat/completions` only for native JSON Schema output, `FilePart(url=..., media_type="video/mp4")` input, or a reasoning token budget; structured output is always sent with thinking disabled. The Token Plan's exact `qwen3.8-max-preview` ID remains separate from the GA pay-as-you-go model. Web Extractor must be registered together with Web Search, and explicit thinking cannot be combined with forced required/named tool choice. Singapore Batch currently supports the stable `qwen-max`, `qwen-plus`, `qwen-flash`, and `qwen-turbo` aliases, so check regional model availability before submitting a batch.
 
+Qwen3.8 LiveTranslate has a Beta native WebSocket integration through
+`provider.native.realtime_model("qwen3.8-livetranslate-flash-realtime")`:
+bilingual text/audio streaming, terminology, speaker/voice metadata, JPEG context,
+and graceful session finalization. See [configuration, examples and validation](./docs/providers/qwen-live-translate.md).
+
 Qwen3.8 Omni Flash is available through `provider.native.language_model("qwen3.8-omni-flash")`.
 It accepts mixed text, `ImagePart`, and `FilePart` audio/video inputs and returns text.
 Media uses Responses (`input_audio.audio_url`, `input_video.video_url`), including streaming;
@@ -2044,3 +2056,7 @@ Native Model Garden also exposes Beta endpoint lifecycle and explicit deploy/und
 It also provides a separate [project model registry](docs/providers/vertex.md#project-model-registry-beta) for registering existing cloud artifacts and managing model metadata.
 
 Beta `vertex.native.rag()` exposes native RAG corpus/file management and retrieval; [scope and limitations](docs/providers/vertex.md#native-rag-engine-beta).
+
+## September 2026 model refresh
+
+The [September 30 refresh guide](docs/MODEL_REFRESH_2026_09_30.md) covers GPT-6 Sol/Luna and GPT-6.1 Sol, Claude Opus/Sonnet 5.5, Gemini 3.8 TTS/Voices, and Qwen 3.7 text reranking. OpenAI hosted multi-agent uses `provider.native.language_model(...)` with native provider options. Gemini Voices and Qwen rerank are Beta native clients; their contracts do not expand portable support. Azure and Bedrock support are unchanged.

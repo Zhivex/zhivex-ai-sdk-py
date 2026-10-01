@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import tomllib
 from pathlib import Path
 from unittest import TestCase
 
@@ -240,6 +241,19 @@ COMPATIBILITY_ROOT_EXPORTS_SHA256 = "4821040f56026b228b1c6424ad9dc95a571525fd6a7
 
 
 class PublicContractTests(TestCase):
+    def test_stream_metadata_is_additive_and_beta_helpers_stay_focused(self) -> None:
+        from zhivex_ai.types import StreamTextDeltaEvent
+        from zhivex_ai.experimental.gemini import GeminiVoicesClient
+
+        first = StreamTextDeltaEvent("text-delta", "hello")
+        second = StreamTextDeltaEvent(text_delta="world")
+        self.assertEqual(first.text_delta, "hello")
+        first.provider_metadata["agent"] = {"agent_name": "/root"}
+        self.assertEqual(second.provider_metadata, {})
+        self.assertIsNotNone(GeminiVoicesClient)
+        self.assertNotIn("GeminiVoicesClient", zhivex_ai.__all__)
+        self.assertNotIn("QwenRerankClient", zhivex_ai.__all__)
+
     def test_live_api_surface_is_additive_to_realtime(self) -> None:
         from typing import get_args
 
@@ -368,7 +382,8 @@ class PublicContractTests(TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text("utf-8")
 
         self.assertIn("beta package", readme)
-        self.assertIn('version = "0.27.0"', pyproject)
+        version = tomllib.loads(pyproject)["project"]["version"]
+        self.assertIn(f"Version {version} ", readme)
         self.assertIn('Development Status :: 4 - Beta', pyproject)
 
     def test_readme_mentions_beta_packaged_skills_and_docx_extra(self) -> None:

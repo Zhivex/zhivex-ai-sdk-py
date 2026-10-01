@@ -601,12 +601,23 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             ("gemini", "gemini-3.8-live-extended-thinking"), ("gemini", "lyria-3.5"),
         }
         for entry in entries:
+            if (entry.provider, entry.model_id) in {
+                ("openai", "gpt-6-sol"), ("openai", "gpt-6-luna"), ("openai", "gpt-6.1-sol"),
+                ("anthropic", "claude-opus-5-5"), ("anthropic", "claude-sonnet-5-5"),
+                ("gemini", "gemini-3.8-flash-tts"), ("gemini", "gemini-3.8-flash-lite-tts"),
+                ("qwen", "qwen3.7-text-rerank"),
+            }:
+                self.assertEqual(entry.verified_at, "2026-09-30")
+                self.assertEqual(entry.support_evidence, "offline-contract")
+                continue
             if (entry.provider, entry.model_id) in september_16:
                 self.assertEqual(entry.verified_at, "2026-09-16")
                 continue
             expected_date = "2026-09-05" if (entry.provider, entry.model_id) in reviewed else "2026-08-29"
             if (entry.provider, entry.model_id) == ("qwen", "qwen3.8-omni-flash"):
                 expected_date = "2026-09-18"
+            if (entry.provider, entry.model_id) == ("qwen", "qwen3.8-livetranslate-flash-realtime"):
+                expected_date = "2026-09-20"
             if entry.provider == "vertex" and entry.model_id in {
                 "openai/gpt-oss-120b-maas",
                 "mistralai/mistral-medium-3",

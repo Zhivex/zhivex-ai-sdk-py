@@ -20,6 +20,33 @@ Related documents:
 
 ## Unreleased
 
+## 0.28.0 — 2026-10-01
+
+### Architecture and execution
+
+- Extract agent contracts/events, context, tools/MCP adapters, approvals, skills and in-memory storage into internal modules while preserving existing public imports and historical data formats.
+- Run complete SQLite agent-run transactions outside the event loop; add asynchronous store construction. PostgreSQL agent stores reuse bounded owned or injected pools, initialize schema once and expose explicit lifecycle management.
+- Add opt-in monotonic `total_timeout_ms` and `retry_jitter` across foundation, gateway and agent APIs. Nested calls share the remaining budget; gateway retry waits honor `Retry-After` while preserving legacy backoff defaults.
+- Add optional agent trace-event retention, dropped-event counts and inherited stream retention while preserving full replay defaults and complete final results.
+- Compose native resources independently of the shared adapter and declare hosted-tool constraints in model capabilities. Add executable dependency boundaries and minimal-import regressions to local checks and CI.
+
+### Added
+
+- Source-backed direct-provider catalog entries for GPT-6 Sol/Luna, GPT-6.1 Sol, Claude Opus/Sonnet 5.5, Gemini 3.8 Flash/Lite TTS and Qwen 3.7 text rerank. Pricing records preserve long-context thresholds and conservative routing rates.
+- Beta OpenAI hosted multi-agent Responses normalization/streaming with root final-answer filtering, opaque history replay, agent/phase metadata and client-function execution.
+- Beta Gemini Voices design/replication/list/get/delete and 3.8 TTS voice configuration; Beta Qwen native rerank with regional/workspace routing and validated result indices.
+- Claude 5.5 adaptive/between-tools controls, native toolset/advisor metadata, forced-tool guards and Vertex native Messages regression coverage.
+- Opt-in provider-filtered catalog metadata age checks and runnable native examples. Azure and Bedrock adapters/catalog entries are unchanged. New coverage is offline, not live certification.
+
+- Beta native Qwen3.8 LiveTranslate WebSocket sessions with acknowledged setup/updates, bilingual transcript/audio events, terminology, voice-clone settings, JPEG context, bounded native event retention and graceful final-segment draining.
+- Additive Qwen workspace/realtime endpoint and transport-injection settings, a source-backed model catalog entry, a runnable translation example and redacted exact-wheel integration runner. Existing Qwen portable contracts are unchanged; offline/live integration evidence does not imply release certification.
+
+### Fixed
+
+- Preserve global gateway deadline errors on Python 3.11 instead of reporting them as retryable per-attempt timeouts.
+- Refresh the locked PyJWT and urllib3 dependencies to patched releases and preserve release-check build ordering under parallel make.
+- Reject unsupported latest-model reasoning/sampling/cache combinations before dispatch, preserve Anthropic native request constraints after merging options, and keep OpenAI hosted collaboration separate from executable client functions.
+
 ## 0.27.0 — 2026-09-19
 
 ### Added

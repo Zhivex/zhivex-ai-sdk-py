@@ -226,3 +226,15 @@ the stored-response lifecycle.
 Vertex also catalogs the global Preview endpoint `gemini-3.1-pro-preview-customtools`; see the [Vertex guide](docs/providers/vertex.md#gemini-pro-custom-tools-endpoint) for scope and integration evidence.
 
 Beta `vertex.native.rag()` exposes native RAG corpus/file management and retrieval; [scope and limitations](docs/providers/vertex.md#native-rag-engine-beta).
+
+## Qwen3.8 LiveTranslate
+
+`qwen3.8-livetranslate-flash-realtime` is implemented as a Beta native WebSocket integration for Beijing and Singapore: bilingual text/audio streaming, glossary, voice-clone configuration, speaker metadata, JPEG context and graceful finish. The portable Qwen scope is unchanged. Model availability, translation quality and release certification require separate live evidence. See [configuration and evidence](docs/providers/qwen-live-translate.md).
+
+The [September 20 local installed-wheel evidence](docs/releases/2026-09-20-qwen-live-translate.md)
+passed Singapore text, speech, JPEG input and voice-clone configuration checks.
+It does not certify Beijing, perceptual cloning quality or a published release.
+
+## September 30 direct-provider coverage
+
+The eight latest model entries are marked `offline-contract`, with source links and review date 2026-09-30. This change adds mocked transport/normalization coverage, not protected live certification. Google Developer API Voices and 3.8 TTS are separate from Vertex; Qwen 3.7 rerank is native text ranking in Beijing. Claude 5.5 on Vertex uses the documented native Model Garden Messages route, not portable Gemini generation. Azure and Bedrock adapters/catalog entries are unchanged. Details and limitations: [model refresh guide](docs/MODEL_REFRESH_2026_09_30.md).

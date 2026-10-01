@@ -184,7 +184,7 @@ class SkillRuntimeTests(IsolatedAsyncioTestCase):
                 )
             }
 
-        with patch("zhivex_ai.agent.discover_mcp_tools", side_effect=fake_discover_mcp_tools):
+        with patch("zhivex_ai._agent_skills.discover_mcp_tools", side_effect=fake_discover_mcp_tools):
             agent = Agent(name="assistant", model=ToolUsingSkillModel(), skills={"docs": docs_skill})
             result = await run_agent(agent=agent, prompt="$docs explain skills")
 
@@ -206,7 +206,7 @@ class SkillRuntimeTests(IsolatedAsyncioTestCase):
         async def collect(event: object) -> None:
             events.append(event)
 
-        with patch("zhivex_ai.agent.discover_mcp_tools", side_effect=RuntimeError("MCP offline")):
+        with patch("zhivex_ai._agent_skills.discover_mcp_tools", side_effect=RuntimeError("MCP offline")):
             agent = Agent(name="assistant", model=SkillEchoModel("openai"), skills={"docs": docs_skill})
             result = await runtime.run(agent=agent, prompt="Explain skills", emit=collect)
 
@@ -223,7 +223,7 @@ class SkillRuntimeTests(IsolatedAsyncioTestCase):
             dependency_failure_mode="fail",
             dependencies=[SkillDependency(type="mcp", value="docs", url="https://mcp.example.com")],
         )
-        with patch("zhivex_ai.agent.discover_mcp_tools", side_effect=RuntimeError("MCP offline")):
+        with patch("zhivex_ai._agent_skills.discover_mcp_tools", side_effect=RuntimeError("MCP offline")):
             agent = Agent(name="assistant", model=SkillEchoModel("openai"), skills={"docs": docs_skill})
             with self.assertRaisesRegex(Exception, 'Skill "docs" could not be activated'):
                 await run_agent(agent=agent, prompt="$docs explain skills")

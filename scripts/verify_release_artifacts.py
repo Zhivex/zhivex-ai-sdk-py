@@ -574,9 +574,136 @@ def _smoke_code(expected_version: str) -> str:
     )
 
 
+def _architecture_smoke_code() -> str:
+    """Exercise architecture additions through public APIs in the installed package."""
+    return textwrap.dedent(
+        """
+        import asyncio
+        from importlib import resources
+        from pathlib import Path
+        import tempfile
+
+        from zhivex_ai import (
+            Agent, AgentRunState, SQLiteAgentRunStore, ValidationError,
+            create_sqlite_agent_memory_store, create_sqlite_checkpoint_store,
+            generate_text, run_agent, stream_agent, stream_text,
+        )
+        from zhivex_ai.evals import GenerateResult, create_mock_language_model
+        from zhivex_ai.types import StreamTextDeltaEvent
+
+        # Packaging must retain internal modules used by the public runtime.
+        for module in (
+            "_agent_contracts.py", "_agent_context.py", "_agent_memory.py",
+            "_agent_persistence.py", "_agent_execution.py", "_agent_tools.py",
+            "_agent_skills.py", "_agent_streams.py", "_agent_live.py",
+            "_agent_run_state.py", "_agent_approvals.py", "_postgres_store.py",
+            "providers/_native_extensions.py",
+        ):
+            assert resources.files("zhivex_ai").joinpath(module).is_file(), module
+
+        async def main():
+            with tempfile.TemporaryDirectory(prefix="installed-agent-store-") as directory:
+                path = str(Path(directory) / "agent.sqlite")
+                stores = await asyncio.gather(*(SQLiteAgentRunStore.open(path) for _ in range(3)))
+                claims = await asyncio.gather(*(
+                    store.claim_idempotency_key(AgentRunState(
+                        run_id=f"artifact-{index}", agent_name="artifact", provider="mock",
+                        model_id="offline", idempotency_key="installed-claim",
+                    )) for index, store in enumerate(stores)
+                ))
+                assert len({state.run_id for state in claims}) == 1
+                memory = create_sqlite_agent_memory_store(path)
+                checkpoints = create_sqlite_checkpoint_store(path)
+                agent = Agent(
+                    name="installed-architecture",
+                    model=create_mock_language_model(responses=[GenerateResult(text="durable-ok", finish_reason="stop")]),
+                    run_store=stores[0], memory=memory, checkpoint_store=checkpoints,
+                )
+                result = await run_agent(agent=agent, prompt="offline", total_timeout_ms=5000)
+                restored = await stores[1].load(result.run_id)
+                assert restored is not None and restored.status == "completed"
+                assert restored.output_text == "durable-ok"
+                assert (await memory.load(result.session.id)).messages
+                assert await checkpoints.get_latest(run_id=result.run_id) is not None
+
+            limited = Agent(
+                name="installed-retention", trace_event_limit=1,
+                model=create_mock_language_model(responses=[GenerateResult(text="retained-ok", finish_reason="stop")]),
+            )
+            async with stream_agent(agent=limited, prompt="offline", total_timeout_ms=5000) as stream:
+                retained = await stream.collect()
+                assert retained.text == "retained-ok"
+                assert retained.trace is not None
+                assert len(retained.trace.events) == 1
+                assert retained.trace.events_dropped > 0
+                try:
+                    await anext(aiter(stream.event_stream()))
+                except ValidationError:
+                    pass
+                else:
+                    raise AssertionError("Evicted stream replay must fail explicitly.")
+
+            class SlowModel:
+                provider = "mock"
+                model_id = "deadline"
+                capabilities = create_mock_language_model().capabilities
+
+                def __init__(self):
+                    self.closed = False
+                    self.cancelled = False
+
+                async def generate(self, request):
+                    try:
+                        await asyncio.sleep(10)
+                    finally:
+                        self.cancelled = True
+
+                async def stream(self, request):
+                    async def events():
+                        try:
+                            yield StreamTextDeltaEvent(text_delta="started")
+                            await asyncio.sleep(10)
+                        finally:
+                            self.closed = True
+                    return events()
+
+            slow = SlowModel()
+            try:
+                await generate_text(model=slow, prompt="offline", total_timeout_ms=20)
+            except TimeoutError:
+                assert slow.cancelled
+            else:
+                raise AssertionError("Generation must enforce its total deadline.")
+
+            async def on_event(event):
+                await asyncio.sleep(10)
+
+            async with stream_text(model=slow, prompt="offline", total_timeout_ms=20, on_event=on_event) as stream:
+                try:
+                    await stream.collect()
+                except TimeoutError:
+                    assert slow.closed
+                else:
+                    raise AssertionError("Streaming callbacks must consume the total budget.")
+
+            for invalid in (True, 1.5, float("nan"), float("inf")):
+                try:
+                    stream_text(model=slow, prompt="offline", total_timeout_ms=invalid)
+                except ValidationError:
+                    pass
+                else:
+                    raise AssertionError("Invalid deadline accepted before starting a stream.")
+
+        asyncio.run(main())
+        print("installed-architecture-ok")
+        """
+    )
+
+
 def _run_base_smoke(python: Path, *, expected_version: str) -> None:
-    _run([str(python), "-c", _smoke_code(expected_version)])
-    _run([str(python), str(ROOT / "scripts" / "smoke_live_runtime.py")])
+    _run([str(python), "-I", "-c", _smoke_code(expected_version)])
+    _run([str(python), "-I", "-c", _architecture_smoke_code()])
+    _run([str(python), "-I", str(ROOT / "scripts" / "smoke_live_runtime.py")])
     cli = _venv_bin(python.parent.parent, "zhivex-skills")
     _run([str(cli), "--help"])
     general_cli = _venv_bin(python.parent.parent, "zhivex")
@@ -600,6 +727,10 @@ def _postgres_workflow_smoke_code() -> str:
             WorkflowGraph,
             WorkflowStep,
             create_mock_language_model,
+            create_postgres_agent_memory_store,
+            create_postgres_agent_run_store,
+            create_postgres_checkpoint_store,
+            run_agent,
             create_postgres_workflow_checkpoint_store,
             create_postgres_workflow_lease_manager,
             migrate_workflow_run_checkpoint,
@@ -618,7 +749,28 @@ def _postgres_workflow_smoke_code() -> str:
                 table_prefix=table_prefix,
                 pool=pool,
             )
+            memory = create_postgres_agent_memory_store(table_prefix=table_prefix, pool=pool)
+            agent_checkpoints = create_postgres_checkpoint_store(table_prefix=table_prefix, pool=pool)
+            runs = create_postgres_agent_run_store(table_prefix=table_prefix, pool=pool)
             try:
+                await asyncio.gather(memory.initialize(), agent_checkpoints.initialize(), runs.initialize())
+                durable_agent = Agent(
+                    name="installed-postgres-agent",
+                    model=create_mock_language_model(responses=[GenerateResult(text="postgres-agent-ok", finish_reason="stop")]),
+                    run_store=runs, memory=memory, checkpoint_store=agent_checkpoints,
+                )
+                agent_result = await run_agent(agent=durable_agent, prompt="offline", idempotency_key=f"{table_prefix}-agent")
+                persisted = await runs.load(agent_result.run_id)
+                assert persisted is not None and persisted.status == "completed"
+                assert persisted.output_text == "postgres-agent-ok"
+                assert (await memory.load(agent_result.session.id)).messages
+                assert await agent_checkpoints.get_latest(run_id=agent_result.run_id) is not None
+                async with create_postgres_agent_run_store(
+                    dsn, table_prefix=table_prefix, pool_min_size=0, pool_max_size=2,
+                ) as owned_runs:
+                    restored_agent = await owned_runs.load(agent_result.run_id)
+                    assert restored_agent is not None and restored_agent.output_text == "postgres-agent-ok"
+                await owned_runs.close()
                 graph = (
                     WorkflowBuilder("installed_postgres_release_smoke", definition_version="1")
                     .add_step(
@@ -677,12 +829,21 @@ def _postgres_workflow_smoke_code() -> str:
                 assert migrated.transition.type == "workflow-checkpoint-schema-migrated"
                 assert migrated.migration_history[0].migration_id == "workflow-checkpoint-v1-to-v2"
             finally:
+                await memory.close()
+                await agent_checkpoints.close()
+                await runs.close()
+                # Agent stores borrow this pool; close() must preserve its owner.
+                async with pool.acquire() as borrowed_connection:
+                    assert await borrowed_connection.fetchval("SELECT 1") == 1
                 await checkpoint_store.close()
                 await lease_manager.close()
                 await pool.close()
                 connection = await asyncpg.connect(dsn)
                 try:
                     for suffix in (
+                        "agent_memory",
+                        "agent_checkpoints",
+                        "runs",
                         "workflow_checkpoints",
                         "workflow_runs",
                         "workflow_leases",
@@ -706,7 +867,7 @@ def _run_postgres_workflow_smoke(python: Path, *, required: bool) -> None:
             )
         print("Skipping installed Postgres workflow smoke: ZHIVEX_TEST_POSTGRES_DSN is not set.")
         return
-    _run([str(python), "-c", _postgres_workflow_smoke_code()])
+    _run([str(python), "-I", "-c", _postgres_workflow_smoke_code()])
 
 
 def _run_extra_smoke(
@@ -753,7 +914,7 @@ def _run_extra_smoke(
         )
     lines.append('print("ok")')
     code = "\n".join(lines)
-    _run([str(python), "-c", code])
+    _run([str(python), "-I", "-c", code])
     if extra == "postgres":
         _run_postgres_workflow_smoke(
             python,
@@ -806,7 +967,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--require-postgres-workflow-smoke",
         action="store_true",
-        help="Fail unless the installed wheel runs WorkflowGraph against ZHIVEX_TEST_POSTGRES_DSN.",
+        help="Fail unless the installed wheel runs durable agents and WorkflowGraph against ZHIVEX_TEST_POSTGRES_DSN.",
     )
     return parser.parse_args(argv)
 

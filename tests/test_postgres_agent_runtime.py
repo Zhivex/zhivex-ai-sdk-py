@@ -77,6 +77,9 @@ class PostgresAgentRuntimeIntegrationTests(IsolatedAsyncioTestCase):
             raise AssertionError("refusing to clean Postgres tables for an unsafe integration-test prefix")
         import asyncpg
 
+        await self.memory.close()
+        await self.checkpoints.close()
+        await self.runs.close()
         await self.workflow_checkpoints.close()
         await self.workflow_leases.close()
         await self.workflow_pool.close()

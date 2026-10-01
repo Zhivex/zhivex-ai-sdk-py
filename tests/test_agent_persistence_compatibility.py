@@ -1,6 +1,7 @@
 """Characterize data emitted by the actual pre-extraction 0.22.0 wheel."""
 from __future__ import annotations
 
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -31,7 +32,7 @@ class AgentPersistenceCompatibilityTests(IsolatedAsyncioTestCase):
     async def test_current_stores_load_pre_extraction_sqlite_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = str(Path(temporary) / "legacy.sqlite")
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("CREATE TABLE zhivex_agent_memory (namespace TEXT, session_id TEXT, state_json TEXT, updated_at_ms INTEGER, PRIMARY KEY(namespace, session_id))")
                 connection.execute("INSERT INTO zhivex_agent_memory VALUES (?, ?, ?, ?)", ("default", "session-compat", json.dumps(FIXTURE["memory"]), 1234))
                 connection.execute("CREATE TABLE zhivex_agent_checkpoints (namespace TEXT, run_id TEXT, session_id TEXT, step_index INTEGER, saved_at_ms INTEGER, is_final INTEGER, checkpoint_json TEXT)")
