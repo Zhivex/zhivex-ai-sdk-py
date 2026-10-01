@@ -20,6 +20,18 @@ Related documents:
 
 ## Unreleased
 
+## 0.28.3 — 2026-10-01
+
+Recover the failed 0.28.2 publication with corrected OpenAI response normalization and the Luna 6 release canary. Protected certification and publication remain pending.
+
+### Fixed
+
+- Preserve ordinary OpenAI Responses final-answer text when `phase` is present without hosted-agent attribution, in generation and streaming. Explicit hosted multi-agent requests still expose only the attributed root final answer.
+
+### Changed
+
+- Use `gpt-6-luna` with reasoning effort `none` for the PyPI/TestPyPI release canary and current provider release policy.
+
 ## 0.28.2 — 2026-10-01
 
 Reissue the 0.28.0 release scope with corrected release metadata and smoke tooling. The protected 0.28.0 and 0.28.1 tags remain historical failed publication attempts.

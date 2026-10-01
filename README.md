@@ -1,10 +1,10 @@
 # Zhivex AI SDK for Python
 
-Version 0.28.2 improves agent execution and persistence with shared total budgets,
-bounded trace retention, nonblocking SQLite transactions and pooled PostgreSQL
-stores. It also adds current direct-provider models and Beta native multi-agent,
-voice, rerank and Qwen LiveTranslate integrations. The package remains Beta.
-See the [release scope](docs/releases/0.28.2.md), [architecture guide](docs/ARCHITECTURE.md)
+Version 0.28.3 fixes ordinary OpenAI final-answer text being discarded and moves
+the protected release canary to `gpt-6-luna`. It retains the 0.28.0 agent budget,
+persistence and model integrations. The package remains Beta; protected
+certification and publication are pending for this candidate.
+See the [release scope](docs/releases/0.28.3.md), [architecture guide](docs/ARCHITECTURE.md)
 and [model refresh](docs/MODEL_REFRESH_2026_09_30.md) for guarantees and evidence.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Zhivex/zhivex-ai-sdk-py/ci.yml?branch=main&label=CI)](https://github.com/Zhivex/zhivex-ai-sdk-py/actions)
