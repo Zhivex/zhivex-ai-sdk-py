@@ -33,6 +33,7 @@ from .agent_state import (
     AgentRunStatus,
     AgentRunStep,
     PendingApproval,
+    _usage_from_payload,
 )
 from .errors import ToolExecutionSuspended
 from .messages import create_text_message
@@ -68,9 +69,6 @@ def _detect_handoff(tool_results: list[ToolExecutionResult]) -> AgentHandoff | N
 
 
 def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMessage]:
-    messages = [message for message in result.messages if message.role == "assistant"]
-    if messages:
-        return messages
     if result.steps:
         collected: list[ModelMessage] = []
         for step in result.steps:
@@ -81,6 +79,9 @@ def _assistant_messages_from_result(result: GenerateTextOutput) -> list[ModelMes
             )
         if collected:
             return collected
+    messages = [message for message in result.messages if message.role == "assistant"]
+    if messages:
+        return messages
     if result.text:
         return [create_text_message("assistant", result.text)]
     return []
@@ -195,6 +196,7 @@ def _child_runs_from_tool_results(
                 steps=_int_from_json(raw_child.get("steps")),
                 tool_calls=_int_from_json(raw_child.get("tool_calls")),
                 tool_errors=_int_from_json(raw_child.get("tool_errors")),
+                usage=_usage_from_payload(raw_child.get("usage")),
             )
         )
     return children

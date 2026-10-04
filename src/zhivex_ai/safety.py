@@ -90,6 +90,15 @@ class RedactionPolicy:
 
     async def input_guardrail(self, request: InputGuardrailRequest) -> GuardrailResult:
         request.messages[:] = self.redact_messages(request.messages)
+        # Redact the full retained history, including turns omitted from the
+        # model's context window, before any later persistence or summary.
+        session = request.context.session if request.context is not None else None
+        if session is not None:
+            session.messages = self.redact_messages(session.messages)
+            if session.summary is not None:
+                session.summary = self.redact_text(session.summary)
+            if request.context is not None:
+                request.context.memory_summary = session.summary
         if request.prompt is not None:
             request.prompt = self.redact_text(request.prompt)
         return GuardrailResult()
@@ -97,6 +106,10 @@ class RedactionPolicy:
     async def output_guardrail(self, request: OutputGuardrailRequest) -> GuardrailResult:
         request.text = self.redact_text(request.text)
         request.messages[:] = self.redact_messages(request.messages)
+        if request.result is not None:
+            # Request snapshots include intermediate output from earlier steps.
+            for step in request.result.steps:
+                step.request.messages = self.redact_messages(step.request.messages)
         return GuardrailResult()
 
 
@@ -125,17 +138,29 @@ class BudgetGuard:
             input_tokens += child.usage.input_tokens or 0
             output_tokens += child.usage.output_tokens or 0
             total_tokens += child.usage.total_tokens or (child.usage.input_tokens or 0) + (child.usage.output_tokens or 0)
-        checks = (
-            (self.max_steps, steps, "steps"),
-            (self.max_tool_calls, tool_calls, "tool calls"),
-            (self.max_tool_errors, tool_errors, "tool errors"),
-            (self.max_input_tokens, input_tokens, "input tokens"),
-            (self.max_output_tokens, output_tokens, "output tokens"),
-            (self.max_total_tokens, total_tokens, "total tokens"),
+        return self._evaluate_counts(
+            steps=steps, tool_calls=tool_calls, tool_errors=tool_errors,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            total_tokens=total_tokens,
         )
-        for limit, actual, label in checks:
-            if limit is not None and actual > limit:
-                return GuardrailResult(True, f"Agent run exceeded budget for {label}: {actual} > {limit}.")
+
+    def _evaluate_counts(
+        self, *, steps: int, tool_calls: int, tool_errors: int,
+        input_tokens: int, output_tokens: int, total_tokens: int,
+        dispatch: bool = False,
+    ) -> GuardrailResult:
+        checks = (
+            (self.max_steps, steps, "steps", False),
+            (self.max_tool_calls, tool_calls, "tool calls", False),
+            (self.max_tool_errors, tool_errors, "tool errors", False),
+            (self.max_input_tokens, input_tokens, "input tokens", dispatch),
+            (self.max_output_tokens, output_tokens, "output tokens", dispatch),
+            (self.max_total_tokens, total_tokens, "total tokens", dispatch),
+        )
+        for limit, actual, label, exhausted in checks:
+            if limit is not None and (actual > limit or (exhausted and actual == limit)):
+                comparison = ">=" if exhausted else ">"
+                return GuardrailResult(True, f"Agent run exceeded budget for {label}: {actual} {comparison} {limit}.")
         return GuardrailResult()
 
     async def input_guardrail(self, request: InputGuardrailRequest) -> GuardrailResult:
@@ -162,6 +187,8 @@ class BudgetGuard:
                     messages=list(response_messages),
                 )
             )
+        from ._agent_run_state import _child_runs_from_tool_results
+
         state = AgentRunState(
             run_id=request.run_id,
             agent_name=request.agent_name,
@@ -172,6 +199,7 @@ class BudgetGuard:
             current_step=len(steps),
             steps=steps,
             tool_results=list(request.result.tool_results),
+            child_runs=_child_runs_from_tool_results(request.result.tool_results, request.run_id),
             usage=request.result.usage,
             output_text=request.text,
             finish_reason=request.result.finish_reason,

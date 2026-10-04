@@ -227,6 +227,8 @@ Attach memory, checkpoint, and run stores independently:
 
 Built-in run stores claim `idempotency_key` atomically. A concurrent duplicate receives the already-claimed run identity, including its original session id, and does not call the model again. Custom production stores used with idempotent runs must implement the same atomic `claim_idempotency_key(...)` contract.
 
+When a redaction safety policy is attached, guarded prompt/messages and full retained history feed the session, memory, summaries, run-store session snapshot and checkpoints. Runtime instructions, skill instructions and injected summaries stay outside the saved session transcript; caller-owned system messages remain part of it. Redaction follows the configured rules for normalized message content; opaque provider data and application metadata still need an application-owned retention and redaction policy.
+
 Checkpoint persistence removes remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. Checkpoints can still contain prompts, generated text, and non-secret tool data; apply your retention and tenant-isolation policy accordingly.
 
 SQLite and in-memory stores have Stable contracts. SQLite supports single-host persistence; InMemory supports process-local tests and demos. Use Postgres for shared backend persistence. See [storage guarantees](./agents/durable-state.md#local-storage-guarantees).
@@ -256,7 +258,7 @@ Replay helpers analyze stored `AgentRunState`; they do not re-execute providers.
 - `handoff-*`
 - `finish` or `error`
 
-Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress.
+Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress. The private foundation stream used by the agent retains only the latest event; the agent's public replay and trace retention still follow their configured limits. Final text, message parts and guardrail text buffers can still grow with output. Cancellation, timeout and event-delivery failure close and await the provider iterator before the agent stream settles.
 
 Stable `stream_live_agent(...)` now uses the same run-store idempotency, middleware, tool timeout, pending-approval suspension/resume, terminal-state, and cancellation boundaries where the realtime transport permits them. The normalized runtime is Stable: use a durable run store for approval/recovery, and validate the exact provider/model session behavior live.
 
