@@ -11,12 +11,14 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, cast
 from uuid import uuid4
 
 from ._agent_budget import enter_budget_scope, exit_budget_scope
+from ._agent_guardrail_messages import _GuardrailMessages
 from ._agent_memory import InMemoryAgentMemory as InMemoryAgentMemory, InMemoryAgentCheckpointStore as InMemoryAgentCheckpointStore
 from .runtime import ExecutionBudget, budgeted, execution_scope
 from ._agent_run_state import (
     _detect_handoff as _detect_handoff,
     _assistant_messages_from_result as _assistant_messages_from_result,
     _replace_assistant_messages as _replace_assistant_messages,
+    _replace_messages_by_identity as _replace_messages_by_identity,
     _apply_guarded_output as _apply_guarded_output,
     _extract_tool_calls_from_steps as _extract_tool_calls_from_steps,
     _extract_provider_tool_results_from_steps as _extract_provider_tool_results_from_steps,
@@ -1233,13 +1235,16 @@ class AgentRuntime:
         context: AgentContext,
         trace: AgentTrace,
         emit: Callable[[AgentEvent], Awaitable[None]],
+        caller_message_count: int = 0,
+        caller_messages: list[ModelMessage] | None = None,
     ) -> InputGuardrailRequest:
+        tracked = _GuardrailMessages(messages, caller_message_count) if caller_messages is not None else None
         request = InputGuardrailRequest(
             run_id=run_id,
             session_id=session_id,
             agent_name=agent.name,
             prompt=prompt,
-            messages=list(messages),
+            messages=tracked if tracked is not None else list(messages),
             context=context,
         )
         for guardrail in agent.input_guardrails:
@@ -1255,6 +1260,9 @@ class AgentRuntime:
             )
             try:
                 outcome = _normalize_guardrail_result(await _maybe_await(guardrail(request)))
+                if tracked is not None and request.messages is not tracked:
+                    tracked.replace_all(request.messages)
+                    request.messages = tracked
             except Exception as error:
                 self._finish_span(span, error=error)
                 raise
@@ -1281,6 +1289,9 @@ class AgentRuntime:
                     reason=outcome.reason,
                     metadata=outcome.metadata,
                 )
+        if tracked is not None and caller_messages is not None:
+            caller_messages[:] = tracked.caller_messages()
+            request.messages = list(tracked)
         return request
 
     async def _run_output_guardrails(
@@ -1413,6 +1424,7 @@ class AgentRuntime:
             structured_output_instructions=structured_output_instructions,
         )
         input_count = len(messages) if messages is not None else int(prompt is not None)
+        transcript_input: list[ModelMessage] = []
         _persist_active_skills(session, active_skill_activations)
         guarded_input = await self._run_input_guardrails(
             agent=agent,
@@ -1423,12 +1435,10 @@ class AgentRuntime:
             context=context,
             trace=trace,
             emit=emit,
+            caller_message_count=input_count,
+            caller_messages=transcript_input,
         )
         built_messages = guarded_input.messages
-        # The assembled request has runtime instructions/skills/summary before
-        # history and new input. Persist only the guarded input tail, preserving
-        # caller-owned system messages without copying runtime instructions.
-        transcript_input = list(built_messages[-input_count:]) if input_count else []
         registry = _resolve_tool_registry(agent, tools)
         if agent.subagents:
             registry = registry.merge(
@@ -1676,21 +1686,34 @@ class AgentRuntime:
         if not emitted_live_tool_events:
             for tool_result in accumulated_tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
+        # Every approval continuation belongs to this segment. Keep the
+        # generated responses separate from old history and runtime approval
+        # response messages when applying guardrail replacements.
+        segment_generation = GenerateTextOutput(
+            text=segment_text,
+            finish_reason=segment_finish_reason,
+            provider_finish_reason=segment_provider_finish_reason,
+            usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+            steps=accumulated_steps,
+            messages=conversation_messages,
+            tool_results=accumulated_tool_results,
+        )
+        original_assistants = _assistant_messages_from_result(segment_generation)
         guarded_output = await self._run_output_guardrails(
             agent=agent,
             run_id=run_id,
             session_id=session.id,
-            result=result,
+            result=segment_generation,
             text=segment_text,
-            messages=_assistant_messages_from_result(result),
+            messages=original_assistants,
             context=context,
             trace=trace,
             emit=emit,
         )
         segment_text = guarded_output.text
-        _apply_guarded_output(result, text=segment_text, messages=guarded_output.messages)
-        conversation_messages = _replace_assistant_messages(conversation_messages, guarded_output.messages)
-        persisted_run_messages = _replace_assistant_messages(persisted_run_messages, guarded_output.messages)
+        _apply_guarded_output(segment_generation, text=segment_text, messages=guarded_output.messages)
+        conversation_messages = _replace_messages_by_identity(conversation_messages, original_assistants, guarded_output.messages)
+        persisted_run_messages = _replace_messages_by_identity(persisted_run_messages, original_assistants, guarded_output.messages)
         if segment_text and not emitted_live_text and not buffer_live_text:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if buffer_live_text:

@@ -147,6 +147,7 @@ files = [
   "src/zhivex_ai/_agent_persistence.py",
   "src/zhivex_ai/_agent_contracts.py",
   "src/zhivex_ai/_agent_context.py",
+  "src/zhivex_ai/_agent_guardrail_messages.py",
   "src/zhivex_ai/_agent_execution.py",
   "src/zhivex_ai/_agent_tools.py",
   "src/zhivex_ai/_agent_approvals.py",

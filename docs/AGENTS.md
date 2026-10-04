@@ -227,6 +227,8 @@ Attach memory, checkpoint, and run stores independently:
 
 Built-in run stores claim `idempotency_key` atomically. A concurrent duplicate receives the already-claimed run identity, including its original session id, and does not call the model again. Custom production stores used with idempotent runs must implement the same atomic `claim_idempotency_key(...)` contract.
 
+Input guardrails receive the assembled model messages, including runtime context and caller input. Per-message edits, caller-only slice replacements, additions and reordering preserve which messages belong in the session transcript. When assigning a new `request.messages` list, retain the existing context messages (unchanged clones also work) so caller replacements remain identifiable. An ambiguous wholesale rewrite spanning both context and caller input fails with `ValidationError` before model dispatch rather than guessing a transcript boundary. To intentionally replace the entire request with new caller input, clear the message list and append the new messages.
+
 When a redaction safety policy is attached, guarded prompt/messages and full retained history feed the session, memory, summaries, run-store session snapshot and checkpoints. Runtime instructions, skill instructions and injected summaries stay outside the saved session transcript; caller-owned system messages remain part of it. Redaction follows the configured rules for normalized message content; opaque provider data and application metadata still need an application-owned retention and redaction policy.
 
 Checkpoint persistence removes remote/MCP credentials, sensitive URL credentials/query values, provider options, and raw provider responses. Checkpoints can still contain prompts, generated text, and non-secret tool data; apply your retention and tenant-isolation policy accordingly.
@@ -258,7 +260,7 @@ Replay helpers analyze stored `AgentRunState`; they do not re-execute providers.
 - `handoff-*`
 - `finish` or `error`
 
-Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress. The private foundation stream used by the agent retains only the latest event; the agent's public replay and trace retention still follow their configured limits. Final text, message parts and guardrail text buffers can still grow with output. Cancellation, timeout and event-delivery failure close and await the provider iterator before the agent stream settles.
+Output guardrails cover every generated response in the current segment, including provider-managed approval continuations, while retaining prior session history and provider approval responses separately. Output guardrails can buffer text until checks pass, but tool lifecycle and approval events remain live so UIs can show progress. The private foundation stream used by the agent retains only the latest event; the agent's public replay and trace retention still follow their configured limits. Final text, message parts and guardrail text buffers can still grow with output. Cancellation, timeout and event-delivery failure close and await the provider iterator before the agent stream settles.
 
 Stable `stream_live_agent(...)` now uses the same run-store idempotency, middleware, tool timeout, pending-approval suspension/resume, terminal-state, and cancellation boundaries where the realtime transport permits them. The normalized runtime is Stable: use a durable run store for approval/recovery, and validate the exact provider/model session behavior live.
 

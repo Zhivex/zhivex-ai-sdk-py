@@ -104,6 +104,19 @@ def _replace_assistant_messages(
     return resolved
 
 
+def _replace_messages_by_identity(
+    messages: list[ModelMessage],
+    originals: list[ModelMessage],
+    replacements: list[ModelMessage],
+) -> list[ModelMessage]:
+    sources = originals[-len(replacements):] if replacements else []
+    mapping = {
+        id(source): replacement
+        for source, replacement in zip(sources, replacements[-len(sources):] if sources else [], strict=True)
+    }
+    return [mapping.get(id(message), message) for message in messages]
+
+
 def _apply_guarded_output(
     result: GenerateTextOutput,
     *,
@@ -111,7 +124,7 @@ def _apply_guarded_output(
     messages: list[ModelMessage],
 ) -> None:
     result.text = text
-    result.messages = _replace_assistant_messages(result.messages, messages)
+    result.messages = _replace_messages_by_identity(result.messages, _assistant_messages_from_result(result), messages)
     cursor = 0
     for step in result.steps:
         response = step.response
