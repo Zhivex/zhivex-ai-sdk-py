@@ -14,6 +14,45 @@ and [model refresh](docs/MODEL_REFRESH_2026_09_30.md) for guarantees and evidenc
 
 Zhivex AI SDK for Python is an async-first runtime for building reliable agents across multiple AI providers.
 
+[Quickstart](./docs/QUICKSTART.md) · [Agent guide](./docs/AGENTS.md) ·
+[Python documentation](https://sdk.zhivex.ai/doc/python/getting-started)
+
+## Quick Start
+
+Requires Python 3.11 or newer. Install in a virtual environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install zhivex-ai-sdk
+```
+
+Set `OPENAI_API_KEY`, save this example as `agent.py`, and run
+`.venv/bin/python agent.py`. Provider calls require an API key.
+
+```python
+import asyncio
+
+from zhivex_ai import Agent, create_in_memory_agent_memory_store, create_openai, run_agent
+
+
+async def main() -> None:
+    openai = create_openai()
+    agent = Agent(
+        name="assistant",
+        instructions="Be concise and remember prior turns.",
+        model=openai("gpt-5.6-terra"),
+        memory=create_in_memory_agent_memory_store(),
+    )
+
+    first = await run_agent(agent=agent, prompt="Remember that project Apollo is important.")
+    second = await run_agent(agent=agent, session=first.session, prompt="What project did I mention?")
+
+    print(second.text)
+
+
+asyncio.run(main())
+```
+
 The core product is deliberately small:
 
 - define an `Agent` once and run it with `run_agent()` or `stream_agent()`
@@ -349,32 +388,6 @@ zhivex eval my_app.agents:support_agent --dataset evals/support.json \
   --repetitions 5 --max-concurrency 4 \
   --output-json artifacts/eval.json --output-junit artifacts/eval.xml
 zhivex playground my_app.agents:support_agent
-```
-
-## Quick Start
-
-```python
-import asyncio
-
-from zhivex_ai import Agent, create_in_memory_agent_memory_store, create_openai, run_agent
-
-
-async def main() -> None:
-    openai = create_openai()
-    agent = Agent(
-        name="assistant",
-        instructions="Be concise and remember prior turns.",
-        model=openai("gpt-5.6-terra"),
-        memory=create_in_memory_agent_memory_store(),
-    )
-
-    first = await run_agent(agent=agent, prompt="Remember that project Apollo is important.")
-    second = await run_agent(agent=agent, session=first.session, prompt="What project did I mention?")
-
-    print(second.text)
-
-
-asyncio.run(main())
 ```
 
 ## Foundation APIs
