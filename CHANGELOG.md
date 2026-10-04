@@ -20,6 +20,11 @@ Related documents:
 
 ## Unreleased
 
+## 0.28.4 — Unreleased
+
+Prepare the compatible agent reliability patch. Protected exact-artifact
+certification and publication are pending.
+
 ### Fixed
 
 - Apply output guardrails to every provider-managed approval continuation without rewriting retained history or opaque approval responses. Track caller message ownership through input guardrail removals, replacements, additions and reordering so canonical transcripts do not duplicate context or save runtime instructions.
@@ -29,7 +34,7 @@ Related documents:
 
 ## 0.28.3 — 2026-10-01
 
-Recover the failed 0.28.2 publication with corrected OpenAI response normalization and the Luna 6 release canary. Protected certification and publication remain pending.
+Recover the failed 0.28.2 publication with corrected OpenAI response normalization and the Luna 6 release canary. Protected exact-artifact certification and PyPI publication completed on 2026-10-01 in [release workflow 36879311825](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/36879311825).
 
 ### Fixed
 
