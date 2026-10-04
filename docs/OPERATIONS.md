@@ -55,6 +55,10 @@ Use `create_budget_guard(...)` and `create_safety_policy(...)` for agent-level c
 - max tool errors
 - max input, output, or total tokens
 
+Budget guards check cumulative reported usage after each normalized model response and before further model or tool dispatch. Tool errors are checked as each local execution completes, including within a sequential batch. Direct handoffs retain the root budget. With `include_child_runs=True` (the default), local child and descendant runs in the same execution context share the counters; `False` excludes them from the parent's counters. Concurrent root invocations have independent counters even when they reuse one policy. The existing `RunLimits` step and tool-call ceilings remain in effect.
+
+A final answer exactly at a token ceiling may complete; further dispatch stops when that ceiling is exhausted. A provider call or parallel child/tool already started can overshoot a limit before its usage or outcome becomes available. Missing usage and provider-internal execution cannot establish a hard token or monetary ceiling. Use provider output limits, bounded tool concurrency, timeouts, and application-owned persistent quotas as well. Counters cover the current invocation; they are not a durable billing ledger across separately resumed invocations.
+
 Budget guards are runtime tripwires. They do not replace billing meters, prepaid balances, tenant quotas, or app-owned cost allocation.
 
 ## Concurrency And Cancellation

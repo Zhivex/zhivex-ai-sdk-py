@@ -8,6 +8,8 @@ from copy import deepcopy
 from functools import lru_cache
 from typing import Any, cast
 
+from ._agent_budget import before_model, after_model, before_tool, after_tool
+from ._agent_contracts import GuardrailTripwireTriggered
 from ._streaming import Broadcast, DEFAULT_STREAM_BUFFER_SIZE, OwnedStream
 from .errors import (
     ParseError,
@@ -309,6 +311,8 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             is_error=False,
             provider_metadata=dict(call.provider_metadata),
         )
+    except GuardrailTripwireTriggered:
+        raise
     except ToolExecutionSuspended:
         raise
     except ToolExecutionOutcomeUnknown:
@@ -385,7 +389,10 @@ async def _execute_tools(
     max_concurrency = max(1, options.max_concurrency or len(tool_calls) or 1) if options else max(1, len(tool_calls) or 1)
 
     async def execute_single(call: ToolCall) -> ToolExecutionResult:
-        return await _execute_tool(call, tools, timeout_ms=timeout_ms)
+        before_tool()
+        result = await _execute_tool(call, tools, timeout_ms=timeout_ms)
+        after_tool(is_error=result.is_error)
+        return result
 
     if not parallel or len(tool_calls) <= 1:
         sequential_results: list[ToolExecutionResult] = []
@@ -412,7 +419,14 @@ async def _execute_tools(
             cursor += 1
             results[index] = await execute_single(tool_calls[index])
 
-    await asyncio.gather(*(worker() for _ in range(min(max_concurrency, len(tool_calls)))))
+    workers = [asyncio.create_task(worker()) for _ in range(min(max_concurrency, len(tool_calls)))]
+    try:
+        await asyncio.gather(*workers)
+    except BaseException:
+        for task in workers:
+            task.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        raise
     resolved = [result for result in results if result is not None]
     if stop_on_error:
         first_error = next((result for result in resolved if result.is_error), None)
@@ -555,7 +569,9 @@ async def generate_text(
             tool_choice=tool_choice,
             retry=retry,
         )
+        before_model()
         response = await model.generate(request)
+        after_model(response)
         steps.append(GenerateTextStep(request=request, response=response))
         final_result = response
         response_messages = result_messages(response)
@@ -683,6 +699,7 @@ def stream_text(
                         tool_choice=tool_choice,
                         retry=retry,
                     )
+                    before_model()
                     stream = await model.stream(request)
                     assistant_parts: list[Any] = []
                     text_buffer = ""
@@ -724,6 +741,7 @@ def stream_text(
                         provider_finish_reason=provider_finish_reason,
                         usage=usage,
                     )
+                    after_model(response)
                     steps.append(GenerateTextStep(request=request, response=response))
                     final_result = response
                     if response_messages:

@@ -20,6 +20,13 @@ Related documents:
 
 ## Unreleased
 
+### Fixed
+
+- Apply output guardrails to every provider-managed approval continuation without rewriting retained history or opaque approval responses. Track caller message ownership through input guardrail removals, replacements, additions and reordering so canonical transcripts do not duplicate context or save runtime instructions.
+- Persist guarded agent input and redacted retained history consistently across sessions, memory, summaries, checkpoints and run-state replay without copying runtime instructions into transcripts. Keep generated output guardrails aligned with new assistant responses rather than prior history, and redact intermediate request snapshots.
+- Enforce cumulative safety budgets between model and tool operations, across direct handoffs and optional local child runs. Preserve child token usage in run summaries, stop later sequential tool dispatch after a tool-error tripwire, and cancel/join parallel workers on failure.
+- Close provider stream iterators on agent cancellation, timeouts and event-delivery failures. Bound the unused private generation replay to one event while preserving public stream replay defaults and full final text.
+
 ## 0.28.3 — 2026-10-01
 
 Recover the failed 0.28.2 publication with corrected OpenAI response normalization and the Luna 6 release canary. Protected certification and publication remain pending.

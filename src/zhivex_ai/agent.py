@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, cast
 from uuid import uuid4
 
+from ._agent_budget import enter_budget_scope, exit_budget_scope
+from ._agent_guardrail_messages import _GuardrailMessages
 from ._agent_memory import InMemoryAgentMemory as InMemoryAgentMemory, InMemoryAgentCheckpointStore as InMemoryAgentCheckpointStore
 from .runtime import ExecutionBudget, budgeted, execution_scope
 from ._agent_run_state import (
     _detect_handoff as _detect_handoff,
     _assistant_messages_from_result as _assistant_messages_from_result,
     _replace_assistant_messages as _replace_assistant_messages,
+    _replace_messages_by_identity as _replace_messages_by_identity,
     _apply_guarded_output as _apply_guarded_output,
     _extract_tool_calls_from_steps as _extract_tool_calls_from_steps,
     _extract_provider_tool_results_from_steps as _extract_provider_tool_results_from_steps,
@@ -215,7 +218,7 @@ from .agent_state import (
     fail_agent_run_resume_claim,
 )
 from .generate_text import generate_text, stream_text
-from .messages import create_text_message, is_callable_tool_definition, provider_data_part, tool_result_part
+from .messages import is_callable_tool_definition, provider_data_part, tool_result_part
 from .schema import create_schema_adapter
 from .skills import SkillArtifact, SkillRegistry, SkillSet
 from .types import (
@@ -326,6 +329,16 @@ class _LifecycleLanguageModel:
         self.provider = model.provider
         self.model_id = model.model_id
         self.capabilities = model.capabilities
+        from .safety import RedactionPolicy
+
+        self._redactions = [
+            owner for guardrail in agent.input_guardrails
+            if isinstance(owner := getattr(guardrail, "__self__", None), RedactionPolicy)
+        ]
+
+    def _redact_input(self, input: ModelGenerateInput) -> None:
+        for policy in self._redactions:
+            input.messages = policy.redact_messages(input.messages)
 
     def _raise_if_cancelled(self) -> None:
         if self._context.cancellation_token is not None:
@@ -333,6 +346,7 @@ class _LifecycleLanguageModel:
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         self._raise_if_cancelled()
+        self._redact_input(input)
         await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
         result = await _await_with_agent_cancellation(
             self._model.generate(input),
@@ -352,6 +366,7 @@ class _LifecycleLanguageModel:
 
     async def stream(self, input: ModelGenerateInput) -> AsyncIterable[Any]:
         self._raise_if_cancelled()
+        self._redact_input(input)
         await _call_agent_hooks(self._hooks, "on_model_start", self._context, self._agent, input)
         events = await _await_with_agent_cancellation(
             self._model.stream(input),
@@ -361,26 +376,31 @@ class _LifecycleLanguageModel:
 
         async def generator() -> AsyncIterable[Any]:
             iterator = events.__aiter__()
-            while True:
-                try:
-                    event = await _await_with_agent_cancellation(
-                        iterator.__anext__(),
-                        cancellation_token=self._context.cancellation_token,
-                        run_id=self._context.run_id,
-                    )
-                except StopAsyncIteration:
-                    break
+            try:
+                while True:
+                    try:
+                        event = await _await_with_agent_cancellation(
+                            iterator.__anext__(),
+                            cancellation_token=self._context.cancellation_token,
+                            run_id=self._context.run_id,
+                        )
+                    except StopAsyncIteration:
+                        break
+                    self._raise_if_cancelled()
+                    yield event
                 self._raise_if_cancelled()
-                yield event
-            self._raise_if_cancelled()
-            await _call_agent_hooks(
-                self._hooks,
-                "on_model_end",
-                self._context,
-                self._agent,
-                None,
-                reverse=True,
-            )
+                await _call_agent_hooks(
+                    self._hooks,
+                    "on_model_end",
+                    self._context,
+                    self._agent,
+                    None,
+                    reverse=True,
+                )
+            finally:
+                close = getattr(iterator, "aclose", None)
+                if close is not None:
+                    await close()
 
         return generator()
 
@@ -824,6 +844,7 @@ class AgentRuntime:
             if agent.run_limits.max_wall_time_ms is not None
             else None
         )
+        budget_scope, budget_token = enter_budget_scope(agent.output_guardrails)
         try:
             await _raise_if_agent_run_cancelled(
                 run_store=agent.run_store,
@@ -837,6 +858,7 @@ class AgentRuntime:
                     run_id=run_id,
                     cancellation_token=cancellation_token,
                 )
+                budget_scope.add_guardrails(current_agent.output_guardrails)
                 effective_hooks = [*run_hooks, *current_agent.hooks]
                 trace.segments.append(AgentTraceSegment(agent_name=current_agent.name, started_at_ms=_now_ms()))
                 await publish(AgentDelegationStartEvent(agent_name=current_agent.name, handoff_depth=handoff_depth))
@@ -1199,6 +1221,8 @@ class AgentRuntime:
                 durable_state_committed=agent.run_store is not None,
             )
             raise failure_error
+        finally:
+            exit_budget_scope(budget_token)
 
     async def _run_input_guardrails(
         self,
@@ -1211,13 +1235,16 @@ class AgentRuntime:
         context: AgentContext,
         trace: AgentTrace,
         emit: Callable[[AgentEvent], Awaitable[None]],
+        caller_message_count: int = 0,
+        caller_messages: list[ModelMessage] | None = None,
     ) -> InputGuardrailRequest:
+        tracked = _GuardrailMessages(messages, caller_message_count) if caller_messages is not None else None
         request = InputGuardrailRequest(
             run_id=run_id,
             session_id=session_id,
             agent_name=agent.name,
             prompt=prompt,
-            messages=list(messages),
+            messages=tracked if tracked is not None else list(messages),
             context=context,
         )
         for guardrail in agent.input_guardrails:
@@ -1233,6 +1260,9 @@ class AgentRuntime:
             )
             try:
                 outcome = _normalize_guardrail_result(await _maybe_await(guardrail(request)))
+                if tracked is not None and request.messages is not tracked:
+                    tracked.replace_all(request.messages)
+                    request.messages = tracked
             except Exception as error:
                 self._finish_span(span, error=error)
                 raise
@@ -1259,6 +1289,9 @@ class AgentRuntime:
                     reason=outcome.reason,
                     metadata=outcome.metadata,
                 )
+        if tracked is not None and caller_messages is not None:
+            caller_messages[:] = tracked.caller_messages()
+            request.messages = list(tracked)
         return request
 
     async def _run_output_guardrails(
@@ -1390,6 +1423,8 @@ class AgentRuntime:
             instructions=resolved_instructions,
             structured_output_instructions=structured_output_instructions,
         )
+        input_count = len(messages) if messages is not None else int(prompt is not None)
+        transcript_input: list[ModelMessage] = []
         _persist_active_skills(session, active_skill_activations)
         guarded_input = await self._run_input_guardrails(
             agent=agent,
@@ -1400,6 +1435,8 @@ class AgentRuntime:
             context=context,
             trace=trace,
             emit=emit,
+            caller_message_count=input_count,
+            caller_messages=transcript_input,
         )
         built_messages = guarded_input.messages
         registry = _resolve_tool_registry(agent, tools)
@@ -1567,6 +1604,7 @@ class AgentRuntime:
                         retry_backoff_ms=retry_backoff_ms,
                         structured_output=structured_output,
                         on_event=handle_stream_event,
+                        stream_buffer_size=1,
                     )
                     result = await streamed.collect()
                 else:
@@ -1648,21 +1686,34 @@ class AgentRuntime:
         if not emitted_live_tool_events:
             for tool_result in accumulated_tool_results:
                 await emit(AgentToolResultEvent(tool_result=tool_result))
+        # Every approval continuation belongs to this segment. Keep the
+        # generated responses separate from old history and runtime approval
+        # response messages when applying guardrail replacements.
+        segment_generation = GenerateTextOutput(
+            text=segment_text,
+            finish_reason=segment_finish_reason,
+            provider_finish_reason=segment_provider_finish_reason,
+            usage=_merge_usage([step.response.usage for step in accumulated_steps]),
+            steps=accumulated_steps,
+            messages=conversation_messages,
+            tool_results=accumulated_tool_results,
+        )
+        original_assistants = _assistant_messages_from_result(segment_generation)
         guarded_output = await self._run_output_guardrails(
             agent=agent,
             run_id=run_id,
             session_id=session.id,
-            result=result,
+            result=segment_generation,
             text=segment_text,
-            messages=_assistant_messages_from_result(result),
+            messages=original_assistants,
             context=context,
             trace=trace,
             emit=emit,
         )
         segment_text = guarded_output.text
-        _apply_guarded_output(result, text=segment_text, messages=guarded_output.messages)
-        conversation_messages = _replace_assistant_messages(conversation_messages, guarded_output.messages)
-        persisted_run_messages = _replace_assistant_messages(persisted_run_messages, guarded_output.messages)
+        _apply_guarded_output(segment_generation, text=segment_text, messages=guarded_output.messages)
+        conversation_messages = _replace_messages_by_identity(conversation_messages, original_assistants, guarded_output.messages)
+        persisted_run_messages = _replace_messages_by_identity(persisted_run_messages, original_assistants, guarded_output.messages)
         if segment_text and not emitted_live_text and not buffer_live_text:
             await emit(AgentTextDeltaEvent(text_delta=segment_text))
         if buffer_live_text:
@@ -1674,12 +1725,9 @@ class AgentRuntime:
         handoff = _detect_handoff(accumulated_tool_results)
         segment_output = None if handoff is not None else _parse_agent_output(output_agent, segment_text)
         transcript = list(session.messages)
-        if messages is not None:
-            transcript.extend(messages)
-        elif prompt is not None:
-            transcript.append(create_text_message("user", prompt))
+        transcript.extend(transcript_input)
         transcript.extend(persisted_run_messages)
-        session.messages = _strip_runtime_system_messages(transcript, resolved_instructions)
+        session.messages = transcript
         if agent.memory is not None and _should_refresh_summary(agent.memory, session):
             summary_span = self._start_span(
                 "zhivex.agent.summary",

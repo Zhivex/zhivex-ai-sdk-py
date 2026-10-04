@@ -2,8 +2,9 @@
 
 Version 0.28.3 fixes ordinary OpenAI final-answer text being discarded and moves
 the protected release canary to `gpt-6-luna`. It retains the 0.28.0 agent budget,
-persistence and model integrations. The package remains Beta; protected
-certification and publication are pending for this candidate.
+persistence and model integrations. The package remains Beta. The
+[protected release workflow](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/36879311825)
+completed exact-artifact certification and [PyPI publication](https://pypi.org/project/zhivex-ai-sdk/0.28.3/).
 See the [release scope](docs/releases/0.28.3.md), [architecture guide](docs/ARCHITECTURE.md)
 and [model refresh](docs/MODEL_REFRESH_2026_09_30.md) for guarantees and evidence.
 
@@ -131,7 +132,7 @@ Use `async with HTTPTransport() as transport` and pass `fetch=transport` to prov
 
 Use stream results as async context managers, or call `await result.aclose()` in a `finally` block, to cancel upstream work on disconnect. Set `stream_buffer_size=4096` for bounded event retention; full replay remains the compatibility default. A lagging consumer receives `ValidationError` instead of silently missing events. See [the streaming example](./examples/text/stream_text.py) and [production guidance](./PRODUCTION_APIS.md).
 
-The agent runtime, foundation and gateway accept `total_timeout_ms` for one monotonic budget across awaited work, tools, retries and fallbacks. `timeout_ms` retains its per-call meaning; `retry_jitter` is opt-in. Set `Agent(trace_event_limit=4096, ...)` to bound retained trace events and supply the default agent stream buffer limit. Full response text and messages remain available; apply output and run limits separately.
+The agent runtime, foundation and gateway accept `total_timeout_ms` for one monotonic budget across awaited work, tools, retries and fallbacks. `timeout_ms` retains its per-call meaning; `retry_jitter` is opt-in. Set `Agent(trace_event_limit=4096, ...)` to bound retained trace events and supply the default agent stream buffer limit. The agent's private generation stream retains only its latest event because the runtime consumes callbacks and the final result. Full response text and messages still grow with output; apply output and run limits separately.
 
 Postgres agent stores now own a bounded lazy pool, or borrow an injected `pool=`. Initialize them during startup and close owned stores during shutdown with `await store.close()` or an async context manager. Use `await SQLiteAgentRunStore.open(path)` when constructing a run store on the event loop; the existing synchronous constructor remains compatible.
 
@@ -1794,7 +1795,7 @@ Built-in stores use optimistic revisions and atomic idempotency/cancellation cla
 
 Tools can suspend a run for human approval by returning `ApprovalDecision.require_human(...)` from `approval_policy`. A tool with `requires_approval=True` fails closed if the agent has no approval policy. Load the pending request with `get_pending_agent_approvals(...)`, then call `resume_agent_run(...)` after the user approves or denies the tool call. Built-in run stores atomically claim the approval before executing it, so concurrent resume attempts cannot invoke the same tool twice.
 
-Safety policies compose approval, redaction, and budget defaults without mutating the original agent:
+Safety policies compose approval, redaction, and budget defaults without mutating the original agent. Redacted prompt/messages and retained session history are used for persistence and summaries as well as provider input. Runtime instructions remain separate from the saved transcript. Budget checks run between model/tool operations and accumulate across handoffs; local children share the budget when `include_child_runs=True`. See [budget limits and overshoot](docs/OPERATIONS.md#cost-and-budgets).
 
 ```python
 from zhivex_ai import apply_safety_policy_to_agent, create_safety_policy
