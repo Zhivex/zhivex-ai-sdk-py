@@ -1,6 +1,6 @@
 # Experimental computer execution
 
-This document describes pending source changes, not a claim about the published
+This document describes the pending 0.29.0 release, not a claim about the published
 0.28.4 wheel. The published declaration helpers alone do not execute a desktop.
 
 `zhivex_ai.experimental.openai_computer_tool` integrates OpenAI Responses GA

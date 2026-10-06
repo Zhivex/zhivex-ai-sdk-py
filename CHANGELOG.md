@@ -20,6 +20,11 @@ Related documents:
 
 ## Unreleased
 
+## 0.29.0 — Unreleased
+
+Prepare Experimental application-owned computer execution and independent task
+verification. Exact-artifact certification and publication are pending.
+
 ### Added
 
 - Experimental OpenAI Responses GA computer executor and Agent verification wrapper in `zhivex_ai.experimental`: application-owned authorization/execution, explicit provider safety acknowledgements, bounded async callbacks, correlated screenshots and independent terminal postconditions. Includes mock source and installed-wheel contracts; no desktop driver or native provider parity.
@@ -30,10 +35,11 @@ Related documents:
 - Treat native computer calls as client effects instead of silently skipping them as provider-managed work. Missing handlers, unsupported preview actions and denied approvals stop the run. Preserve GA batches, native call/output replay and safety identifiers across streaming and durable approval continuation. Interrupted effects remain unknown and are not automatically retried.
 - Pass native call metadata through generic tool execution context metadata, and preserve unknown external outcomes when cooperative Agent cancellation interrupts a tool.
 
-## 0.28.4 — Unreleased
+## 0.28.4 — 2026-10-04
 
-Prepare the compatible agent reliability patch. Protected exact-artifact
-certification and publication are pending.
+Published the compatible agent reliability patch from
+`73a5dd44ac8ce391104da4f19400af25b9a6e407`. Protected exact-artifact certification
+and PyPI publication completed in [release workflow 37220854989](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/37220854989).
 
 ### Fixed
 
