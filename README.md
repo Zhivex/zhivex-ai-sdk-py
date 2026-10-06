@@ -1,5 +1,11 @@
 # Zhivex AI SDK for Python
 
+Pending source changes add an **Experimental**, application-owned OpenAI Responses GA
+computer executor and verification wrapper in `zhivex_ai.experimental`. Existing
+preview declarations remain unchanged; unhandled computer calls now fail closed.
+See [computer execution contracts and limitations](docs/COMPUTER_USE.md). No release
+or native parity across providers is claimed.
+
 Version 0.28.4 is a release candidate for agent redaction persistence, cumulative
 execution budgets and stream cleanup. It includes the 0.28.3 OpenAI response
 correction and `gpt-6-luna` release canary. The package remains Beta; protected

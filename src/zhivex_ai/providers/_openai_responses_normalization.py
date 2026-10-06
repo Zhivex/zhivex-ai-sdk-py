@@ -107,7 +107,13 @@ def _provider_managed_tool_call(item: dict[str, Any]) -> ToolCall:
     if payload is None and isinstance(item.get("action"), dict):
         payload = item.get("action")
     metadata = dict(item)
-    metadata["provider_managed"] = True
+    metadata["provider_managed"] = item_type != "computer_call"
+    if item_type == "computer_call":
+        payload = {
+            "call_id": item.get("call_id"),
+            "actions": deepcopy(item.get("actions")),
+            "pending_safety_checks": deepcopy(item.get("pending_safety_checks", [])),
+        }
     metadata["item_type"] = item_type
     return ToolCall(
         id=str(item.get("call_id") or item.get("id") or item_type),

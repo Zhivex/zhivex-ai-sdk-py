@@ -365,6 +365,20 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
         if message.role == "tool":
             for part in message.parts:
                 if isinstance(part, ToolResultPart):
+                    if part.tool_result.provider_metadata.get("item_type") == "computer_call":
+                        result = part.tool_result
+                        if result.is_error or not isinstance(result.output, dict):
+                            raise ValidationError("Cannot replay an unsuccessful computer effect.")
+                        output = result.output.get("output")
+                        checks = result.output.get("acknowledged_safety_checks", [])
+                        pending = result.provider_metadata.get("pending_safety_checks", [])
+                        if not isinstance(output, dict) or output.get("type") != "computer_screenshot" or checks != pending:
+                            raise ValidationError("Computer screenshot or safety acknowledgement does not match its call.")
+                        items.append({
+                            "type": "computer_call_output", "call_id": result.tool_call_id,
+                            "output": deepcopy(output), "acknowledged_safety_checks": deepcopy(checks),
+                        })
+                        continue
                     payload: dict[str, Any] = {
                             "type": "function_call_output",
                             "call_id": part.tool_result.tool_call_id,
@@ -406,6 +420,12 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
             for part in message.parts:
                 if isinstance(part, ToolCallPart):
                     if provider_name == "openai" and part.tool_call.provider_metadata.get("openai_multi_agent_item"):
+                        continue
+                    if part.tool_call.provider_metadata.get("item_type") == "computer_call":
+                        native = deepcopy(part.tool_call.provider_metadata)
+                        native.pop("provider_managed", None)
+                        native.pop("item_type", None)
+                        items.append(native)
                         continue
                     payload = {
                             "type": "function_call",
@@ -484,6 +504,11 @@ def _map_tools(tools: dict[str, Any] | None, *, provider_name: str) -> list[dict
         return None
     mapped = []
     for tool in tools.values():
+        if tool.metadata.get("zhivex_native_computer") == "openai-ga":
+            if provider_name != "openai":
+                raise ValidationError("Native GA computer execution is supported only on OpenAI Responses.")
+            mapped.append({"type": "computer"})
+            continue
         if is_hosted_tool_definition(tool):
             mapped.append(_map_hosted_tool(tool, provider_name))
             continue
@@ -2738,6 +2763,8 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
+        if any(item.get("type") == "computer_call" for item in payload.get("output", []) if isinstance(item, dict)) and payload.get("status") != "completed":
+            raise ValidationError("Computer actions require a successfully completed Responses result.")
         multi_agent = self.provider == "openai" and bool((body.get("multi_agent") or {}).get("enabled"))
         assistant_message = _parse_responses_message(payload, self.provider, multi_agent=multi_agent)
         finish_reason, provider_finish_reason = _parse_response_finish_reason(payload)
@@ -2769,13 +2796,15 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 
         async def generator() -> AsyncIterable[StreamEvent]:
             terminal = False
+            computer_seen = False
+            computer_requested = any(item.get("type") == "computer" for item in body.get("tools", []))
             attributed_items: dict[Any, dict[str, Any]] = {}
             multi_agent = self.provider == "openai" and bool((body.get("multi_agent") or {}).get("enabled"))
             lines = response.iter_lines()
             try:
                 async for event in parse_sse(lines):
                     if event.data == "[DONE]":
-                        if self._require_terminal_event and not terminal:
+                        if (self._require_terminal_event or computer_requested or computer_seen) and not terminal:
                             raise ZhivexAIError("Responses stream ended without a terminal event.")
                         return
                     payload = json.loads(event.data)
@@ -2802,6 +2831,11 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                         continue
                     if payload.get("type") in {"response.output_item.added", "response.output_item.done"}:
                         item = payload.get("item") or {}
+                        if item.get("type") == "computer_call":
+                            computer_seen = True
+                            # Only dispatch from the successful authoritative terminal
+                            # output, never from a partial stream item.
+                            continue
                         if self.provider == "openai" and isinstance(item, dict) and (multi_agent or _is_openai_attributed_item(item)):
                             if isinstance(payload.get("agent"), dict) and "agent" not in item:
                                 item = {**item, "agent": deepcopy(payload["agent"])}
@@ -2845,6 +2879,12 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                     if payload.get("type") in {"response.completed", "response.incomplete", "response.failed"}:
                         terminal = True
                         response_payload = payload.get("response") or {}
+                        computer_calls = [item for item in response_payload.get("output", []) if isinstance(item, dict) and item.get("type") == "computer_call"]
+                        if computer_seen or computer_calls:
+                            if payload["type"] != "response.completed" or response_payload.get("status") != "completed" or not computer_calls:
+                                raise ValidationError("Computer actions require a successfully completed Responses stream.")
+                            for item in computer_calls:
+                                yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
                         if self._require_terminal_event and response_payload.get("status") != payload["type"].removeprefix("response."):
                             raise ZhivexAIError("Responses terminal event has an inconsistent status.")
                         response_reference = _response_reference_part(response_payload, self.provider)
@@ -2856,7 +2896,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                             provider_finish_reason=provider_finish_reason,
                             usage=_parse_responses_usage(response_payload),
                         )
-                if self._require_terminal_event and not terminal:
+                if (self._require_terminal_event or computer_requested or computer_seen) and not terminal:
                     raise ZhivexAIError("Responses stream ended without a terminal event.")
             finally:
                 closer = getattr(lines, "aclose", None)

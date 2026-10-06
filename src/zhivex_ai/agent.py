@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import asyncio
 import json
 import re
@@ -1946,7 +1948,10 @@ class AgentRuntime:
                     memory_summary=context.memory_summary,
                     permissions=list(_definition.permissions),
                     source=_definition.source,
-                    metadata={**context.metadata, **_definition.metadata},
+                    metadata={
+                        **context.metadata, **_definition.metadata,
+                        "provider_metadata": deepcopy(call_context.metadata.get("provider_metadata", {})) if call_context is not None else {},
+                    },
                     handoff_path=list(trace.orchestration_path),
                     deps=context.deps,
                     cancellation_token=context.cancellation_token,

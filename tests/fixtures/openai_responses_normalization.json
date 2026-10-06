@@ -1186,7 +1186,9 @@
               "id": "hosted",
               "name": "computer_use",
               "input": {
-                "key": "synthetic"
+                "call_id": null,
+                "actions": null,
+                "pending_safety_checks": []
               },
               "provider_metadata": {
                 "type": "computer_call",
@@ -1194,7 +1196,7 @@
                 "action": {
                   "key": "synthetic"
                 },
-                "provider_managed": true,
+                "provider_managed": false,
                 "item_type": "computer_call"
               }
             }
@@ -3396,7 +3398,9 @@
               "id": "hosted",
               "name": "computer_use",
               "input": {
-                "key": "synthetic"
+                "call_id": null,
+                "actions": null,
+                "pending_safety_checks": []
               },
               "provider_metadata": {
                 "type": "computer_call",
@@ -3404,7 +3408,7 @@
                 "action": {
                   "key": "synthetic"
                 },
-                "provider_managed": true,
+                "provider_managed": false,
                 "item_type": "computer_call"
               }
             }
@@ -5606,7 +5610,9 @@
               "id": "hosted",
               "name": "computer_use",
               "input": {
-                "key": "synthetic"
+                "call_id": null,
+                "actions": null,
+                "pending_safety_checks": []
               },
               "provider_metadata": {
                 "type": "computer_call",
@@ -5614,7 +5620,7 @@
                 "action": {
                   "key": "synthetic"
                 },
-                "provider_managed": true,
+                "provider_managed": false,
                 "item_type": "computer_call"
               }
             }

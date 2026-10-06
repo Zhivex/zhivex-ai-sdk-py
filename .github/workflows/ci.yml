@@ -158,6 +158,9 @@ jobs:
       - name: Check distributions
         run: uv run --no-sync python -m twine check dist/*
 
+      - name: Verify installed computer execution contracts
+        run: uv run --no-sync python scripts/verify_computer_use.py dist/*.whl --output dist/computer-consumer.json
+
       - name: Verify release artifacts
         run: uv run --no-sync python scripts/verify_release_artifacts.py --dist-dir dist --require-postgres-workflow-smoke
 

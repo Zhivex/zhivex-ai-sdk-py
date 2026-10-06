@@ -23,7 +23,7 @@ from ._agent_contracts import RunLimits as RunLimits
 from ._agent_skills import _skill_system_message
 from ._agent_tools import ToolRegistry as ToolRegistry
 from .agent_state import AgentRunState, AgentRunStore
-from .errors import AgentRunCancelled, ValidationError
+from .errors import ToolExecutionOutcomeUnknown, AgentRunCancelled, ValidationError
 from .generate_object import _parse_object, _resolve_object_mode
 from .messages import create_text_message
 from .runtime import current_execution_budget
@@ -113,7 +113,9 @@ async def _await_with_agent_cancellation(
         )
         if cancellation_task in done:
             operation_task.cancel()
-            await asyncio.gather(operation_task, return_exceptions=True)
+            outcomes = await asyncio.gather(operation_task, return_exceptions=True)
+            if isinstance(outcomes[0], ToolExecutionOutcomeUnknown):
+                raise outcomes[0]
             cancellation_token.raise_if_cancelled(run_id)
         return await operation_task
     finally:

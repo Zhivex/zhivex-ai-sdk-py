@@ -129,6 +129,8 @@ def _validate_hosted_tools(model: LanguageModel, tools: ToolSet | None, tool_cho
     hosted_tools: list[HostedToolDefinition] = []
     callable_tools: list[ToolDefinition] = []
     for tool in tools.values():
+        if tool.metadata.get("zhivex_native_computer") and (model.provider != "openai" or _is_portable_model(model)):
+            raise ValidationError("Native computer execution requires an OpenAI native Responses model.")
         if is_hosted_tool_definition(tool):
             hosted_tools.append(cast(HostedToolDefinition, tool))
         else:
@@ -267,6 +269,11 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     if not is_callable_tool_definition(tool):
         raise ValidationError(f'Tool "{call.name}" is provider-managed and cannot run in the local tool runtime.')
     callable_tool = cast(ToolDefinition, tool)
+    if callable_tool.metadata.get("zhivex_native_computer") and call.provider_metadata.get("item_type") != "computer_call":
+        raise ValidationError("The native computer executor cannot dispatch ordinary function calls.")
+    if call.provider_metadata.get("item_type") == "computer_call":
+        if callable_tool.metadata.get("zhivex_native_computer") != "openai-ga" or not isinstance(call.input, dict) or not isinstance(call.input.get("actions"), list):
+            raise ValidationError("Native computer calls require the experimental OpenAI GA computer executor; preview is not supported.")
     if callable_tool.execute is None:
         raise ValidationError(f'Tool "{call.name}" is registered but does not have a local executor.')
     adapter = create_schema_adapter(callable_tool.schema)
@@ -288,7 +295,7 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
             deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
             permissions=list(callable_tool.permissions),
             source=callable_tool.source,
-            metadata=dict(callable_tool.metadata),
+            metadata={**deepcopy(callable_tool.metadata), "provider_metadata": deepcopy(call.provider_metadata)},
         )
         execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
         try:
@@ -318,6 +325,8 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     except ToolExecutionOutcomeUnknown:
         raise
     except Exception as error:
+        if call.provider_metadata.get("item_type") == "computer_call":
+            raise ValidationError(f'Computer call "{call.id}" stopped before a successful result: {error}') from error
         return ToolExecutionResult(
             tool_call_id=call.id,
             tool_name=call.name,
@@ -366,6 +375,8 @@ async def _execute_tools(
     default_parallel: bool = False,
 ) -> list[ToolExecutionResult]:
     parallel = options.parallel if options and options.parallel is not None else default_parallel
+    if any(call.provider_metadata.get("item_type") == "computer_call" for call in tool_calls):
+        parallel = False
     # A human-approval suspension is a transactional boundary. Execute the
     # whole batch in order whenever one of the tools can suspend so later side
     # effects cannot race ahead of the pending approval.
@@ -518,6 +529,17 @@ def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
     return tool_calls
 
 
+def _validate_computer_replay(messages: list[ModelMessage]) -> None:
+    seen: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if part.type != "tool-call" or part.tool_call.provider_metadata.get("item_type") != "computer_call":
+                continue
+            if part.tool_call.id in seen:
+                raise ValidationError("Repeated computer call ID; reconcile the previous effect instead of replaying it.")
+            seen.add(part.tool_call.id)
+
+
 @budgeted
 async def generate_text(
     *,
@@ -577,6 +599,7 @@ async def generate_text(
         response_messages = result_messages(response)
         if response_messages:
             all_messages.extend(response_messages)
+        _validate_computer_replay(all_messages)
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
@@ -746,6 +769,7 @@ def stream_text(
                     final_result = response
                     if response_messages:
                         all_messages.extend(response_messages)
+                    _validate_computer_replay(all_messages)
                     step_tool_calls = _extract_tool_calls(response_messages)
                     if not step_tool_calls:
                         break

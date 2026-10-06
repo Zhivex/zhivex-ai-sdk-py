@@ -161,7 +161,14 @@ async def _execute_resolved_approval_tool(
         request,
         ApprovalDecision(approved=approved, reason=reason),
     )
+    native_metadata = next((dict(call.provider_metadata) for step in state.steps for call in step.tool_calls
+                            if call.id == pending.tool_call_id), {})
+    is_computer = bool(pending.metadata.get("zhivex_native_computer"))
+    if is_computer and native_metadata.get("item_type") != "computer_call":
+        raise ValidationError("Pending computer approval lost its native call correlation.")
     if not approved:
+        if is_computer:
+            raise ValidationError("Computer execution denied by approval decision.")
         return ToolExecutionResult(
             tool_call_id=pending.tool_call_id or pending.id,
             tool_name=pending.name,
@@ -201,7 +208,7 @@ async def _execute_resolved_approval_tool(
         agent_name=state.agent_name,
         permissions=list(pending.permissions),
         source=cast(ToolSource, pending.source),
-        metadata=dict(pending.metadata),
+        metadata={**pending.metadata, "provider_metadata": native_metadata},
         handoff_path=list(pending.handoff_path),
         deps=deps,
         cancellation_token=cancellation_token,
@@ -290,6 +297,8 @@ async def _execute_resolved_approval_tool(
     except (AgentRunCancelled, ToolExecutionOutcomeUnknown):
         raise
     except Exception as error:
+        if is_computer:
+            raise ValidationError(f"Computer approval continuation stopped: {error}") from error
         await _call_agent_hooks(
             effective_hooks,
             "on_tool_error",
@@ -327,7 +336,7 @@ async def _execute_resolved_approval_tool(
         tool_name=pending.name,
         output=serialize_json_value(output),
         is_error=False,
-        provider_metadata={"approval_id": pending.id, "approval_status": "approved"},
+        provider_metadata={**native_metadata, "approval_id": pending.id, "approval_status": "approved"},
     )
 
 
