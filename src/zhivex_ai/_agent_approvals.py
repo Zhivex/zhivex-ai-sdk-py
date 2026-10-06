@@ -24,6 +24,7 @@ from ._agent_execution import (
 from ._agent_tools import ToolRegistry as ToolRegistry
 from ._agent_tools import _tool_definition_fingerprint as _tool_definition_fingerprint
 from .agent_state import AgentRunState, PendingApproval
+from ._computer_execution import computer_effect_scope
 from .errors import AgentRunCancelled, ToolExecutionOutcomeUnknown, ValidationError
 from .messages import is_callable_tool_definition, serialize_json_value
 from .schema import create_schema_adapter
@@ -222,122 +223,125 @@ async def _execute_resolved_approval_tool(
         pending.arguments,
         context,
     )
-    try:
-        context.raise_if_cancelled()
-        timeout_ms = tool_execution.timeout_ms if tool_execution is not None else None
-        if timeout_ms is not None and timeout_ms <= 0:
-            raise ValidationError(
-                'The "tool_execution.timeout_ms" field must be greater than zero.'
-            )
-        context.deadline_ms = _now_ms() + timeout_ms if timeout_ms is not None else None
-        parsed_input = create_schema_adapter(definition.schema).validate_python(
-            pending.arguments
-        )
-        execution = _await_with_agent_cancellation(
-            registry.execute(definition, parsed_input, context),
-            cancellation_token=cancellation_token,
-            run_id=state.run_id,
-        )
+    with computer_effect_scope(enabled=is_computer):
         try:
-            output = (
-                await asyncio.wait_for(execution, timeout_ms / 1000)
-                if timeout_ms is not None
-                else await execution
+            context.raise_if_cancelled()
+            timeout_ms = tool_execution.timeout_ms if tool_execution is not None else None
+            if timeout_ms is not None and timeout_ms <= 0:
+                raise ValidationError(
+                    'The "tool_execution.timeout_ms" field must be greater than zero.'
+                )
+            context.deadline_ms = _now_ms() + timeout_ms if timeout_ms is not None else None
+            parsed_input = create_schema_adapter(definition.schema).validate_python(
+                pending.arguments
             )
-        except TimeoutError as error:
-            raise ToolExecutionOutcomeUnknown(
-                f'Tool "{pending.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
-                f'Reconcile the side effect with idempotency key "{context.idempotency_key}" before retrying.',
-                tool_name=pending.name,
-                tool_call_id=pending.tool_call_id or pending.id,
-                timeout_ms=cast(int, timeout_ms),
-                idempotency_key=context.idempotency_key
-                or f"{state.run_id}:{pending.name}",
-            ) from error
-        context.raise_if_cancelled()
-        guarded_output = output
-        for guardrail in definition.output_guardrails:
-            guardrail_name = _guardrail_name(guardrail)
-            guardrail_request = ToolOutputGuardrailRequest(
-                tool_name=pending.name,
-                input=pending.arguments,
-                output=guarded_output,
-                context=context,
+            execution = _await_with_agent_cancellation(
+                registry.execute(definition, parsed_input, context),
+                cancellation_token=cancellation_token,
+                run_id=state.run_id,
             )
             try:
-                raw_outcome = await _maybe_await(guardrail(guardrail_request))
-                if isinstance(raw_outcome, ToolGuardrailResult):
-                    outcome = raw_outcome
-                elif isinstance(raw_outcome, bool):
-                    outcome = ToolGuardrailResult(tripwire_triggered=raw_outcome)
-                elif raw_outcome is None:
-                    outcome = ToolGuardrailResult()
-                else:
-                    raise TypeError(
-                        "Tool guardrails must return ToolGuardrailResult, bool, or None."
-                    )
-            except Exception as error:
-                raise ToolGuardrailTripwireTriggered(
-                    stage="output",
-                    tool_name=pending.name,
-                    guardrail_name=guardrail_name,
-                    reason="Guardrail evaluation failed.",
-                ) from error
-            if outcome.tripwire_triggered:
-                raise ToolGuardrailTripwireTriggered(
-                    stage="output",
-                    tool_name=pending.name,
-                    guardrail_name=guardrail_name,
-                    reason=outcome.reason,
-                    metadata=outcome.metadata,
+                output = (
+                    await asyncio.wait_for(execution, timeout_ms / 1000)
+                    if timeout_ms is not None
+                    else await execution
                 )
-            if outcome.replace:
-                guarded_output = outcome.replacement
-        output = guarded_output
-    except (AgentRunCancelled, ToolExecutionOutcomeUnknown):
-        raise
-    except Exception as error:
-        if is_computer:
-            raise ValidationError(f"Computer approval continuation stopped: {error}") from error
+            except TimeoutError as error:
+                if is_computer:
+                    raise  # The surrounding effect scope owns native classification.
+                raise ToolExecutionOutcomeUnknown(
+                    f'Tool "{pending.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
+                    f'Reconcile the side effect with idempotency key "{context.idempotency_key}" before retrying.',
+                    tool_name=pending.name,
+                    tool_call_id=pending.tool_call_id or pending.id,
+                    timeout_ms=cast(int, timeout_ms),
+                    idempotency_key=context.idempotency_key
+                    or f"{state.run_id}:{pending.name}",
+                ) from error
+            context.raise_if_cancelled()
+            guarded_output = output
+            for guardrail in definition.output_guardrails:
+                guardrail_name = _guardrail_name(guardrail)
+                guardrail_request = ToolOutputGuardrailRequest(
+                    tool_name=pending.name,
+                    input=pending.arguments,
+                    output=guarded_output,
+                    context=context,
+                )
+                try:
+                    raw_outcome = await _maybe_await(guardrail(guardrail_request))
+                    if isinstance(raw_outcome, ToolGuardrailResult):
+                        outcome = raw_outcome
+                    elif isinstance(raw_outcome, bool):
+                        outcome = ToolGuardrailResult(tripwire_triggered=raw_outcome)
+                    elif raw_outcome is None:
+                        outcome = ToolGuardrailResult()
+                    else:
+                        raise TypeError(
+                            "Tool guardrails must return ToolGuardrailResult, bool, or None."
+                        )
+                except Exception as error:
+                    raise ToolGuardrailTripwireTriggered(
+                        stage="output",
+                        tool_name=pending.name,
+                        guardrail_name=guardrail_name,
+                        reason="Guardrail evaluation failed.",
+                    ) from error
+                if outcome.tripwire_triggered:
+                    raise ToolGuardrailTripwireTriggered(
+                        stage="output",
+                        tool_name=pending.name,
+                        guardrail_name=guardrail_name,
+                        reason=outcome.reason,
+                        metadata=outcome.metadata,
+                    )
+                if outcome.replace:
+                    guarded_output = outcome.replacement
+            output = guarded_output
+        except (AgentRunCancelled, ToolExecutionOutcomeUnknown):
+            raise
+        except Exception as error:
+            if is_computer:
+                raise ValidationError(f"Computer approval continuation stopped: {error}") from error
+            await _call_agent_hooks(
+                effective_hooks,
+                "on_tool_error",
+                agent_context,
+                agent,
+                definition,
+                pending.arguments,
+                context,
+                error,
+                reverse=True,
+            )
+            return ToolExecutionResult(
+                tool_call_id=pending.tool_call_id or pending.id,
+                tool_name=pending.name,
+                error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+                is_error=True,
+                provider_metadata={
+                    "approval_id": pending.id,
+                    "approval_status": "approved",
+                },
+            )
         await _call_agent_hooks(
             effective_hooks,
-            "on_tool_error",
+            "on_tool_end",
             agent_context,
             agent,
             definition,
             pending.arguments,
             context,
-            error,
+            output,
             reverse=True,
         )
         return ToolExecutionResult(
             tool_call_id=pending.tool_call_id or pending.id,
             tool_name=pending.name,
-            error=ToolExecutionError(message=str(error) or "Tool execution failed."),
-            is_error=True,
-            provider_metadata={
-                "approval_id": pending.id,
-                "approval_status": "approved",
-            },
+            output=serialize_json_value(output),
+            is_error=False,
+            provider_metadata={**native_metadata, "approval_id": pending.id, "approval_status": "approved"},
         )
-    await _call_agent_hooks(
-        effective_hooks,
-        "on_tool_end",
-        agent_context,
-        agent,
-        definition,
-        pending.arguments,
-        context,
-        output,
-        reverse=True,
-    )
-    return ToolExecutionResult(
-        tool_call_id=pending.tool_call_id or pending.id,
-        tool_name=pending.name,
-        output=serialize_json_value(output),
-        is_error=False,
-        provider_metadata={**native_metadata, "approval_id": pending.id, "approval_status": "approved"},
-    )
 
 
 def _validate_resolved_approval_tool(

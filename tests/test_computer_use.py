@@ -89,7 +89,7 @@ async def test_native_batch_round_trip_and_safety(mode):
     replay = requests[1]["input"]
     assert next(item for item in replay if item["type"] == "computer_call") == CALL
     output = next(item for item in replay if item["type"] == "computer_call_output")
-    assert output == {"type": "computer_call_output", "call_id": "call-1", "output": {"type": "computer_screenshot", "image_url": PNG}, "acknowledged_safety_checks": CALL["pending_safety_checks"]}
+    assert output == {"type": "computer_call_output", "call_id": "call-1", "output": {"type": "computer_screenshot", "image_url": PNG, "detail": "original"}, "acknowledged_safety_checks": CALL["pending_safety_checks"]}
     assert len(result.tool_results) == 1
 
 
@@ -238,6 +238,7 @@ async def test_durable_approval_resume_keeps_native_correlation(approved):
     assert result.state.status == "completed"
     output = next(item for item in requests[1]["input"] if item["type"] == "computer_call_output")
     assert output["call_id"] == "call-1"
+    assert output["output"]["detail"] == "original"
     assert output["acknowledged_safety_checks"] == CALL["pending_safety_checks"]
 
 
@@ -369,3 +370,87 @@ async def test_interrupted_stream_cannot_execute(ending, mode):
             await stream_text(model=model, prompt="go", tools=tools).collect()
         else:
             await stream_agent(agent=Agent(name="broken", model=model, tools=tools), prompt="go").collect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["generate", "stream", "agent"])
+@pytest.mark.parametrize("status", ["in_progress", "incomplete", "failed", "cancelled"])
+async def test_unfinished_computer_item_never_executes(mode, status):
+    model, requests = fixture({**CALL, "status": status})
+    async def forbidden(*args):
+        pytest.fail("Unfinished item reached application")
+    tools = native_tools(forbidden, forbidden)
+    with pytest.raises(ValidationError, match="computer.*status|Computer.*status"):
+        if mode == "generate":
+            await generate_text(model=model, prompt="go", tools=tools)
+        elif mode == "stream":
+            await stream_text(model=model, prompt="go", tools=tools).collect()
+        else:
+            await run_agent(agent=Agent(name="unfinished", model=model, tools=tools), prompt="go")
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("failure", ["guardrail", "hook", "hook_cancel", "serialization"])
+async def test_post_effect_failure_remains_unknown(resume, failure):
+    from zhivex_ai import AgentHooks, ToolGuardrailResult
+    model, requests = fixture({**CALL, "status": "completed"})
+    effects = []
+    async def execute(batch, context):
+        effects.append(context.tool_call_id)
+        return ComputerScreenshot(PNG)
+    async def guardrail(request):
+        if failure == "serialization":
+            return ToolGuardrailResult(replace=True, replacement=object())
+        raise RuntimeError("output guardrail failed after effect")
+    class Hooks(AgentHooks):
+        async def on_tool_end(self, *args):
+            if failure == "hook_cancel":
+                raise asyncio.CancelledError("cancelled after effect")
+            raise RuntimeError("hook failed after effect")
+    async def suspend(request):
+        return ApprovalDecision.require_human(approval_id="review")
+    tools = native_tools(execute=execute)
+    if failure in {"guardrail", "serialization"}:
+        tools["computer_use"].output_guardrails = [guardrail]
+    agent = Agent(name="after-effect", model=model, tools=tools,
+                  run_store=create_in_memory_agent_run_store(),
+                  hooks=[] if failure in {"guardrail", "serialization"} else [Hooks()],
+                  approval_policy=suspend if resume else None)
+    if resume:
+        pending = await run_agent(agent=agent, prompt="go")
+        assert effects == []
+        operation = resume_agent_run(agent=agent, run_id=pending.run_id)
+    else:
+        operation = run_agent(agent=agent, prompt="go")
+    with pytest.raises(ToolExecutionOutcomeUnknown) as caught:
+        await operation
+    assert caught.value.tool_call_id == "call-1"
+    assert caught.value.idempotency_key.endswith(":call-1")
+    assert caught.value.outcome_unknown
+    assert effects == ["call-1"]
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+async def test_outer_timeout_during_approval_is_not_an_unknown_effect(resume):
+    from zhivex_ai import ToolExecutionOptions
+    model, requests = fixture()
+    async def wait(*args):
+        await asyncio.Future()
+    async def forbidden(*args):
+        pytest.fail("Timed-out approval executed")
+    async def suspend(request):
+        return ApprovalDecision.require_human(approval_id="review")
+    agent = Agent(name="approval-timeout", model=model, tools=native_tools(wait, forbidden),
+                  run_store=create_in_memory_agent_run_store(), approval_policy=suspend if resume else None)
+    if resume:
+        pending = await run_agent(agent=agent, prompt="go")
+        operation = resume_agent_run(agent=agent, run_id=pending.run_id, tool_execution=ToolExecutionOptions(timeout_ms=10))
+    else:
+        operation = run_agent(agent=agent, prompt="go", tool_execution=ToolExecutionOptions(timeout_ms=10))
+    with pytest.raises(ValidationError):
+        await operation
+    assert len(requests) == 1

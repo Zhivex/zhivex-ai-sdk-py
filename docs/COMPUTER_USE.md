@@ -28,12 +28,15 @@ viewport bounds and perform DPI/crop/coordinate transformations itself. The host
 must validate the whole batch before any effect, execute actions sequentially,
 revalidate session/origin/observation authorization immediately before effects, and
 capture a fresh image after all actions. Returning `None` is not success.
+Explicitly unfinished or unsupported computer-call item statuses are rejected,
+even inside a top-level completed response or terminal stream event.
 
 The executor returns `ComputerScreenshot(image_url=...)`, a bounded base64 PNG,
 JPEG, or WebP data URL. The SDK checks encoding and byte limits, not decoded pixels,
 dimensions, target ownership, or actual task success. The host must decode safely,
 mask sensitive pixels, and verify viewport/session identity. The next request uses
-`computer_call_output` with the original call ID, image, and only the acknowledged
+`computer_call_output` with the original call ID, image at `detail: "original"`
+(to preserve resolution for coordinates), and only the acknowledged
 provider checks. Retained transcripts contain screenshots and typed text: keep them
 out of ordinary logs and apply application retention/access controls.
 
@@ -44,7 +47,10 @@ It cannot stop an external driver or undo an effect; late callback exceptions ar
 observed and late results are discarded. The app must terminate or quarantine the
 session itself. Before executor entry, failure prevents execution; after executor
 entry, failures, invalid/missing screenshots, timeouts and cancellation raise
-`ToolExecutionOutcomeUnknown` with call/idempotency correlation. Never retry that
+`ToolExecutionOutcomeUnknown` with call/idempotency correlation. The same
+classification applies if Agent output guardrails, end hooks, or result serialization
+fail after executor entry, including durable approval continuation. Approval
+timeouts before executor entry do not indicate an unknown external effect. Never retry that
 batch blindly. Journal before effects, retain receipts, reconcile with the session,
 and only then start new work. The same limitation applies to a new `run_agent`,
 `resume_agent(session_id=...)`, restored checkpoint, or application retry: the SDK

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..agent import Agent
     from .._agent_contracts import AgentRunResult
 
+from .._computer_execution import mark_computer_effect_started
 from ..errors import ToolExecutionOutcomeUnknown, ValidationError
 from ..types import ToolDefinition, ToolExecutionContext
 
@@ -170,6 +171,7 @@ def openai_computer_tool(
         context.raise_if_cancelled()
         if remaining() <= 0:
             raise TimeoutError("Computer callback deadline expired before execution.")
+        mark_computer_effect_started(context, callback_timeout_ms)
         try:
             screenshot = await _bounded_callback(execute(deepcopy(batch), context), remaining())
             image_url = _validate_screenshot(screenshot)
@@ -184,7 +186,7 @@ def openai_computer_tool(
                 idempotency_key=context.idempotency_key or context.tool_call_id,
             ) from error
         return {
-            "output": {"type": "computer_screenshot", "image_url": image_url},
+            "output": {"type": "computer_screenshot", "image_url": image_url, "detail": "original"},
             "acknowledged_safety_checks": deepcopy(batch.get("pending_safety_checks", [])),
         }
 

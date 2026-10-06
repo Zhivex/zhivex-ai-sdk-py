@@ -2765,6 +2765,9 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         payload = await response.json()
         if any(item.get("type") == "computer_call" for item in payload.get("output", []) if isinstance(item, dict)) and payload.get("status") != "completed":
             raise ValidationError("Computer actions require a successfully completed Responses result.")
+        for item in payload.get("output", []):
+            if isinstance(item, dict) and item.get("type") == "computer_call" and item.get("status", "completed") != "completed":
+                raise ValidationError("Computer call has an unfinished or unsupported item status.")
         multi_agent = self.provider == "openai" and bool((body.get("multi_agent") or {}).get("enabled"))
         assistant_message = _parse_responses_message(payload, self.provider, multi_agent=multi_agent)
         finish_reason, provider_finish_reason = _parse_response_finish_reason(payload)
@@ -2883,6 +2886,8 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
                         if computer_seen or computer_calls:
                             if payload["type"] != "response.completed" or response_payload.get("status") != "completed" or not computer_calls:
                                 raise ValidationError("Computer actions require a successfully completed Responses stream.")
+                            if any(item.get("status", "completed") != "completed" for item in computer_calls):
+                                raise ValidationError("Computer call has an unfinished or unsupported item status.")
                             for item in computer_calls:
                                 yield StreamToolCallEvent(tool_call=_provider_managed_tool_call(item))
                         if self._require_terminal_event and response_payload.get("status") != payload["type"].removeprefix("response."):

@@ -26,6 +26,7 @@ Related documents:
 
 ### Fixed
 
+- Preserve original screenshot detail and reject unfinished native computer-call items. Keep post-execution guardrail, hook, cancellation and serialization failures classified as unknown external outcomes, including durable approval continuation; pre-execution approval timeouts remain fail-closed without claiming an effect.
 - Treat native computer calls as client effects instead of silently skipping them as provider-managed work. Missing handlers, unsupported preview actions and denied approvals stop the run. Preserve GA batches, native call/output replay and safety identifiers across streaming and durable approval continuation. Interrupted effects remain unknown and are not automatically retried.
 - Pass native call metadata through generic tool execution context metadata, and preserve unknown external outcomes when cooperative Agent cancellation interrupts a tool.
 

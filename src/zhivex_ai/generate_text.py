@@ -11,6 +11,7 @@ from typing import Any, cast
 from ._agent_budget import before_model, after_model, before_tool, after_tool
 from ._agent_contracts import GuardrailTripwireTriggered
 from ._streaming import Broadcast, DEFAULT_STREAM_BUFFER_SIZE, OwnedStream
+from ._computer_execution import computer_effect_scope
 from .errors import (
     ParseError,
     ToolExecutionOutcomeUnknown,
@@ -281,59 +282,62 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
         parsed = adapter.validate_python(call.input)
     except Exception as error:
         raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
-    try:
-        idempotency_prefix = str(callable_tool.metadata.get("zhivex_tool_idempotency_prefix") or "").strip()
-        idempotency_key = (
-            f"{idempotency_prefix}:{call.id or call.name}"
-            if idempotency_prefix
-            else call.id or f"{call.name}:tool-call"
-        )
-        context: ToolExecutionContext[Any] = ToolExecutionContext(
-            tool_name=call.name,
-            tool_call_id=call.id,
-            idempotency_key=idempotency_key,
-            deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
-            permissions=list(callable_tool.permissions),
-            source=callable_tool.source,
-            metadata={**deepcopy(callable_tool.metadata), "provider_metadata": deepcopy(call.provider_metadata)},
-        )
-        execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
+    with computer_effect_scope(enabled=call.provider_metadata.get("item_type") == "computer_call"):
         try:
-            output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
-        except TimeoutError as error:
-            if not execution.cancelled():
-                raise
-            raise ToolExecutionOutcomeUnknown(
-                f'Tool "{call.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
-                f'Reconcile the side effect with idempotency key "{idempotency_key}" before retrying.',
+            idempotency_prefix = str(callable_tool.metadata.get("zhivex_tool_idempotency_prefix") or "").strip()
+            idempotency_key = (
+                f"{idempotency_prefix}:{call.id or call.name}"
+                if idempotency_prefix
+                else call.id or f"{call.name}:tool-call"
+            )
+            context: ToolExecutionContext[Any] = ToolExecutionContext(
                 tool_name=call.name,
                 tool_call_id=call.id,
-                timeout_ms=cast(int, timeout_ms),
                 idempotency_key=idempotency_key,
-            ) from error
-        return ToolExecutionResult(
-            tool_call_id=call.id,
-            tool_name=call.name,
-            output=serialize_json_value(output),
-            is_error=False,
-            provider_metadata=dict(call.provider_metadata),
-        )
-    except GuardrailTripwireTriggered:
-        raise
-    except ToolExecutionSuspended:
-        raise
-    except ToolExecutionOutcomeUnknown:
-        raise
-    except Exception as error:
-        if call.provider_metadata.get("item_type") == "computer_call":
-            raise ValidationError(f'Computer call "{call.id}" stopped before a successful result: {error}') from error
-        return ToolExecutionResult(
-            tool_call_id=call.id,
-            tool_name=call.name,
-            error=ToolExecutionError(message=str(error) or "Tool execution failed."),
-            is_error=True,
-            provider_metadata=dict(call.provider_metadata),
-        )
+                deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
+                permissions=list(callable_tool.permissions),
+                source=callable_tool.source,
+                metadata={**deepcopy(callable_tool.metadata), "provider_metadata": deepcopy(call.provider_metadata)},
+            )
+            execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
+            try:
+                output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
+            except TimeoutError as error:
+                if call.provider_metadata.get("item_type") == "computer_call" or not execution.cancelled():
+                    # The native effect scope distinguishes approval timeout from
+                    # interruption after executor entry.
+                    raise
+                raise ToolExecutionOutcomeUnknown(
+                    f'Tool "{call.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
+                    f'Reconcile the side effect with idempotency key "{idempotency_key}" before retrying.',
+                    tool_name=call.name,
+                    tool_call_id=call.id,
+                    timeout_ms=cast(int, timeout_ms),
+                    idempotency_key=idempotency_key,
+                ) from error
+            return ToolExecutionResult(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                output=serialize_json_value(output),
+                is_error=False,
+                provider_metadata=dict(call.provider_metadata),
+            )
+        except GuardrailTripwireTriggered:
+            raise
+        except ToolExecutionSuspended:
+            raise
+        except ToolExecutionOutcomeUnknown:
+            raise
+        except Exception as error:
+            if call.provider_metadata.get("item_type") == "computer_call":
+                raise ValidationError(f'Computer call "{call.id}" stopped before a successful result: {error}') from error
+            return ToolExecutionResult(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+                is_error=True,
+                provider_metadata=dict(call.provider_metadata),
+            )
 
 
 def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
