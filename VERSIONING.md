@@ -1,5 +1,11 @@
 # Versioning
 
+The pending 0.29.0 release adds an **Experimental**, application-owned OpenAI Responses GA
+computer executor and verification wrapper in `zhivex_ai.experimental`. Existing
+preview declarations remain unchanged; unhandled computer calls now fail closed.
+See [computer execution contracts and limitations](docs/COMPUTER_USE.md). No release
+or native parity across providers is claimed.
+
 Vertex Gemma MaaS model routing is additive. Existing Gemini IDs retain their
 protocol; Gemma uses its documented Chat Completions ID. Native Model Garden
 language-model clients remain Beta and require explicit deployment capabilities.

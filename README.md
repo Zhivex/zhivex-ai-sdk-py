@@ -1,13 +1,20 @@
 # Zhivex AI SDK for Python
 
-Version 0.28.4 is a release candidate for agent redaction persistence, cumulative
-execution budgets and stream cleanup. It includes the 0.28.3 OpenAI response
-correction and `gpt-6-luna` release canary. The package remains Beta; protected
-certification and publication of 0.28.4 are pending. The prior 0.28.3
-[protected release workflow](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/36879311825)
-completed exact-artifact certification and [PyPI publication](https://pypi.org/project/zhivex-ai-sdk/0.28.3/).
-See the [release scope](docs/releases/0.28.4.md), [architecture guide](docs/ARCHITECTURE.md)
-and [model refresh](docs/MODEL_REFRESH_2026_09_30.md) for guarantees and evidence.
+Version 0.29.0 is a release candidate for **Experimental**, application-owned
+OpenAI Responses GA computer execution and independent task verification in
+`zhivex_ai.experimental`. It preserves the Stable root API and existing preview
+declarations. Exact-artifact certification and publication are pending; no native
+computer parity across providers is claimed. See the
+[0.29.0 release scope](docs/releases/0.29.0.md) and
+[computer execution contracts and limitations](docs/COMPUTER_USE.md).
+
+The currently published 0.28.4 reliability release completed protected
+certification and [PyPI publication](https://pypi.org/project/zhivex-ai-sdk/0.28.4/)
+on 2026-10-04 in [release workflow 37220854989](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/37220854989),
+from `73a5dd44ac8ce391104da4f19400af25b9a6e407`. It does not contain the pending
+computer-use fixes. See its [release history](docs/releases/0.28.4.md), the
+[architecture guide](docs/ARCHITECTURE.md) and
+[model refresh](docs/MODEL_REFRESH_2026_09_30.md).
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Zhivex/zhivex-ai-sdk-py/ci.yml?branch=main&label=CI)](https://github.com/Zhivex/zhivex-ai-sdk-py/actions)
 [![PyPI](https://img.shields.io/pypi/v/zhivex-ai-sdk)](https://pypi.org/project/zhivex-ai-sdk/)

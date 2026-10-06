@@ -29,6 +29,11 @@ make dev
 .venv/bin/python -m pip install fastapi uvicorn
 ```
 
+Computer execution remains Experimental and application-owned. Use a separate
+isolated session, review provider warnings, retain effect receipts, and reconcile
+unknown outcomes before retrying. See [computer execution](docs/COMPUTER_USE.md);
+no production desktop driver is provided.
+
 ## Recommended pattern
 
 For production-facing API servers:

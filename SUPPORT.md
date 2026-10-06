@@ -1,5 +1,11 @@
 # Support Policy
 
+The pending 0.29.0 release adds an **Experimental**, application-owned OpenAI Responses GA
+computer executor and verification wrapper in `zhivex_ai.experimental`. Existing
+preview declarations remain unchanged; unhandled computer calls now fail closed.
+See [computer execution contracts and limitations](docs/COMPUTER_USE.md). No release
+or native parity across providers is claimed.
+
 Zhivex AI SDK is currently published as a `Beta` package.
 
 Vertex 0.27.0 adds Google model routing and Beta native services. Support is scoped
@@ -48,17 +54,17 @@ Meta Standard and Meta Contributor are independent targets; Contributor cannot c
 
 | Provider | Target | Surface | Model | Source tests | Installed wheel | Live | Recorded at | Operations |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| openai | openai-standard | standard | gpt-5.6-luna | contract-supported | passed | integration-only | 2026-09-05T18:50:48.041672+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
-| anthropic | anthropic-standard | standard | claude-fable-5-1 | contract-supported | passed | integration-only | 2026-09-05T18:51:08.221408+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
+| openai | openai-standard | standard | gpt-5.6-luna | contract-supported | passed | stale | 2026-09-05T18:50:48.041672+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
+| anthropic | anthropic-standard | standard | claude-fable-5-1 | contract-supported | passed | stale | 2026-09-05T18:51:08.221408+00:00 | agent-tool=passed, generation=passed, streaming=passed, structured-output=passed |
 | azure-openai | azure-openai-standard | standard | unconfigured | contract-supported | passed | blocked | 2026-09-05T18:51:08.545930+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
 | gemini | gemini-standard | standard | gemini-3.8-flash | contract-supported | passed | blocked | 2026-09-05T18:57:24.043231+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
 | vertex | vertex-standard | standard | gemini-3.8-flash | contract-supported | passed | blocked | 2026-09-05T18:51:39.596587+00:00 | agent-tool=blocked, generation=blocked, streaming=blocked, structured-output=blocked |
-| qwen | qwen-standard | standard | qwen3.8-max-0902 | contract-supported | passed | integration-only | 2026-09-05T18:51:47.345485+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
+| qwen | qwen-standard | standard | qwen3.8-max-0902 | contract-supported | passed | stale | 2026-09-05T18:51:47.345485+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
 | kimi | kimi-standard | standard | kimi-k3 | contract-supported | passed | blocked | 2026-09-05T18:51:47.623477+00:00 | agent-tool=blocked, generation=blocked, portable-retrieval=unsupported, streaming=blocked, structured-output=blocked |
-| deepseek | deepseek-standard | standard | deepseek-v4-flash | contract-supported | passed | integration-only | 2026-09-05T18:51:52.053643+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
-| meta | meta-standard | standard | muse-spark-1.2 | contract-supported | passed | integration-only | 2026-09-05T18:52:04.774757+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
+| deepseek | deepseek-standard | standard | deepseek-v4-flash | contract-supported | passed | stale | 2026-09-05T18:51:52.053643+00:00 | agent-tool=passed, generation=passed, portable-retrieval=unsupported, streaming=passed, structured-output=passed |
+| meta | meta-standard | standard | muse-spark-1.2 | contract-supported | passed | stale | 2026-09-05T18:52:04.774757+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
 | vllm | vllm-deployment | deployment | Qwen/Qwen2.5-1.5B-Instruct | contract-supported | passed | blocked | 2026-09-05T18:52:05.069155+00:00 | agent-tool=blocked, generation=blocked, portable-retrieval=blocked, streaming=blocked, structured-output=blocked |
-| meta | meta-contributor | contributor | muse-spark-1.2-contributor | beta-contract | passed | certified | 2026-09-05T18:15:14.927784+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
+| meta | meta-contributor | contributor | muse-spark-1.2-contributor | beta-contract | passed | stale | 2026-09-05T18:15:14.927784+00:00 | agent-tool=passed, generation=passed, portable-retrieval=passed, streaming=passed, structured-output=passed |
 <!-- END GENERATED PROVIDER CERTIFICATION -->
 
 ## Support expectations

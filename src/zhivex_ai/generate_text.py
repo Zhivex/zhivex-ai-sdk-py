@@ -11,6 +11,7 @@ from typing import Any, cast
 from ._agent_budget import before_model, after_model, before_tool, after_tool
 from ._agent_contracts import GuardrailTripwireTriggered
 from ._streaming import Broadcast, DEFAULT_STREAM_BUFFER_SIZE, OwnedStream
+from ._computer_execution import computer_effect_scope
 from .errors import (
     ParseError,
     ToolExecutionOutcomeUnknown,
@@ -129,6 +130,8 @@ def _validate_hosted_tools(model: LanguageModel, tools: ToolSet | None, tool_cho
     hosted_tools: list[HostedToolDefinition] = []
     callable_tools: list[ToolDefinition] = []
     for tool in tools.values():
+        if tool.metadata.get("zhivex_native_computer") and (model.provider != "openai" or _is_portable_model(model)):
+            raise ValidationError("Native computer execution requires an OpenAI native Responses model.")
         if is_hosted_tool_definition(tool):
             hosted_tools.append(cast(HostedToolDefinition, tool))
         else:
@@ -267,6 +270,11 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
     if not is_callable_tool_definition(tool):
         raise ValidationError(f'Tool "{call.name}" is provider-managed and cannot run in the local tool runtime.')
     callable_tool = cast(ToolDefinition, tool)
+    if callable_tool.metadata.get("zhivex_native_computer") and call.provider_metadata.get("item_type") != "computer_call":
+        raise ValidationError("The native computer executor cannot dispatch ordinary function calls.")
+    if call.provider_metadata.get("item_type") == "computer_call":
+        if callable_tool.metadata.get("zhivex_native_computer") != "openai-ga" or not isinstance(call.input, dict) or not isinstance(call.input.get("actions"), list):
+            raise ValidationError("Native computer calls require the experimental OpenAI GA computer executor; preview is not supported.")
     if callable_tool.execute is None:
         raise ValidationError(f'Tool "{call.name}" is registered but does not have a local executor.')
     adapter = create_schema_adapter(callable_tool.schema)
@@ -274,57 +282,62 @@ async def _execute_tool(call: ToolCall, tools: ToolSet | None, timeout_ms: int |
         parsed = adapter.validate_python(call.input)
     except Exception as error:
         raise ValidationError(f'Invalid input for tool "{call.name}": {error}') from error
-    try:
-        idempotency_prefix = str(callable_tool.metadata.get("zhivex_tool_idempotency_prefix") or "").strip()
-        idempotency_key = (
-            f"{idempotency_prefix}:{call.id or call.name}"
-            if idempotency_prefix
-            else call.id or f"{call.name}:tool-call"
-        )
-        context: ToolExecutionContext[Any] = ToolExecutionContext(
-            tool_name=call.name,
-            tool_call_id=call.id,
-            idempotency_key=idempotency_key,
-            deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
-            permissions=list(callable_tool.permissions),
-            source=callable_tool.source,
-            metadata=dict(callable_tool.metadata),
-        )
-        execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
+    with computer_effect_scope(enabled=call.provider_metadata.get("item_type") == "computer_call"):
         try:
-            output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
-        except TimeoutError as error:
-            if not execution.cancelled():
-                raise
-            raise ToolExecutionOutcomeUnknown(
-                f'Tool "{call.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
-                f'Reconcile the side effect with idempotency key "{idempotency_key}" before retrying.',
+            idempotency_prefix = str(callable_tool.metadata.get("zhivex_tool_idempotency_prefix") or "").strip()
+            idempotency_key = (
+                f"{idempotency_prefix}:{call.id or call.name}"
+                if idempotency_prefix
+                else call.id or f"{call.name}:tool-call"
+            )
+            context: ToolExecutionContext[Any] = ToolExecutionContext(
                 tool_name=call.name,
                 tool_call_id=call.id,
-                timeout_ms=cast(int, timeout_ms),
                 idempotency_key=idempotency_key,
-            ) from error
-        return ToolExecutionResult(
-            tool_call_id=call.id,
-            tool_name=call.name,
-            output=serialize_json_value(output),
-            is_error=False,
-            provider_metadata=dict(call.provider_metadata),
-        )
-    except GuardrailTripwireTriggered:
-        raise
-    except ToolExecutionSuspended:
-        raise
-    except ToolExecutionOutcomeUnknown:
-        raise
-    except Exception as error:
-        return ToolExecutionResult(
-            tool_call_id=call.id,
-            tool_name=call.name,
-            error=ToolExecutionError(message=str(error) or "Tool execution failed."),
-            is_error=True,
-            provider_metadata=dict(call.provider_metadata),
-        )
+                deadline_ms=int(time.time() * 1000) + timeout_ms if timeout_ms is not None else None,
+                permissions=list(callable_tool.permissions),
+                source=callable_tool.source,
+                metadata={**deepcopy(callable_tool.metadata), "provider_metadata": deepcopy(call.provider_metadata)},
+            )
+            execution = asyncio.create_task(_invoke_tool_callable_async(callable_tool.execute, parsed, context))
+            try:
+                output = await asyncio.wait_for(execution, timeout_ms / 1000) if timeout_ms is not None else await execution
+            except TimeoutError as error:
+                if call.provider_metadata.get("item_type") == "computer_call" or not execution.cancelled():
+                    # The native effect scope distinguishes approval timeout from
+                    # interruption after executor entry.
+                    raise
+                raise ToolExecutionOutcomeUnknown(
+                    f'Tool "{call.name}" exceeded its {timeout_ms} ms timeout; its external outcome is unknown. '
+                    f'Reconcile the side effect with idempotency key "{idempotency_key}" before retrying.',
+                    tool_name=call.name,
+                    tool_call_id=call.id,
+                    timeout_ms=cast(int, timeout_ms),
+                    idempotency_key=idempotency_key,
+                ) from error
+            return ToolExecutionResult(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                output=serialize_json_value(output),
+                is_error=False,
+                provider_metadata=dict(call.provider_metadata),
+            )
+        except GuardrailTripwireTriggered:
+            raise
+        except ToolExecutionSuspended:
+            raise
+        except ToolExecutionOutcomeUnknown:
+            raise
+        except Exception as error:
+            if call.provider_metadata.get("item_type") == "computer_call":
+                raise ValidationError(f'Computer call "{call.id}" stopped before a successful result: {error}') from error
+            return ToolExecutionResult(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                error=ToolExecutionError(message=str(error) or "Tool execution failed."),
+                is_error=True,
+                provider_metadata=dict(call.provider_metadata),
+            )
 
 
 def _invoke_tool_callable(execute: Any, parsed: Any, context: ToolExecutionContext) -> Any:
@@ -366,6 +379,8 @@ async def _execute_tools(
     default_parallel: bool = False,
 ) -> list[ToolExecutionResult]:
     parallel = options.parallel if options and options.parallel is not None else default_parallel
+    if any(call.provider_metadata.get("item_type") == "computer_call" for call in tool_calls):
+        parallel = False
     # A human-approval suspension is a transactional boundary. Execute the
     # whole batch in order whenever one of the tools can suspend so later side
     # effects cannot race ahead of the pending approval.
@@ -518,6 +533,17 @@ def _extract_tool_calls(messages: list[ModelMessage]) -> list[ToolCall]:
     return tool_calls
 
 
+def _validate_computer_replay(messages: list[ModelMessage]) -> None:
+    seen: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if part.type != "tool-call" or part.tool_call.provider_metadata.get("item_type") != "computer_call":
+                continue
+            if part.tool_call.id in seen:
+                raise ValidationError("Repeated computer call ID; reconcile the previous effect instead of replaying it.")
+            seen.add(part.tool_call.id)
+
+
 @budgeted
 async def generate_text(
     *,
@@ -577,6 +603,7 @@ async def generate_text(
         response_messages = result_messages(response)
         if response_messages:
             all_messages.extend(response_messages)
+        _validate_computer_replay(all_messages)
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
@@ -746,6 +773,7 @@ def stream_text(
                     final_result = response
                     if response_messages:
                         all_messages.extend(response_messages)
+                    _validate_computer_replay(all_messages)
                     step_tool_calls = _extract_tool_calls(response_messages)
                     if not step_tool_calls:
                         break

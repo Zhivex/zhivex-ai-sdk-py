@@ -6,6 +6,7 @@ additive: the existing top-level imports remain available for compatibility.
 
 from __future__ import annotations
 
+from .computer import ComputerApproval, ComputerRunResult, ComputerScreenshot, openai_computer_tool, run_computer_use
 from .providers import (
     create_bedrock,
     create_ollama,
@@ -39,6 +40,11 @@ from .realtime import (
 )
 
 __all__ = [
+    "ComputerApproval",
+    "ComputerRunResult",
+    "run_computer_use",
+    "ComputerScreenshot",
+    "openai_computer_tool",
     "AgentLiveEvent",
     "LiveAgentStreamResult",
     "RealtimeAudioOutputEvent",

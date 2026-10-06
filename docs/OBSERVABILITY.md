@@ -23,6 +23,11 @@ For local repo work:
 make dev
 ```
 
+For Experimental computer execution, log call/run/session IDs and approval/effect
+receipts rather than raw transcripts: screenshots and typed text can contain
+secrets. An unknown outcome is not a retry instruction. See
+[computer execution](COMPUTER_USE.md).
+
 ## Foundation Telemetry
 
 `create_telemetry_middleware(...)` emits lifecycle events around model calls. The event payload includes model identity, input, start time, finish time, latency, output, or error.

@@ -72,9 +72,11 @@ class NamespacedApiTests(unittest.TestCase):
         )
 
     def test_experimental_namespace_matches_the_stability_manifest(self) -> None:
-        self.assertEqual(set(experimental.__all__), set(EXPERIMENTAL_EXPORTS) | set(live.__all__))
+        computer_exports = {"ComputerApproval", "ComputerScreenshot", "ComputerRunResult", "openai_computer_tool", "run_computer_use"}
+        self.assertEqual(set(experimental.__all__), set(EXPERIMENTAL_EXPORTS) | set(live.__all__) | computer_exports)
+        self.assertTrue(computer_exports.isdisjoint(zhivex_ai.__all__))
         self.assertTrue(set(live.__all__).issubset(STABLE_EXPORTS))
-        for name in experimental.__all__:
+        for name in set(experimental.__all__) - computer_exports:
             self.assertIs(getattr(experimental, name), getattr(zhivex_ai, name))
 
         self.assertEqual(
