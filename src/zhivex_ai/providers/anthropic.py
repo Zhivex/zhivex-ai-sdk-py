@@ -116,6 +116,7 @@ _ANTHROPIC_ADAPTIVE_THINKING_PREFIXES = (
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5",
+    "claude-haiku-5",
 )
 _ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = (
     "claude-opus-4-8",
@@ -123,10 +124,11 @@ _ANTHROPIC_MID_CONVERSATION_SYSTEM_PREFIXES = (
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5-5",
+    "claude-haiku-5-5",
 )
 _ANTHROPIC_DISABLE_THINKING_PREFIXES = ("claude-opus-5", "claude-sonnet-5")
 _ANTHROPIC_DISABLED_THINKING_EFFORT_CAPPED_PREFIXES = ("claude-opus-5",)
-_ANTHROPIC_ASSISTANT_PREFILL_UNSUPPORTED_PREFIXES = ("claude-opus-5", "claude-sonnet-5")
+_ANTHROPIC_ASSISTANT_PREFILL_UNSUPPORTED_PREFIXES = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-5")
 _ANTHROPIC_WEB_FETCH_UNSUPPORTED_PREFIXES = ("claude-opus-5",)
 _ANTHROPIC_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 AnthropicMcpVersion = Literal["legacy", "current"]
@@ -610,7 +612,7 @@ def _is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
 
 def _supports_disabled_thinking(model_id: str) -> bool:
     normalized = model_id.strip().lower()
-    return (not normalized.startswith(("claude-opus-5-5", "claude-sonnet-5-5"))
+    return (not normalized.startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"))
             and any(normalized.startswith(prefix) for prefix in _ANTHROPIC_DISABLE_THINKING_PREFIXES))
 
 
@@ -1069,7 +1071,7 @@ def _validate_final_thinking_config(
 
 def _validate_model_specific_tools(model_id: str, tools: list[dict[str, Any]] | None) -> None:
     normalized = model_id.strip().lower()
-    if normalized.startswith(("claude-opus-5-5", "claude-sonnet-5-5")):
+    if normalized.startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")):
         if any(str(item.get("type") or "").startswith("computer_")
                and item.get("type") != "computer_toolset_20260801" for item in tools or []):
             raise UnsupportedFeatureError(
@@ -1921,7 +1923,7 @@ class _ValidatedAnthropicMessagesClient(AnthropicMessagesClient):
 
     async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
         model_id = str(body.get("model") or "")
-        if not model_id.strip().lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5")):
+        if not model_id.strip().lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")):
             return await super().create(body, options)
         _validate_model_tool_choice(model_id, body.get("tool_choice"))
         _validate_model_specific_tools(model_id, body.get("tools"))
