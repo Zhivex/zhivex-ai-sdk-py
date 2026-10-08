@@ -7,11 +7,14 @@ frontend, generated reference, documentation tests and Vercel deployment.
 ## Reader entrypoints
 
 - [Python getting started](https://sdk.zhivex.ai/doc/python/getting-started)
-- [Python 0.23.0 guides](https://sdk.zhivex.ai/doc/python/0.23.0/index)
-- [Python 0.23.0 reference and symbol search](https://sdk.zhivex.ai/doc/python/0.23.0/reference/index)
+- [Python 0.28.3 guides](https://sdk.zhivex.ai/doc/python/0.28.3/index)
+- [Python 0.28.3 reference and symbol search](https://sdk.zhivex.ai/doc/python/0.28.3/reference/index)
 - [Release notes](https://sdk.zhivex.ai/doc/releases)
 
 The versioned reference describes a published wheel, not the current checkout.
+The portal's current Python documentation is 0.28.3 (`59580d2`). PyPI 0.28.4 and
+0.29.0 are published from this repository; their guides are not on the portal yet.
+This repository does not build or deploy sdk.zhivex.ai.
 The package remains Beta; individual public APIs retain Stable/Beta/Experimental
 labels. Documentation checks do not certify live provider availability.
 

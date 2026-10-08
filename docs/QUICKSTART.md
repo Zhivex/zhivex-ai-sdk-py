@@ -169,15 +169,15 @@ Use the focused imports `zhivex_ai.workflows`, `zhivex_ai.evals`, `zhivex_ai.int
 
 Keep Beta and Experimental dependencies behind an application-owned boundary so the core agent path remains easy to upgrade. Stable workflows should still sit behind application authorization, storage, and side-effect controls. The complete boundary and non-goals are documented in [SCOPE.md](./SCOPE.md).
 
-## Installed Durable Walkthrough (Candidate)
+## Installed Durable Walkthrough
 
-The next-release Beta CLI adds `zhivex init`. It is **not present in the published
-0.23.0 wheel**. Use the candidate wheel from this change until a release includes it.
-The SDK APIs used by the generated application already exist; no new Stable API is added.
+The Beta CLI `zhivex init` has been in the published package since 0.24.0.
+Install the current package, or a wheel built from this checkout. The SDK APIs
+used by the generated application already exist; no new Stable API is added.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install '/absolute/path/to/candidate.whl[postgres]'
+.venv/bin/python -m pip install 'zhivex-ai-sdk[postgres]'
 .venv/bin/zhivex init durable-demo --backend postgres
 cd durable-demo
 ```
@@ -224,8 +224,8 @@ From a maintainer checkout, build a candidate and run the isolated consumer:
 
 ```bash
 make build
-.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl --output /tmp/adoption-sqlite.json
-.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl --backend postgres --output /tmp/adoption-postgres.json
+.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.29.0-py3-none-any.whl --output /tmp/adoption-sqlite.json
+.venv/bin/python scripts/verify_adoption.py dist/zhivex_ai_sdk-0.29.0-py3-none-any.whl --backend postgres --output /tmp/adoption-postgres.json
 ```
 
 The Postgres command requires `DATABASE_URL`. Add `--live` only with the explicit

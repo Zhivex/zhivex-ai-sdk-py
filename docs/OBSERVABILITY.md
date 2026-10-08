@@ -193,7 +193,7 @@ python scripts/verify_otlp.py --receipt /tmp/trace-receipt.json --output /tmp/ot
 docker compose -p zhivex-observability -f examples/observability/compose.yaml down
 ```
 
-For the new redaction behavior use the candidate wheel rather than published 0.23.0.
+This redaction behavior is in the published package.
 The verifier requires the same trace in both backends. The loopback services are
 synthetic test infrastructure, not a production deployment. Backend auth, TLS,
 retention, exporter delivery monitoring and resource identity are application-owned.

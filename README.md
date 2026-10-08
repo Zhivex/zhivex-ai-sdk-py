@@ -1,18 +1,21 @@
 # Zhivex AI SDK for Python
 
-Version 0.29.0 is a release candidate for **Experimental**, application-owned
+Version 0.29.0 adds **Experimental**, application-owned
 OpenAI Responses GA computer execution and independent task verification in
 `zhivex_ai.experimental`. It preserves the Stable root API and existing preview
-declarations. Exact-artifact certification and publication are pending; no native
+declarations. Protected exact-artifact certification and
+[PyPI publication](https://pypi.org/project/zhivex-ai-sdk/0.29.0/) completed on
+2026-10-06 in [release workflow 37500464382](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/37500464382),
+from `b25230c9af18dcf6a70b3c67b4c73f95d9851975`. No native
 computer parity across providers is claimed. See the
 [0.29.0 release scope](docs/releases/0.29.0.md) and
 [computer execution contracts and limitations](docs/COMPUTER_USE.md).
 
-The currently published 0.28.4 reliability release completed protected
+The prior 0.28.4 reliability release completed protected
 certification and [PyPI publication](https://pypi.org/project/zhivex-ai-sdk/0.28.4/)
 on 2026-10-04 in [release workflow 37220854989](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/37220854989),
-from `73a5dd44ac8ce391104da4f19400af25b9a6e407`. It does not contain the pending
-computer-use fixes. See its [release history](docs/releases/0.28.4.md), the
+from `73a5dd44ac8ce391104da4f19400af25b9a6e407`. It does not contain the
+computer-use changes. See its [release history](docs/releases/0.28.4.md), the
 [architecture guide](docs/ARCHITECTURE.md) and
 [model refresh](docs/MODEL_REFRESH_2026_09_30.md).
 
@@ -74,9 +77,10 @@ Stable workflow orchestration, evaluation pipelines, protocol hosting, packaged 
 ## Documentation
 
 Read the [Python getting-started guide](https://sdk.zhivex.ai/doc/python/getting-started)
-and [versioned Python reference](https://sdk.zhivex.ai/doc/python/0.23.0/reference/index)
-on the SDK portal. Documentation maintenance and release ownership are described
-in the [portal maintenance guide](docs/DOCUMENTATION_SITE.md).
+and [versioned Python reference](https://sdk.zhivex.ai/doc/python/0.28.3/reference/index)
+on the SDK portal. The portal currently documents Python 0.28.3 and is built from
+the separate sdk-page repository. Documentation maintenance and release ownership
+are described in the [portal maintenance guide](docs/DOCUMENTATION_SITE.md).
 
 ## Why Zhivex AI SDK
 
@@ -2035,13 +2039,13 @@ or, for a permanent fix with the official python.org installer:
 
 MIT. See [LICENSE](./LICENSE).
 
-## Next-release adoption work
+## Adoption features from 0.24.0 and 0.25.0
 
-Version `0.25.0` adds Qwen3.8 Omni Flash multimodal support. See the [0.25.0 release plan](docs/releases/0.25.0.md) for validation and publication steps.
+Version `0.25.0`, published on 2026-09-18, adds Qwen3.8 Omni Flash multimodal support. See the [0.25.0 release plan](docs/releases/0.25.0.md).
 
-Version `0.24.0` adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough-candidate),
+Version `0.24.0`, published on 2026-09-16, adds Beta `zhivex init` and an [installed durable walkthrough](docs/QUICKSTART.md#installed-durable-walkthrough),
 [OTLP recipes](docs/OBSERVABILITY.md#verified-otlp-recipe-hu16) and
-[reproducible performance evidence](docs/PERFORMANCE.md). See the [0.24.0 release plan](docs/releases/0.24.0.md) for validation and publication status. The scaffold composes existing APIs. CLI and observability remain Beta; local
+[reproducible performance evidence](docs/PERFORMANCE.md). See the [0.24.0 release plan](docs/releases/0.24.0.md). The scaffold composes existing APIs. CLI and observability remain Beta; local
 storage is promoted separately under the guarantees documented above.
 
 ## September 16 provider update
@@ -2050,7 +2054,7 @@ DeepSeek V4.1 Flash and Meta `muse-spark-1.3` have explicit offline contracts. T
 
 New native entrypoints are `openai.native.agent_sessions()` (Beta managed Agents sessions), `openai.native.live()` (Experimental GPT-Live WebSocket/WebRTC), and `anthropic.native.messages()` (Beta Messages/compaction). These do not replace the portable `Agent` runtime. See [usage, sources and evidence boundaries](docs/MODEL_REFRESH_2026_09_16.md). New model contracts do not certify a release wheel.
 
-Release candidate `0.25.0` adds the September provider refresh and native session APIs. See the [release plan](docs/releases/0.25.0.md) for migration, validation and publication gates.
+Published version `0.25.0` adds the September provider refresh and native session APIs. See the [release plan](docs/releases/0.25.0.md) for migration and validation notes.
 
 Realtime event consumers can import every normalized event variant from
 `zhivex_ai.live`, including `RealtimeGoAwayEvent` and
