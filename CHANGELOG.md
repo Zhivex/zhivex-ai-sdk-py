@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Added
-
-- Claude Haiku 5.5 catalog entry (tiered pricing + Bedrock ID), adaptive/`effort` gates, computer toolset validation, and docs/tests alongside Opus/Sonnet 5.5.
-
 All notable changes to Zhivex AI SDK will be documented in this file.
 
 The format follows grouped release notes with these sections when relevant:
@@ -24,6 +18,10 @@ Related documents:
 - [VERSIONING.md](./VERSIONING.md)
 
 ## Unreleased
+
+### Added
+
+- Claude Haiku 5.5 catalog entry (tiered pricing + Bedrock ID), adaptive/`effort` gates, computer toolset validation, and docs/tests alongside Opus/Sonnet 5.5.
 
 ## 0.29.0 — Unreleased
 
