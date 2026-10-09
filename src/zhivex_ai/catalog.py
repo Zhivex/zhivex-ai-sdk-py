@@ -555,6 +555,26 @@ default_model_catalog = create_model_catalog(
                 ("claude-sonnet-5-5", "sonnet-5-5", 2, 10, "2026-09-28"),
             )
         ),
+        _entry(
+            "anthropic",
+            "claude-haiku-5-5",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            capabilities=_ANTHROPIC_LANGUAGE,
+            source_urls=("https://platform.claude.com/docs/en/models/haiku-5-5/overview",),
+            support_evidence="offline-contract",
+            verified_at="2026-10-07",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://platform.claude.com/docs/en/models/haiku-5-5/overview",
+                input_per_1m_tokens=0.10,
+                output_per_1m_tokens=0.50,
+                cached_input_per_1m_tokens=0.01,
+                effective_from="2026-10-07",
+                long_context_threshold_tokens=100_000,
+                long_context_input_per_1m_tokens=0.50,
+                long_context_output_per_1m_tokens=2.50,
+            ),
+        ),
         *(
             _entry(
                 "gemini", model_id, api_surface="speech",
@@ -1163,6 +1183,7 @@ default_model_catalog = create_model_catalog(
             source_urls=_ANTHROPIC_MODELS,
             capabilities=_ANTHROPIC_LANGUAGE,
             pricing=_usd(1, 5, _ANTHROPIC_PRICING),
+            replacement_model_id="claude-haiku-5-5",
         ),
         # Gemini Developer API: retired preview IDs are lifecycle records, never aliases.
         _entry(
@@ -2129,10 +2150,19 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "bedrock",
+            "anthropic.claude-haiku-5-5",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            source_urls=_BEDROCK_MODELS,
+            capabilities=_ANTHROPIC_LANGUAGE,
+            verified_at="2026-10-07",
+        ),
+        _entry(
+            "bedrock",
             "anthropic.claude-haiku-4-5-20251001-v1:0",
             recommended_for=("speed", "tools", "vision"),
             source_urls=_BEDROCK_MODELS,
             capabilities=_ANTHROPIC_LANGUAGE,
+            replacement_model_id="anthropic.claude-haiku-5-5",
         ),
         _entry(
             "bedrock",

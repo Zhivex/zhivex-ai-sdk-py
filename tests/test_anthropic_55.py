@@ -42,10 +42,24 @@ class Anthropic55Tests(IsolatedAsyncioTestCase):
                 self.assertEqual(self.requests[-1]["thinking"], {"type": expected})
 
     async def test_opus_always_on_rejects_none_and_both_models_reject_manual_budget(self) -> None:
-        for model_id, reasoning in [("claude-opus-5-5", ReasoningConfig(effort="none")), ("claude-opus-5-5", ReasoningConfig(budget_tokens=1024)), ("claude-sonnet-5-5", ReasoningConfig(budget_tokens=1024))]:
+        for model_id, reasoning in [("claude-opus-5-5", ReasoningConfig(effort="none")), ("claude-opus-5-5", ReasoningConfig(budget_tokens=1024)), ("claude-sonnet-5-5", ReasoningConfig(budget_tokens=1024)), ("claude-haiku-5-5", ReasoningConfig(effort="none")), ("claude-haiku-5-5", ReasoningConfig(budget_tokens=1024))]:
             with self.subTest(model_id=model_id, reasoning=reasoning), self.assertRaises(UnsupportedFeatureError):
                 await self.provider.native.language_model(model_id).generate(ModelGenerateInput(messages=self.messages, reasoning=reasoning))
         self.assertEqual(self.requests, [])
+
+    async def test_haiku55_adaptive_effort_and_forced_tools_and_toolset(self) -> None:
+        model = self.provider.native.language_model("claude-haiku-5-5")
+        await model.generate(ModelGenerateInput(messages=self.messages, reasoning=ReasoningConfig(effort="low")))
+        self.assertEqual(self.requests[-1]["thinking"], {"type": "adaptive"})
+        self.assertEqual(self.requests[-1]["output_config"]["effort"], "low")
+        await model.generate(ModelGenerateInput(messages=self.messages, tool_choice="required"))
+        self.assertEqual(self.requests[-1]["tool_choice"], {"type": "any"})
+        with self.assertRaises(UnsupportedFeatureError):
+            await model.generate(ModelGenerateInput(messages=self.messages, provider_options={"thinking": {"type": "between_tools"}}))
+        with self.assertRaises(UnsupportedFeatureError):
+            await model.generate(ModelGenerateInput(messages=self.messages, provider_options={"tools": [{"type": "computer_20251124", "name": "computer"}]}))
+        await model.generate(ModelGenerateInput(messages=self.messages, tools={"computer": hosted_tool(name="computer", provider="anthropic", type="computer_toolset_20260801", tool_class="toolset")}))
+        self.assertEqual(self.requests[-1]["tools"], [{"type": "computer_toolset_20260801"}])
 
     async def test_sonnet_between_tools_effort_cap_applies_after_merging(self) -> None:
         for effort in ["high", "xhigh", "max"]:
@@ -94,12 +108,12 @@ class Anthropic55Tests(IsolatedAsyncioTestCase):
         self.assertEqual(result.raw_response["input_transformations"][0]["reason"], "organization_binding_mismatch")
 
     async def test_legacy_computer_rejected_but_web_fetch_allowed_on_55(self) -> None:
-        for model_id in ["claude-opus-5-5", "claude-sonnet-5-5"]:
+        for model_id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]:
             model = self.provider.native.language_model(model_id)
             with self.assertRaises(UnsupportedFeatureError):
                 await model.generate(ModelGenerateInput(messages=self.messages, provider_options={"tools": [{"type": "computer_20251124", "name": "computer"}]}))
             await model.generate(ModelGenerateInput(messages=self.messages, provider_options={"tools": [{"type": "web_fetch_20260318", "name": "web_fetch"}]}))
-        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(len(self.requests), 3)
 
     async def test_stream_preserves_member_identity_and_signed_thinking(self) -> None:
         events = [("content_block_start", {"index": 0, "content_block": {"type": "thinking", "thinking": "", "signature": "signed"}}), ("content_block_stop", {"index": 0}), ("content_block_start", {"index": 1, "content_block": {"type": "tool_use", "id": "tool-1", "name": "navigate", "toolset_name": "browser", "input": {}}}), ("content_block_delta", {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"url":"https://example.com"}'}}), ("content_block_stop", {"index": 1}), ("message_stop", {"stop_reason": "tool_use"})]
