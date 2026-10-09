@@ -28,6 +28,13 @@ async def main() -> None:
             max_tokens=1024,
         )
         print(sonnet.text)
+        haiku = await generate_text(
+            model=provider("claude-haiku-5-5"),
+            prompt="Classify this support ticket in one word: refund request.",
+            reasoning=ReasoningConfig(effort="low"),
+            max_tokens=256,
+        )
+        print(haiku.text)
     finally:
         await aclose_default_clients()
 

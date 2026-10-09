@@ -378,6 +378,15 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             default_model_catalog.find("anthropic", "claude-haiku-4-5").model_id,
             "claude-haiku-4-5-20251001",
         )  # type: ignore[union-attr]
+        haiku55 = default_model_catalog.find("anthropic", "claude-haiku-5-5")
+        self.assertIsNotNone(haiku55)
+        self.assertEqual(haiku55.model_id, "claude-haiku-5-5")  # type: ignore[union-attr]
+        self.assertEqual(haiku55.pricing.input_per_1m_tokens, 0.10)  # type: ignore[union-attr]
+        self.assertEqual(haiku55.pricing.long_context_threshold_tokens, 100_000)  # type: ignore[union-attr]
+        self.assertEqual(
+            default_model_catalog.find("bedrock", "anthropic.claude-haiku-5-5").model_id,  # type: ignore[union-attr]
+            "anthropic.claude-haiku-5-5",
+        )
         self.assertEqual(
             default_model_catalog.find("qwen", "qwen3.7-max-2026-05-20").model_id,
             "qwen3.7-max-2026-05-20",
@@ -609,6 +618,13 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
             }:
                 self.assertEqual(entry.verified_at, "2026-09-30")
                 self.assertEqual(entry.support_evidence, "offline-contract")
+                continue
+            if (entry.provider, entry.model_id) in {
+                ("anthropic", "claude-haiku-5-5"),
+                ("bedrock", "anthropic.claude-haiku-5-5"),
+            }:
+                self.assertEqual(entry.verified_at, "2026-10-07")
+                self.assertEqual(entry.support_evidence, "offline-contract" if entry.provider == "anthropic" else entry.support_evidence)
                 continue
             if (entry.provider, entry.model_id) in september_16:
                 self.assertEqual(entry.verified_at, "2026-09-16")

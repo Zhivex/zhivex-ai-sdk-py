@@ -1,20 +1,24 @@
 # Claude 5.5 on the direct Anthropic API
 
-The SDK validates the September 2026 Claude API contracts offline. The package
-remains Beta; these tests do not establish live access or release certification.
-Azure and Bedrock are outside this refresh.
+The SDK validates the September–October 2026 Claude API contracts offline. The
+package remains Beta; these tests do not establish live access or release
+certification. Azure remains outside this refresh. Bedrock lists
+`anthropic.claude-haiku-5-5` in the catalog.
 
 | Model | Portable reasoning | Native thinking | Tool choice |
 | --- | --- | --- | --- |
 | `claude-opus-5-5` | `low` through `max` | adaptive, always on | auto / none |
 | `claude-sonnet-5-5` | `low` through `max`; `none` maps to `between_tools` | adaptive / between_tools | auto / none |
+| `claude-haiku-5-5` | `low` through `max` (no `none`) | adaptive only | auto / none / forced |
 
 Sonnet's `none` skips up-front reasoning; it still permits thinking between tool
-calls. Native `disabled` and manual token budgets are rejected on both models.
-`between_tools` accepts effort at most `high`. Opus defaults to `medium`; Sonnet
-defaults to `high`. The boolean `tool_choice` capability also covers auto/none;
-it does not promise forced selection. Both adapters reject forced tool use,
-including native Messages and token counting.
+calls. Haiku 5.5 rejects `effort=none`, `thinking.disabled`, and `between_tools`;
+use a lower adaptive effort such as `low`. Native `disabled` and manual token
+budgets are rejected on Opus/Sonnet/Haiku 5.5. `between_tools` remains
+Sonnet-only and accepts effort at most `high`. Opus defaults to `medium`;
+Sonnet defaults to `high`; Haiku defaults to `medium`. Opus and Sonnet reject
+forced tool use; Haiku 5.5 allows it per the Claude API. Haiku 5.5 has no
+managed server-side fallback path for refusals.
 
 Run `ANTHROPIC_API_KEY=... .venv/bin/python examples/text/anthropic_55.py`.
 
@@ -53,6 +57,8 @@ until a usable signed summary is returned.
 
 - [Opus 5.5 migration](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide)
 - [Sonnet 5.5 migration](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide)
+- [Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview)
+- [Haiku 5.5 migration](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide)
 - [Client toolsets](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
 - [Handling tool calls](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)
 - [Advisor compatibility](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool)

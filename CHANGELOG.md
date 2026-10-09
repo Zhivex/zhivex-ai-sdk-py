@@ -1,6 +1,5 @@
 # Changelog
 
-
 All notable changes to Zhivex AI SDK will be documented in this file.
 
 The format follows grouped release notes with these sections when relevant:
