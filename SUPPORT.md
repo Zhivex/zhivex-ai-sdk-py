@@ -1,10 +1,10 @@
 # Support Policy
 
-The pending 0.29.0 release adds an **Experimental**, application-owned OpenAI Responses GA
+The published 0.29.0 release adds an **Experimental**, application-owned OpenAI Responses GA
 computer executor and verification wrapper in `zhivex_ai.experimental`. Existing
 preview declarations remain unchanged; unhandled computer calls now fail closed.
-See [computer execution contracts and limitations](docs/COMPUTER_USE.md). No release
-or native parity across providers is claimed.
+See [computer execution contracts and limitations](docs/COMPUTER_USE.md). Publication
+does not claim native computer parity across providers.
 
 Zhivex AI SDK is currently published as a `Beta` package.
 

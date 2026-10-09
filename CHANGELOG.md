@@ -19,14 +19,12 @@ Related documents:
 
 ## Unreleased
 
-### Added
+## 0.29.0 — 2026-10-06
 
-- Claude Haiku 5.5 catalog entry (tiered pricing + Bedrock ID), adaptive/`effort` gates, computer toolset validation, and docs/tests alongside Opus/Sonnet 5.5.
-
-## 0.29.0 — Unreleased
-
-Prepare Experimental application-owned computer execution and independent task
-verification. Exact-artifact certification and publication are pending.
+Published Experimental application-owned computer execution and independent task
+verification from `b25230c9af18dcf6a70b3c67b4c73f95d9851975`. Protected
+exact-artifact certification and PyPI publication completed on 2026-10-06 in
+[release workflow 37500464382](https://github.com/Zhivex/zhivex-ai-sdk-py/actions/runs/37500464382).
 
 ### Added
 
