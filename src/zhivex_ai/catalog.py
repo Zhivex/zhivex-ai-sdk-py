@@ -2446,6 +2446,26 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "kimi",
+            "kimi-k2.7-code",
+            aliases=("kimi-k2.7-code-highspeed",),
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=(
+                "https://platform.kimi.ai/docs/guide/use-thinking-models",
+                "https://platform.kimi.ai/docs/api/models-overview",
+                "https://www.kimi.ai/resources/kimi-k2-7-code",
+            ),
+            capabilities=_KIMI_LANGUAGE,
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://www.kimi.ai/resources/kimi-k2-7-code",
+                input_per_1m_tokens=0.95,
+                cached_input_per_1m_tokens=0.19,
+                output_per_1m_tokens=4,
+            ),
+        ),
+        _entry(
+            "kimi",
             "kimi-k2.5",
             recommended_for=("reasoning", "tools", "vision"),
             source_urls=_KIMI_MODELS,
