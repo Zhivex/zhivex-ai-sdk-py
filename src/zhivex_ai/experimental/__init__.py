@@ -6,13 +6,27 @@ additive: the existing top-level imports remain available for compatibility.
 
 from __future__ import annotations
 
+from ..decisions import create_gateway_decide, create_openai_decision_model
+from ..egress import EgressDeniedError, create_egress_policy, enforce_egress_policy, resolve_egress_target
+from ..latam_redaction import create_latam_sensitive_data_policy
+from ..loop_controls import has_tool_call, step_count_is
+from ..model_resolver import (
+    ModelResolutionError,
+    clear_registered_model_providers,
+    create_model_resolver,
+    register_model_provider,
+    resolve_language_model,
+)
 from .computer import ComputerApproval, ComputerRunResult, ComputerScreenshot, openai_computer_tool, run_computer_use
 from .providers import (
     create_bedrock,
+    create_groq_compatible,
+    create_mistral_compatible,
     create_ollama,
     create_openrouter,
     create_xai,
     create_zai,
+    openai_compatible,
     openai_local_shell_tool,
     openai_shell_environment,
     openai_shell_tool,
@@ -75,6 +89,23 @@ __all__ = [
     "create_openrouter",
     "create_xai",
     "create_zai",
+    "openai_compatible",
+    "create_mistral_compatible",
+    "create_groq_compatible",
+    "ModelResolutionError",
+    "clear_registered_model_providers",
+    "create_model_resolver",
+    "register_model_provider",
+    "resolve_language_model",
+    "has_tool_call",
+    "step_count_is",
+    "EgressDeniedError",
+    "create_egress_policy",
+    "enforce_egress_policy",
+    "resolve_egress_target",
+    "create_latam_sensitive_data_policy",
+    "create_gateway_decide",
+    "create_openai_decision_model",
     "xai_code_execution_tool",
     "xai_file_search_tool",
     "xai_web_search_tool",

@@ -240,7 +240,12 @@ async def _call_error_hooks_preserving(
         error.add_note(f"Agent on_error hook also failed: {hook_error}")
 
 
-def _effective_max_steps(limits: RunLimits, requested: int | None) -> int | None:
+def _effective_max_steps(limits: RunLimits, requested: int | str | None) -> int | str | None:
+    if requested is not None and requested != "unlimited":
+        if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+            raise ValidationError('"max_steps" must be a positive integer or "unlimited".')
+    if requested == "unlimited":
+        return "unlimited" if limits.max_steps is None else limits.max_steps
     if limits.max_steps is None:
         return requested
     if requested is None:

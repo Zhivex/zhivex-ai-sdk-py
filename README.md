@@ -1301,6 +1301,9 @@ Native-only or compatibility providers are explicit Experimental imports:
 - `from zhivex_ai.experimental import create_ollama`
 - `from zhivex_ai.experimental import create_xai`
 - `from zhivex_ai.experimental import create_zai`
+- `from zhivex_ai.experimental import openai_compatible`
+- `from zhivex_ai.experimental import create_model_resolver`
+- `from zhivex_ai.experimental import create_gateway_decide`
 
 Every factory now returns a `ProviderBundle`.
 

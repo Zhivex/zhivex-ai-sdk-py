@@ -3,10 +3,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from copy import deepcopy
 from functools import lru_cache
 from typing import Any, cast
+
+from .egress import EgressDeclaration, EgressPolicy, enforce_egress_policy
+from .loop_controls import (
+    PrepareStepContext,
+    StopCondition,
+    resolve_step_ceiling,
+    select_active_tools,
+    stop_condition_met,
+)
+from .model_resolver import ModelResolver, resolve_language_model
 
 from ._agent_budget import before_model, after_model, before_tool, after_tool
 from ._agent_contracts import GuardrailTripwireTriggered
@@ -528,17 +538,108 @@ def _validate_computer_replay(messages: list[ModelMessage]) -> None:
             seen.add(part.tool_call.id)
 
 
+def _prepared_value(prepared: Any, key: str) -> Any:
+    if prepared is None:
+        return None
+    if isinstance(prepared, dict):
+        return prepared.get(key)
+    return getattr(prepared, key, None)
+
+
+async def _plan_step(
+    *,
+    model: LanguageModel,
+    tools: ToolSet | None,
+    tool_choice: ToolChoice | None,
+    active_tools: Sequence[str] | None,
+    all_messages: list[ModelMessage],
+    steps: list[GenerateTextStep],
+    step_index: int,
+    prepare_step: Callable[[PrepareStepContext], Any] | None,
+    model_resolver: ModelResolver | None,
+    temperature: float | None,
+    max_tokens: int | None,
+    reasoning: ReasoningConfig | None,
+    provider_options: dict[str, Any] | None,
+    structured_output: Any,
+    retry: RetryOptions,
+    egress_policy: EgressPolicy | None,
+    egress: EgressDeclaration | None,
+) -> tuple[LanguageModel, ModelGenerateInput, ToolSet | None]:
+    step_model = model
+    step_tools = tools
+    step_choice = tool_choice
+    step_active = active_tools
+    request_messages = all_messages
+    if prepare_step is not None:
+        prepared = prepare_step(PrepareStepContext(
+            step_number=step_index,
+            step=step_index + 1,
+            steps=tuple(steps),
+            model=model,
+            messages=list(all_messages),
+            tools=tools,
+        ))
+        if inspect.isawaitable(prepared):
+            prepared = await prepared
+        if prepared:
+            prepared_model = _prepared_value(prepared, "model")
+            if prepared_model is not None:
+                step_model = resolve_language_model(prepared_model, model_resolver)
+            prepared_tools = _prepared_value(prepared, "tools")
+            if prepared_tools is not None:
+                step_tools = prepared_tools
+            prepared_choice = _prepared_value(prepared, "tool_choice")
+            if prepared_choice is not None:
+                step_choice = prepared_choice
+            prepared_active = _prepared_value(prepared, "active_tools")
+            if prepared_active is not None:
+                step_active = prepared_active
+            prepared_messages = _prepared_value(prepared, "messages")
+            if prepared_messages is not None:
+                request_messages = list(prepared_messages)
+                all_messages[:] = list(prepared_messages)
+            prepared_system = _prepared_value(prepared, "system")
+            if prepared_system is not None:
+                system_message = create_text_message("system", prepared_system)
+                if request_messages and request_messages[0].role == "system":
+                    request_messages = [system_message, *request_messages[1:]]
+                else:
+                    request_messages = [system_message, *request_messages]
+                if prepared_messages is not None:
+                    all_messages[:] = list(request_messages)
+    visible_tools = select_active_tools(step_tools, step_active)
+    if visible_tools and not step_model.capabilities.tools:
+        raise UnsupportedFeatureError(f'Model "{step_model.provider}/{step_model.model_id}" does not support tools.')
+    _validate_tool_choice(step_model, visible_tools, step_choice)
+    _validate_hosted_tools(step_model, visible_tools, step_choice)
+    if egress_policy is not None:
+        await enforce_egress_policy(egress_policy, step_model, egress, provider_options)
+    request = _to_request(
+        messages=request_messages,
+        tools=visible_tools,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        reasoning=reasoning,
+        provider_options=provider_options,
+        structured_output=structured_output,
+        tool_choice=step_choice,
+        retry=retry,
+    )
+    return step_model, request, visible_tools
+
+
 @budgeted
 async def generate_text(
     *,
-    model: LanguageModel,
+    model: LanguageModel | str,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
     tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -550,37 +651,56 @@ async def generate_text(
     retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stop_when: StopCondition | Sequence[StopCondition] | None = None,
+    prepare_step: Callable[[PrepareStepContext], Any] | None = None,
+    active_tools: Sequence[str] | None = None,
+    model_resolver: ModelResolver | None = None,
+    egress_policy: EgressPolicy | None = None,
+    egress: EgressDeclaration | None = None,
 ) -> GenerateTextOutput:
-    steps_limit = max(1, max_steps or 1)
+    model = resolve_language_model(model, model_resolver)
+    ceiling = resolve_step_ceiling(max_steps, stop_when)  # type: ignore[arg-type]
+    if prepare_step is None:
+        tools = select_active_tools(tools, active_tools)
     all_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
     all_messages = _apply_retrieval(all_messages, retrieval)
     validate_message_parts(model, all_messages)
     _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
-    if tools and not model.capabilities.tools:
-        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
-    _validate_tool_choice(model, tools, tool_choice)
-    _validate_hosted_tools(model, tools, tool_choice)
+    if prepare_step is None:
+        if tools and not model.capabilities.tools:
+            raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+        _validate_tool_choice(model, tools, tool_choice)
+        _validate_hosted_tools(model, tools, tool_choice)
 
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
     steps: list[GenerateTextStep] = []
     tool_results: list[ToolExecutionResult] = []
     final_result: GenerateResult | None = None
 
-    for _ in range(steps_limit):
-        request = _to_request(
-            messages=all_messages,
+    step_index = 0
+    while ceiling == "unlimited" or step_index < ceiling:
+        step_model, request, visible_tools = await _plan_step(
+            model=model,
             tools=tools,
+            tool_choice=tool_choice,
+            active_tools=active_tools if prepare_step is not None else None,
+            all_messages=all_messages,
+            steps=steps,
+            step_index=step_index,
+            prepare_step=prepare_step,
+            model_resolver=model_resolver,
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning=reasoning,
             provider_options=provider_options,
             structured_output=structured_output,
-            tool_choice=tool_choice,
             retry=retry,
+            egress_policy=egress_policy,
+            egress=egress,
         )
         before_model()
-        response = await model.generate(request)
+        response = await step_model.generate(request)
         after_model(response)
         steps.append(GenerateTextStep(request=request, response=response))
         final_result = response
@@ -591,13 +711,13 @@ async def generate_text(
         step_tool_calls = _extract_tool_calls(response_messages)
         if not step_tool_calls:
             break
-        _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
+        _raise_for_provider_builtin_tool_calls(step_model, step_tool_calls, provider_options)
         try:
             current_results = await _execute_tools(
                 step_tool_calls,
-                tools,
+                visible_tools,
                 options=tool_execution,
-                default_parallel=model.capabilities.parallel_tool_calls,
+                default_parallel=step_model.capabilities.parallel_tool_calls,
             )
         except ToolExecutionSuspended as suspended:
             _record_suspended_tool_state(
@@ -610,6 +730,9 @@ async def generate_text(
         tool_results.extend(current_results)
         for result in current_results:
             all_messages.append(ModelMessage(role="tool", parts=[tool_result_part(result)]))
+        if await stop_condition_met(stop_when, steps):
+            break
+        step_index += 1
 
     if final_result is None:
         raise ParseError("Model did not return a result.")
@@ -649,14 +772,14 @@ class _StreamTextResult(OwnedStream[GenerateTextOutput]):
 
 def stream_text(
     *,
-    model: LanguageModel,
+    model: LanguageModel | str,
     prompt: str | None = None,
     messages: list[ModelMessage] | None = None,
     system: str | None = None,
     tools: ToolSet | None = None,
     tool_choice: ToolChoice | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -670,21 +793,33 @@ def stream_text(
     retry_backoff_ms: int | None = None,
     stream_buffer_size: int | None = DEFAULT_STREAM_BUFFER_SIZE,
     on_event: Callable[[StreamEvent], Awaitable[None]] | None = None,
+    stop_when: StopCondition | Sequence[StopCondition] | None = None,
+    prepare_step: Callable[[PrepareStepContext], Any] | None = None,
+    active_tools: Sequence[str] | None = None,
+    model_resolver: ModelResolver | None = None,
+    egress_policy: EgressPolicy | None = None,
+    egress: EgressDeclaration | None = None,
 ) -> _StreamTextResult:
     validate_execution_options(total_timeout_ms, retry_jitter)
+    model = resolve_language_model(model, model_resolver)
+    ceiling = resolve_step_ceiling(max_steps, stop_when)  # type: ignore[arg-type]
+    if prepare_step is None:
+        tools = select_active_tools(tools, active_tools)
     base_messages = normalize_messages(prompt=prompt, messages=messages, system=system)
     base_messages = _apply_retrieval(base_messages, retrieval)
     validate_message_parts(model, base_messages)
     _validate_portable_provider_options(model, provider_options)
     _validate_reasoning(model, reasoning)
-    if not model.capabilities.streaming:
+    if prepare_step is None and not model.capabilities.streaming:
         raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')
-    if tools and not model.capabilities.tools:
-        raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
-    _validate_tool_choice(model, tools, tool_choice)
-    _validate_hosted_tools(model, tools, tool_choice)
+    if prepare_step is None:
+        if tools and not model.capabilities.tools:
+            raise UnsupportedFeatureError(f'Model "{model.provider}/{model.model_id}" does not support tools.')
+        _validate_tool_choice(model, tools, tool_choice)
+        _validate_hosted_tools(model, tools, tool_choice)
+    elif not model.capabilities.streaming:
+        raise ValidationError(f'Model "{model.provider}/{model.model_id}" does not support streaming.')
 
-    steps_limit = max(1, max_steps or 1)
     retry = RetryOptions(timeout_ms=timeout_ms, max_retries=max_retries, retry_backoff_ms=retry_backoff_ms)
     broadcast = Broadcast[StreamEvent](max_events=stream_buffer_size)
 
@@ -698,20 +833,29 @@ def stream_text(
 
         try:
             async with execution_scope(total_timeout_ms, retry_jitter=retry_jitter) as budget:
-                for _ in range(steps_limit):
-                    request = _to_request(
-                        messages=all_messages,
+                step_index = 0
+                while ceiling == "unlimited" or step_index < ceiling:
+                    step_model, request, visible_tools = await _plan_step(
+                        model=model,
                         tools=tools,
+                        tool_choice=tool_choice,
+                        active_tools=active_tools if prepare_step is not None else None,
+                        all_messages=all_messages,
+                        steps=steps,
+                        step_index=step_index,
+                        prepare_step=prepare_step,
+                        model_resolver=model_resolver,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         reasoning=reasoning,
                         provider_options=provider_options,
                         structured_output=structured_output,
-                        tool_choice=tool_choice,
                         retry=retry,
+                        egress_policy=egress_policy,
+                        egress=egress,
                     )
                     before_model()
-                    stream = await model.stream(request)
+                    stream = await step_model.stream(request)
                     assistant_parts: list[Any] = []
                     text_buffer = ""
                     finish_reason = normalize_finish_reason("stop")
@@ -761,13 +905,13 @@ def stream_text(
                     step_tool_calls = _extract_tool_calls(response_messages)
                     if not step_tool_calls:
                         break
-                    _raise_for_provider_builtin_tool_calls(model, step_tool_calls, provider_options)
+                    _raise_for_provider_builtin_tool_calls(step_model, step_tool_calls, provider_options)
                     try:
                         current_results = await _execute_tools(
                             step_tool_calls,
-                            tools,
+                            visible_tools,
                             options=tool_execution,
-                            default_parallel=model.capabilities.parallel_tool_calls,
+                            default_parallel=step_model.capabilities.parallel_tool_calls,
                         )
                     except ToolExecutionSuspended as suspended:
                         _record_suspended_tool_state(
@@ -784,6 +928,9 @@ def stream_text(
                         if on_event is not None:
                             await on_event(tool_result_event)
                         await broadcast.publish(tool_result_event)
+                    if await stop_condition_met(stop_when, steps):
+                        break
+                    step_index += 1
                 if final_result is None:
                     raise ParseError("Model did not return a result.")
                 merged_usage = _merge_usage([step.response.usage for step in steps])

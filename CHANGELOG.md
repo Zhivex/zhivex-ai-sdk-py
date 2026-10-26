@@ -29,11 +29,18 @@ Related documents:
 - Experimental `create_xai` for Grok 4.7, 4.6, 4.5, and the other catalogued Grok text models. Responses is the default. `grok-4.7` rejects Chat Completions. Reasoning effort, the US regional endpoint, hosted web/X/code/file-search tools, and image, video, speech, and transcription routes follow the xAI docs at https://docs.x.ai/developers/grok-4-7 and https://docs.x.ai/developers/model-capabilities/text/reasoning.
 - Experimental `create_zai` for GLM-5.3, GLM-5.3 Flash, and GLM-5.2. Calls use Chat Completions at `https://api.z.ai/api/paas/v4` (or the Coding Plan host). GLM-5.3 always sends `thinking.type=enabled` and accepts reasoning effort `low`, `high`, or `max`. GLM-5.3 is text-only. GLM-5.3 Flash accepts images. See https://docs.z.ai/guides/llm/glm-5.3.
 - Azure OpenAI catalog entries for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, GPT-5, GPT-5.4 Pro, GPT-4o mini speech/transcription, and deprecated `gpt-4o-mini`. Azure requests for the GPT-6 Sol, Luna, and 6.1 Sol deployment names use the same Responses family gates as OpenAI. See https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure.
+- Experimental `provider/model` resolution via `create_model_resolver`, `resolve_language_model`, and `register_model_provider`. Identifiers split on the first slash. Alias chains are rejected. Direct provider factories remain supported.
+- Experimental `openai_compatible` Chat Completions factory, plus `create_mistral_compatible` and `create_groq_compatible` presets. `register=True` makes `"name/model"` strings resolvable. This is not the Responses client used by `create_openai`.
+- Experimental generation loop controls: `max_steps="unlimited"`, `stop_when` (`step_count_is`, `has_tool_call`), `prepare_step`, and `active_tools`. Omitting both `max_steps` and `stop_when` still runs one step. `stop_when` without `max_steps` uses a 20-step ceiling. An agent `RunLimits.max_steps` value, including the default of 8, still caps an unlimited request. Set `RunLimits(max_steps=None)` for an unlimited agent run.
+- Experimental fail-closed egress allowlists (`create_egress_policy`, `enforce_egress_policy`) and `create_latam_sensitive_data_policy` for Argentina, Brazil, Chile, and Mexico identifiers plus Luhn-checked payment cards. The detectors are technical checks, not a legal-compliance determination.
+- Experimental OpenAI Decisions client `create_openai_decision_model` for `gpt-6-luna` and `create_gateway_decide` (`gateway.decide`). One attempt and no fallback statuses are the defaults. See https://developers.openai.com/api/docs/guides/decisions.
 
 ### Changed
 
 - Tier-1 provider certification builds and installs the wheel from the current checkout instead of downloading the published 0.23.0 wheel. A weekly schedule runs a one-call OpenAI generation smoke. **WEEKLY LIVE SPEND:** remove that schedule before merge unless recurring provider spend is approved.
 - English wording in test fixtures that previously used Spanish sample text. Cases whose point is non-ASCII or Latin American data keep that data.
+- Development dependency pins for `certifi`, `filelock`, `mcp`, `opentelemetry-api`, `opentelemetry-sdk`, and `setuptools` move to versions that clear the current `pip-audit` gate. No new runtime dependency was added.
+- `generate_text`, `stream_text`, and agent runs reject non-positive `max_steps` values and unrecognized strings with `ValidationError` before a provider call. `None` and positive integers keep the previous ceiling.
 
 ### Fixed
 

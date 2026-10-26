@@ -537,6 +537,22 @@ _MODULE_EXPORTS = {
         "xai_x_search_tool",
     ),
     "providers.zai": ("create_zai",),
+    "providers.openai_compatible": (
+        "create_groq_compatible",
+        "create_mistral_compatible",
+        "openai_compatible",
+    ),
+    "decisions": ("create_gateway_decide", "create_openai_decision_model"),
+    "egress": ("EgressDeniedError", "create_egress_policy", "enforce_egress_policy", "resolve_egress_target"),
+    "latam_redaction": ("create_latam_sensitive_data_policy",),
+    "loop_controls": ("has_tool_call", "step_count_is"),
+    "model_resolver": (
+        "ModelResolutionError",
+        "clear_registered_model_providers",
+        "create_model_resolver",
+        "register_model_provider",
+        "resolve_language_model",
+    ),
     "providers.openai": (
         "create_openai",
         "openai_apply_patch_tool",

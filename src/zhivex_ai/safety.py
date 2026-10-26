@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -27,6 +28,8 @@ from .types import (
     ToolResultPart,
 )
 
+RedactionReplacement = str | Callable[[str], str]
+
 SafetyPolicyPreset = Literal["permissive", "review_sensitive", "locked_down"]
 ApprovalPolicyPreset = SafetyPolicyPreset
 
@@ -34,7 +37,7 @@ ApprovalPolicyPreset = SafetyPolicyPreset
 @dataclass(slots=True)
 class RedactionRule:
     pattern: str | re.Pattern[str]
-    replacement: str = "[REDACTED]"
+    replacement: RedactionReplacement = "[REDACTED]"
     name: str | None = None
 
 
@@ -45,7 +48,15 @@ class RedactionPolicy:
     def redact_text(self, text: str) -> str:
         redacted = text
         for rule in self.rules:
-            redacted = re.sub(rule.pattern, rule.replacement, redacted)
+            replacement = rule.replacement
+            if callable(replacement):
+                redacted = re.sub(
+                    rule.pattern,
+                    lambda match, repl=replacement: repl(match.group(0)),
+                    redacted,
+                )
+            else:
+                redacted = re.sub(rule.pattern, replacement, redacted)
         return redacted
 
     def redact_json(self, value: JsonValue | None) -> JsonValue | None:

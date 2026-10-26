@@ -631,8 +631,10 @@ class MockLanguageModel:
         )
         self._responses = list(responses) if responses is not None else [GenerateResult(text="ok", message=create_text_message("assistant", "ok"), finish_reason="stop")]
         self._stream_events = list(stream_events or [])
+        self.calls = 0
 
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        self.calls += 1
         if not self._responses:
             raise RuntimeError("MockLanguageModel has no responses left.")
         return self._responses.pop(0)
