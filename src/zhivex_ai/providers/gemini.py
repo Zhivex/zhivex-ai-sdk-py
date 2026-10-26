@@ -2374,6 +2374,11 @@ class GeminiEmbeddingModel(EmbeddingModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_CAPABILITIES)
 
     async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
+        if self.model_id != "gemini-embedding-2" and any(not isinstance(value, str) for value in values):
+            raise UnsupportedFeatureError(
+                f'Model "gemini/{self.model_id}" does not support multimodal embedding values. '
+                'Use "gemini-embedding-2" for Gemini multimodal embeddings.'
+            )
         config = _embedding_request_options(options)
         task_type = config.get("task_type")
         title = config.get("title")
