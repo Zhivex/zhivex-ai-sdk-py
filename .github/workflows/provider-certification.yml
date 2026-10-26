@@ -26,10 +26,6 @@ on:
         options:
           - full
           - cheap
-  schedule:
-    # WEEKLY LIVE SPEND: Mondays 12:00 UTC runs a one-call OpenAI generation smoke.
-    # Remove this schedule before merge unless recurring provider spend is approved.
-    - cron: "0 12 * * 1"
 
 permissions:
   contents: read
@@ -46,8 +42,8 @@ jobs:
       ZHIVEX_SMOKE_PORTABLE_CERTIFICATION: "1"
       ZHIVEX_SMOKE_META_CERTIFICATION: "1"
       ZHIVEX_SMOKE_SANITIZED_DIAGNOSTICS: "1"
-      ZHIVEX_SMOKE_PROVIDERS: ${{ github.event_name == 'schedule' && 'openai' || inputs.provider }}
-      ZHIVEX_SMOKE_PROFILE: ${{ github.event_name == 'schedule' && 'cheap' || inputs.profile }}
+      ZHIVEX_SMOKE_PROVIDERS: ${{ inputs.provider }}
+      ZHIVEX_SMOKE_PROFILE: ${{ inputs.profile }}
       ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna
       ZHIVEX_SMOKE_ANTHROPIC_MODEL: claude-fable-5-1
       ZHIVEX_SMOKE_AZURE_OPENAI_MODEL: ${{ vars.ZHIVEX_CERT_AZURE_OPENAI_MODEL }}
@@ -193,7 +189,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tier1-${{ github.event_name == 'schedule' && 'openai' || inputs.provider }}-certification
+          name: tier1-${{ inputs.provider }}-certification
           path: |
             dist/checkout-certification.json
             provider-certification-report.json

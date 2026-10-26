@@ -21,6 +21,7 @@ Related documents:
 
 ### Added
 
+- Vertex partner and open-model routes for the MaaS chat IDs that already have a Chat Completions profile: reasoning effort for `gpt-oss-20b`, DeepSeek hybrid `thinking`, GLM `enable_thinking`, and model-defined Grok thinking. E5 embeddings use `/endpoints/openapi/embeddings` and accept text only. `lyria-002`, `multimodalembedding@001`, and `gemini-nano-banana-2.1` stay on the existing media, embedding, and image clients. Claude, Virtual Try-On, and Mistral OCR stay off Gemini `generateContent`. See https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/capabilities/thinking and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models.
 - Claude Haiku 5.5 catalog entry (tiered pricing + Bedrock ID), adaptive/`effort` gates, computer toolset validation, and docs/tests alongside Opus/Sonnet 5.5.
 - Cache-write pricing on `ModelPricing`, OpenAI prompt-cache TTL `30m` and `12h`, and `TokenUsage` cache-read / cache-write counters with `CacheWriteTokensDetails` (`ttl_30m_tokens`, `ttl_12h_tokens`). Thirty-minute writes use the catalog cache-write rate. Twelve-hour writes use 2.5× the uncached input rate. Cost estimates use those counters. See https://developers.openai.com/api/docs/guides/prompt-caching.
 - Gemini 4 Argon (`gemini-4-argon`) on Gemini and Vertex. Reasoning uses `thinkingLevel` `low`, `medium`, or `high` (provider default is medium when omitted). Introductory Standard pricing is $2 / $10 per 1M input / output tokens and $0.10 cached through 2026-11-30; estimates fail closed after that date. Implicit caching only. See https://ai.google.dev/gemini-api/docs/pricing and https://ai.google.dev/gemini-api/docs/thinking.
@@ -37,7 +38,7 @@ Related documents:
 
 ### Changed
 
-- Tier-1 provider certification builds and installs the wheel from the current checkout instead of downloading the published 0.23.0 wheel. A weekly schedule runs a one-call OpenAI generation smoke. **WEEKLY LIVE SPEND:** remove that schedule before merge unless recurring provider spend is approved.
+- Tier-1 provider certification builds and installs the wheel from the current checkout instead of downloading the published 0.23.0 wheel. Manual `workflow_dispatch` still offers the `cheap` one-call profile. The weekly schedule was removed because recurring live provider spend is not approved.
 - English wording in test fixtures that previously used Spanish sample text. Cases whose point is non-ASCII or Latin American data keep that data.
 - Development dependency pins for `certifi`, `filelock`, `mcp`, `opentelemetry-api`, `opentelemetry-sdk`, and `setuptools` move to versions that clear the current `pip-audit` gate. No new runtime dependency was added.
 - `generate_text`, `stream_text`, and agent runs reject non-positive `max_steps` values and unrecognized strings with `ValidationError` before a provider call. `None` and positive integers keep the previous ceiling.

@@ -21,7 +21,7 @@ from ._vertex_native import _request
 from ._vertex_auth import VertexAuth, default_credentials
 from ._vertex_chat import (
     GEMMA_MAAS_MODEL, MISTRAL_VERTEX_MODELS, VertexChatLanguageModel,
-    VERTEX_MAAS_TEXT_MODELS, resolve_maas_model, maas_capabilities,
+    VERTEX_E5_EMBEDDING_MODELS, VERTEX_MAAS_TEXT_MODELS, resolve_maas_model, maas_capabilities,
 )
 from .base import ProviderAdapter, ProviderBundle, create_provider_bundle
 from ._payload import drop_none
@@ -307,6 +307,135 @@ class VertexEmbeddingModel(EmbeddingModel):
         if not isinstance(predictions, list) or len(predictions) != len(values):
             raise ValidationError("Vertex embedding response cardinality does not match its inputs.")
         return EmbedResult(embeddings=[self._vector(prediction.get("embeddings", {}).get("values")) for prediction in predictions], raw_response=payload)
+
+
+_E5_TRANSPORT_KEYS = frozenset({
+    "timeout_ms", "timeoutMs", "max_retries", "maxRetries",
+    "retry_backoff_ms", "retryBackoffMs",
+})
+_E5_CAPABILITIES = ModelCapabilities(
+    streaming=False, tools=False, structured_output=False, json_mode=False,
+    tool_choice=False, parallel_tool_calls=False, vision=False, files=False,
+    audio_input=False, audio_output=False, embeddings=True, reasoning=False,
+    web_search=False,
+)
+
+
+def _resolve_e5_model(model_id: str) -> str | None:
+    for candidate in VERTEX_E5_EMBEDDING_MODELS:
+        if model_id in {candidate, candidate.split("/", 1)[1]}:
+            return candidate
+    return None
+
+
+def _reject_non_gemini_language_model(model_id: str) -> None:
+    """Keep publisher-specific Vertex IDs off the Gemini generateContent route."""
+    if model_id.startswith("claude-"):
+        raise UnsupportedFeatureError(
+            "Claude on Vertex is not served by Gemini generateContent. "
+            "Use model_garden().anthropic_messages() until a portable Claude language model is available."
+        )
+    if "virtual-try-on" in model_id:
+        raise UnsupportedFeatureError(
+            "Virtual Try-On requires person and product images on the predict API, not a language model."
+        )
+    if "mistral-ocr" in model_id:
+        raise UnsupportedFeatureError(
+            "Mistral OCR requires the document extraction API, not a chat model. Use model_garden().mistral_ocr()."
+        )
+    if model_id.startswith("intfloat/") or model_id.startswith("multilingual-e5-"):
+        raise UnsupportedFeatureError(
+            "Vertex E5 models are embeddings. Use embedding_model(), not a language model."
+        )
+
+
+@dataclass(slots=True)
+class VertexOpenEmbeddingModel(EmbeddingModel):
+    """OpenAI-compatible E5 embeddings on the Vertex openapi endpoint.
+
+    https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/use-open-models
+    """
+
+    provider: str
+    model_id: str
+    base_url: str
+    fetch: Fetcher
+    capabilities: ModelCapabilities = field(default_factory=lambda: _E5_CAPABILITIES)
+
+    async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
+        if isinstance(options, dict):
+            if any(key not in _E5_TRANSPORT_KEYS for key in options):
+                raise UnsupportedFeatureError(
+                    "Vertex E5 embeddings do not expose Google embedding controls or configurable dimensions."
+                )
+        elif options is not None and any(
+            _provider_option_value(options, name) is not None
+            for name in (
+                "task_type", "taskType", "title", "titles", "task_types", "taskTypes",
+                "output_dimensionality", "outputDimensionality", "auto_truncate", "autoTruncate",
+                "provider_options",
+            )
+        ):
+            raise UnsupportedFeatureError(
+                "Vertex E5 embeddings do not expose Google embedding controls or configurable dimensions."
+            )
+        if any(not isinstance(value, str) for value in values):
+            raise UnsupportedFeatureError("Vertex E5 embeddings require text values.")
+        if not values:
+            return EmbedResult(embeddings=[])
+        response = await with_retry(
+            lambda: self.fetch(
+                f"{self.base_url}/endpoints/openapi/embeddings",
+                headers={"content-type": "application/json"},
+                json_body={"model": self.model_id, "input": list(values), "encoding_format": "float"},
+                timeout_ms=_provider_option_value(options, "timeout_ms", "timeoutMs"),
+            ),
+            max_retries=_provider_option_value(options, "max_retries", "maxRetries") or 0,
+            retry_backoff_ms=_provider_option_value(options, "retry_backoff_ms", "retryBackoffMs") or 250,
+        )
+        if response.status_code >= 400:
+            raise ProviderHTTPError(
+                f"Vertex E5 embeddings failed with status {response.status_code}.",
+                response.status_code,
+                response_body=await response.text(),
+            )
+        payload = await response.json()
+        data = payload.get("data")
+        if not isinstance(data, list) or len(data) != len(values):
+            raise ValidationError(
+                "Vertex E5 returned a different number of embedding vectors than input values."
+            )
+        indexed: dict[int, list[float]] = {}
+        dimensions: int | None = None
+        for item in data:
+            if not isinstance(item, dict):
+                raise ValidationError("Vertex E5 returned invalid or duplicate embedding indices.")
+            index = item.get("index")
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0 or index >= len(values) or index in indexed:
+                raise ValidationError("Vertex E5 returned invalid or duplicate embedding indices.")
+            vector = item.get("embedding")
+            if (
+                not isinstance(vector, list)
+                or not vector
+                or any(isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) for number in vector)
+            ):
+                raise ValidationError("Vertex returned an invalid embedding vector.")
+            if dimensions is None:
+                dimensions = len(vector)
+            elif len(vector) != dimensions:
+                raise ValidationError("Vertex returned inconsistent embedding dimensions.")
+            indexed[index] = vector
+        if len(indexed) != len(values):
+            raise ValidationError("Vertex E5 returned invalid or duplicate embedding indices.")
+        tokens = (payload.get("usage") or {}).get("prompt_tokens") if isinstance(payload.get("usage"), dict) else None
+        if tokens is not None and (isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0):
+            raise ValidationError("Vertex E5 returned invalid token usage.")
+        usage = TokenUsage(input_tokens=tokens) if tokens is not None else None
+        return EmbedResult(
+            embeddings=[indexed[index] for index in range(len(values))],
+            usage=usage,
+            raw_response=payload,
+        )
 
 
 def create_vertex(
@@ -672,6 +801,7 @@ def create_vertex(
 
     def language_model(model_id: str) -> VertexChatLanguageModel | VertexLanguageModel:
         model_id = resolve_maas_model(model_id)
+        _reject_non_gemini_language_model(model_id)
         if model_id in MISTRAL_VERTEX_MODELS:
             if express:
                 raise ConfigurationError("Mistral requires a standard Vertex project configuration.")
@@ -696,6 +826,7 @@ def create_vertex(
         )
 
     def grounded_language_model(model_id: str) -> VertexGroundedLanguageModel:
+        _reject_non_gemini_language_model(resolve_maas_model(model_id))
         if model_id == "gemini-3.8-flash-cyber":
             raise UnsupportedFeatureError("Gemini 3.8 Flash Cyber does not support grounding.")
         return VertexGroundedLanguageModel(
@@ -703,16 +834,29 @@ def create_vertex(
             base_url=resolved_base.rstrip("/"), fetch=wrapped_fetch,
         )
 
-    native = ProviderAdapter(
-        name="vertex",
-        language_model_factory=language_model,
-        embedding_model_factory=lambda model_id: VertexEmbeddingModel(
+    def embedding_model(model_id: str) -> VertexEmbeddingModel | VertexOpenEmbeddingModel:
+        canonical = _resolve_e5_model(model_id)
+        if canonical is not None:
+            if express:
+                raise ConfigurationError("MaaS requires a standard Vertex project configuration.")
+            return VertexOpenEmbeddingModel(
+                provider="vertex",
+                model_id=canonical,
+                base_url=resolved_base.rstrip("/"),
+                fetch=wrapped_fetch,
+            )
+        return VertexEmbeddingModel(
             provider="vertex",
             model_id=model_id,
             base_url=resolved_base.rstrip("/"),
             access_token=resolved_token or "",
             fetch=wrapped_fetch,
-        ),
+        )
+
+    native = ProviderAdapter(
+        name="vertex",
+        language_model_factory=language_model,
+        embedding_model_factory=embedding_model,
         speech_model_factory=lambda model_id: VertexSpeechModel(
             provider="vertex",
             model_id=model_id,

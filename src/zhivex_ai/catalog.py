@@ -4,7 +4,7 @@ import math
 from copy import deepcopy
 from dataclasses import replace, dataclass
 from datetime import date
-from typing import Iterable, Literal, Sequence
+from typing import Iterable, Literal, Sequence, cast
 
 from .errors import ValidationError
 from .types import ModelCapabilities
@@ -704,6 +704,164 @@ default_model_catalog = create_model_catalog(
                 json_mode=True, tool_choice=True, vision=True),
             source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/google/gemma-4-26b-a4b-it",),
             support_evidence="offline-contract", verified_at="2026-09-19",
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="retired", regions=("global",),
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                replacement_model_id=replacement,
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/capabilities/thinking",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id, recommended, capabilities, replacement in (
+                (
+                    "meta/llama-3.3-70b-instruct-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "meta/llama-4-maverick-17b-128e-instruct-maas",
+                ),
+                (
+                    "qwen/qwen3-235b-a22b-instruct-2507-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "qwen/qwen3-coder-480b-a35b-instruct-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "deepseek-ai/deepseek-r1-0528-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "deepseek-ai/deepseek-v4.1-flash-maas",
+                ),
+                (
+                    "qwen/qwen3-next-80b-a3b-thinking-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "openai/gpt-oss-20b-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "openai/gpt-oss-120b-maas",
+                ),
+                (
+                    "deepseek-ai/deepseek-v3.1-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "deepseek-ai/deepseek-v4.1-flash-maas",
+                ),
+                (
+                    "zai-org/glm-4.7-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "zai-org/glm-5.2-maas",
+                ),
+            )
+        ),
+        _entry(
+            "vertex", "xai/grok-4.1-fast-non-reasoning", aliases=("grok-4.1-fast-non-reasoning",),
+            availability="retired", regions=("global",),
+            recommended_for=("chat", "vision", "tools"),
+            capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True),
+            replacement_model_id="xai/grok-4.6",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok/grok-4-1-fast",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "xai/grok-4.1-fast-reasoning", aliases=("grok-4.1-fast-reasoning",),
+            availability="retired", regions=("global",),
+            recommended_for=("chat", "reasoning", "vision", "tools"),
+            capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True, reasoning=True),
+            replacement_model_id="xai/grok-4.6",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok/grok-4-1-fast",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "deepseek-ai/deepseek-ocr-maas", aliases=("deepseek-ocr-maas",),
+            availability="retired", regions=("global",),
+            recommended_for=("vision",),
+            capabilities=_capabilities(streaming=True, vision=True),
+            replacement_model_id="deepseek-ai/deepseek-v4.1-flash-maas",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "deepseek-ai/deepseek-v4.1-flash-maas", aliases=("deepseek-v4.1-flash-maas",),
+            availability="preview", regions=("global",),
+            recommended_for=("chat",),
+            capabilities=_capabilities(streaming=True),
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash",),
+            support_evidence="offline-contract",
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="preview", regions=("global",),
+                recommended_for=("chat", "vision", "tools"),
+                capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True),
+                source_urls=(source,),
+                support_evidence="offline-contract",
+            )
+            for model_id, source in (
+                ("meta/llama-4-maverick-17b-128e-instruct-maas", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/llama/llama4-maverick"),
+                ("meta/llama-4-scout-17b-16e-instruct-maas", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/llama/llama4-scout"),
+                ("xai/grok-4.20-non-reasoning", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok"),
+            )
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="preview", regions=("global",),
+                recommended_for=("chat", "reasoning", "vision", "tools"),
+                capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True, reasoning=True),
+                source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok",),
+                support_evidence="offline-contract",
+            )
+            for model_id in ("xai/grok-4.6", "xai/grok-4.3", "xai/grok-4.20-reasoning")
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                api_surface="embedding", availability="retired", regions=("global",),
+                recommended_for=("embedding", "retrieval"), capabilities=_EMBEDDING,
+                replacement_model_id="gemini-embedding-2",
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/use-open-models",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id in (
+                "intfloat/multilingual-e5-small-maas",
+                "intfloat/multilingual-e5-large-instruct-maas",
+            )
+        ),
+        _entry(
+            "vertex", "multimodalembedding@001", api_surface="embedding",
+            availability="stable", regions=("us-central1",),
+            recommended_for=("embedding", "vision"), capabilities=_EMBEDDING,
+            source_urls=(
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/multimodal-embeddings-api",
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",
+            ),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "lyria-002", api_surface="media",
+            availability="stable", regions=("us-central1",),
+            recommended_for=("audio",), capabilities=_capabilities(audio_output=True),
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "gemini-nano-banana-2.1", api_surface="image",
+            availability="stable", regions=("global",),
+            recommended_for=("vision",), capabilities=_IMAGE,
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",),
+            support_evidence="offline-contract",
         ),
         _entry(
             "openai", "gpt-live-1", api_surface="live",
