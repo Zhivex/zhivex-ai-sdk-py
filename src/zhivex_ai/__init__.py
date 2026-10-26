@@ -529,6 +529,14 @@ _MODULE_EXPORTS = {
     ),
     "providers.kimi": ("KIMI_OFFICIAL_TOOL_URIS", "KimiFormulaClient", "create_kimi", "kimi_formula_toolset"),
     "providers.ollama": ("create_ollama",),
+    "providers.xai": (
+        "create_xai",
+        "xai_code_execution_tool",
+        "xai_file_search_tool",
+        "xai_web_search_tool",
+        "xai_x_search_tool",
+    ),
+    "providers.zai": ("create_zai",),
     "providers.openai": (
         "create_openai",
         "openai_apply_patch_tool",

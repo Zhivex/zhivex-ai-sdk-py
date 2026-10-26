@@ -443,6 +443,18 @@ from .providers.vllm import (
     create_vllm as create_vllm,
 )
 
+from .providers.xai import (
+    create_xai as create_xai,
+    xai_code_execution_tool as xai_code_execution_tool,
+    xai_file_search_tool as xai_file_search_tool,
+    xai_web_search_tool as xai_web_search_tool,
+    xai_x_search_tool as xai_x_search_tool,
+)
+
+from .providers.zai import (
+    create_zai as create_zai,
+)
+
 from .realtime import (
     open_websocket_connection as open_websocket_connection,
 )

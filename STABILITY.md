@@ -138,6 +138,7 @@ These areas are available for evaluation, but they should not be treated as a lo
 - Provider-native GPT-Live and model-specific Gemini Live extensions outside the normalized Stable runtime
 - Raw provider payload escape hatches that do not map cleanly to the hosted-tool beta surface
 - Non-portable provider factories currently marked as `native-only` or `compatibility` in the support matrix: `create_bedrock`, `create_openrouter`, and `create_ollama`
+- Experimental xAI and Z.ai factories: `create_xai`, `create_zai`, `xai_web_search_tool`, `xai_x_search_tool`, `xai_code_execution_tool`, and `xai_file_search_tool`. These are not tier-1 certification targets.
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate usage behind their own service layer before depending on them.
 

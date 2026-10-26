@@ -85,9 +85,15 @@ class NamespacedApiTests(unittest.TestCase):
                 "create_bedrock",
                 "create_ollama",
                 "create_openrouter",
+                "create_xai",
+                "create_zai",
                 "openai_local_shell_tool",
                 "openai_shell_environment",
                 "openai_shell_tool",
+                "xai_code_execution_tool",
+                "xai_file_search_tool",
+                "xai_web_search_tool",
+                "xai_x_search_tool",
             },
         )
         self.assertEqual(

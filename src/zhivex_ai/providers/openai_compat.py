@@ -874,7 +874,15 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         **(_qwen_reasoning_options(model_id, input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
-    if provider_name == "openai":
+    if provider_name == "openai" or (
+        provider_name == "azure-openai"
+        and any(
+            model_id == name or model_id.startswith(name + "-")
+            for name in ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
+        )
+    ):
+        # Azure Foundry serves the same GPT-6 Responses families as OpenAI.
+        # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
         _validate_openai_response_body(body)
     if provider_name == "azure-openai" and model_id.startswith("gpt-6-astra"):
         unsupported = {key for key in ("temperature", "top_p", "top_logprobs", "prompt_cache_retention") if body.get(key) is not None}

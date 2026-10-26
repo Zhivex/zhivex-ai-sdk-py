@@ -1150,6 +1150,85 @@ default_model_catalog = create_model_catalog(
             source_urls=_AZURE_MODELS,
             capabilities=_EMBEDDING,
         ),
+        # Azure Foundry sells the same GPT-6 Responses families as OpenAI. The
+        # adapter applies the OpenAI family gates for these deployment names.
+        # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
+        _entry(
+            "azure-openai",
+            "gpt-6.1-sol",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-6-sol",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-6-luna",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5.4-pro",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5-mini",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5-nano",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini-tts",
+            recommended_for=("audio",),
+            api_surface="speech",
+            source_urls=_AZURE_MODELS,
+            capabilities=_SPEECH,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini-transcribe",
+            recommended_for=("audio",),
+            api_surface="transcription",
+            source_urls=_AZURE_MODELS,
+            capabilities=_TRANSCRIPTION,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini",
+            recommended_for=("chat", "tools", "speed"),
+            availability="deprecated",
+            source_urls=(
+                "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule",
+            ),
+            capabilities=_OPENAI_LANGUAGE,
+            replacement_model_id="gpt-5.4-mini",
+        ),
         # Anthropic versions remain distinct models; prices retain input/output semantics.
         _entry(
             "anthropic",
@@ -2283,6 +2362,113 @@ default_model_catalog = create_model_catalog(
                 "https://github.com/meta-llama/llama-models/blob/main/models/llama4/MODEL_CARD.md",
             ),
             capabilities=_LOCAL_LANGUAGE,
+        ),
+        # xAI text rates are USD per 1M. Long-context billing starts at 200k
+        # prompt tokens and doubles input, cached input, and output.
+        # https://docs.x.ai/docs/models
+        *(
+            _entry(
+                "xai",
+                model_id,
+                recommended_for=("chat", "reasoning", "tools", "vision"),
+                source_urls=("https://docs.x.ai/docs/models", "https://docs.x.ai/developers/model-capabilities/text/reasoning"),
+                capabilities=_OPENAI_LANGUAGE,
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://docs.x.ai/docs/models",
+                    input_per_1m_tokens=rates[0],
+                    cached_input_per_1m_tokens=rates[1],
+                    output_per_1m_tokens=rates[2],
+                    long_context_threshold_tokens=200_000,
+                    long_context_input_per_1m_tokens=rates[0] * 2,
+                    long_context_output_per_1m_tokens=rates[2] * 2,
+                ),
+            )
+            for model_id, rates in (
+                ("grok-4.7", (2, 0.5, 6)),
+                ("grok-4.6", (2, 0.5, 6)),
+                ("grok-4.5", (2, 0.3, 6)),
+                ("grok-4.3", (1.25, 0.2, 2.5)),
+                ("grok-4.20-0309-reasoning", (1.25, 0.2, 2.5)),
+                ("grok-build-0.1", (1, 0.2, 2)),
+                ("grok-4.20-multi-agent-0309", (1.25, 0.2, 2.5)),
+            )
+        ),
+        _entry(
+            "xai",
+            "grok-4.20-0309-non-reasoning",
+            recommended_for=("chat", "tools", "vision"),
+            source_urls=("https://docs.x.ai/docs/models",),
+            capabilities=replace(_OPENAI_LANGUAGE, reasoning=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.x.ai/docs/models",
+                input_per_1m_tokens=1.25,
+                cached_input_per_1m_tokens=0.2,
+                output_per_1m_tokens=2.5,
+                long_context_threshold_tokens=200_000,
+                long_context_input_per_1m_tokens=2.5,
+                long_context_output_per_1m_tokens=5,
+            ),
+        ),
+        _entry(
+            "xai",
+            "grok-imagine-image-2.0",
+            recommended_for=("vision",),
+            api_surface="image",
+            source_urls=(
+                "https://docs.x.ai/developers/model-capabilities/images/generation",
+                "https://docs.x.ai/docs/models",
+            ),
+            capabilities=_IMAGE,
+        ),
+        _entry(
+            "xai",
+            "grok-imagine-image-quality",
+            recommended_for=("vision",),
+            api_surface="image",
+            availability="deprecated",
+            source_urls=("https://docs.x.ai/developers/migration/imagine-image-quality-nov-2",),
+            capabilities=_IMAGE,
+            replacement_model_id="grok-imagine-image-2.0",
+        ),
+        _entry(
+            "zai",
+            "glm-5.3-flash",
+            recommended_for=("chat", "tools", "reasoning", "vision", "speed"),
+            source_urls=(
+                "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+                "https://docs.z.ai/guides/overview/pricing",
+            ),
+            capabilities=replace(_OPENAI_LANGUAGE, files=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.z.ai/guides/overview/pricing",
+                input_per_1m_tokens=0.15,
+                cached_input_per_1m_tokens=0.03,
+                output_per_1m_tokens=0.5,
+            ),
+        ),
+        _entry(
+            "zai",
+            "glm-5.3",
+            recommended_for=("chat", "tools", "reasoning"),
+            source_urls=("https://docs.z.ai/guides/llm/glm-5.3",),
+            capabilities=replace(_OPENAI_LANGUAGE, vision=False, files=False),
+        ),
+        _entry(
+            "zai",
+            "glm-5.2",
+            recommended_for=("chat", "tools", "reasoning"),
+            source_urls=("https://docs.z.ai/guides/overview/pricing",),
+            capabilities=replace(_OPENAI_LANGUAGE, vision=False, files=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.z.ai/guides/overview/pricing",
+                input_per_1m_tokens=1.4,
+                cached_input_per_1m_tokens=0.26,
+                output_per_1m_tokens=4.4,
+            ),
         ),
     ]
 )

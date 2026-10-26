@@ -198,7 +198,7 @@ class ApiStabilityTests(TestCase):
             self.assertEqual(API_STABILITY[name].level, "beta")
 
     def test_non_portable_provider_factories_are_experimental(self) -> None:
-        factories = {"create_bedrock", "create_ollama", "create_openrouter"}
+        factories = {"create_bedrock", "create_ollama", "create_openrouter", "create_xai", "create_zai"}
 
         self.assertTrue(factories.issubset(EXPERIMENTAL_EXPORTS))
         self.assertFalse(factories & BETA_EXPORTS)

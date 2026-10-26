@@ -1299,6 +1299,8 @@ Native-only or compatibility providers are explicit Experimental imports:
 - `from zhivex_ai.experimental import create_bedrock`
 - `from zhivex_ai.experimental import create_openrouter`
 - `from zhivex_ai.experimental import create_ollama`
+- `from zhivex_ai.experimental import create_xai`
+- `from zhivex_ai.experimental import create_zai`
 
 Every factory now returns a `ProviderBundle`.
 
