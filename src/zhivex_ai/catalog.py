@@ -317,6 +317,13 @@ _META_MODELS = ("https://dev.meta.ai/docs/models",)
 _BEDROCK_MODELS = (
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards-anthropic.html",
 )
+_BEDROCK_PRICING = "https://aws.amazon.com/bedrock/pricing/"
+_BEDROCK_SONNET_55 = "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html"
+_BEDROCK_ADAPTIVE = "https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html"
+_BEDROCK_EXTENDED = "https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html"
+_BEDROCK_CACHE = "https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html"
+_NOVA_THINKING = "https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html"
+_NOVA_CONVERSE = "https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-converse-api.html"
 
 
 def _capabilities(
@@ -457,6 +464,13 @@ _REALTIME = _capabilities(
     realtime_tools=True,
 )
 _VIDEO = _capabilities(vision=True)
+_BEDROCK_CONVERSE = _capabilities(
+    streaming=True,
+    tools=True,
+    tool_choice=True,
+    vision=True,
+    reasoning=True,
+)
 
 
 def _entry(
@@ -2756,6 +2770,58 @@ default_model_catalog = create_model_catalog(
             source_urls=_BEDROCK_MODELS,
             capabilities=_ANTHROPIC_LANGUAGE,
             replacement_model_id="anthropic.claude-haiku-5-5",
+        ),
+        _entry(
+            "bedrock",
+            "anthropic.claude-sonnet-5-5",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            regions=("global",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _BEDROCK_SONNET_55, _BEDROCK_ADAPTIVE, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=2.0,
+                output_per_1m_tokens=10.0,
+                cached_input_per_1m_tokens=0.1,
+                cache_write_per_1m_tokens=2.5,
+            ),
+        ),
+        _entry(
+            "bedrock",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            recommended_for=("speed", "reasoning", "tools", "vision"),
+            regions=("us",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _BEDROCK_EXTENDED, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=1.10,
+                output_per_1m_tokens=5.50,
+                cached_input_per_1m_tokens=0.11,
+                cache_write_per_1m_tokens=1.375,
+            ),
+        ),
+        _entry(
+            "bedrock",
+            "amazon.nova-2-lite-v1:0",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            regions=("global",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _NOVA_THINKING, _NOVA_CONVERSE, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=0.30,
+                output_per_1m_tokens=2.50,
+            ),
         ),
         _entry(
             "bedrock",
