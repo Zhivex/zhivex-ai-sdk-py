@@ -490,14 +490,10 @@ def _sonnet_thinking_fields(input: ModelGenerateInput) -> dict[str, Any]:
     effort = reasoning.effort
     if effort is None:
         raise ValidationError('Claude Sonnet 5.5 reasoning requires reasoning.effort.')
-    if effort == "none":
-        # Sonnet 5.5 cannot fully disable adaptive thinking. Direct Anthropic uses between_tools.
-        # The Bedrock adaptive page's thinking.type "disabled" paragraph is for Sonnet 5 and Opus 5.
-        return {"thinking": {"type": "between_tools"}}
     if effort not in _SONNET_EFFORTS:
         raise UnsupportedFeatureError(
             f'Provider "bedrock" does not support reasoning effort "{effort}" for Claude Sonnet 5.5. '
-            'Supported values are "none", "low", "medium", "high", "xhigh", and "max".'
+            'Supported values are "low", "medium", "high", "xhigh", and "max".'
         )
     return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
 

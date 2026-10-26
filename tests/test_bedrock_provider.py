@@ -219,8 +219,6 @@ class BedrockReasoningModelTests(IsolatedAsyncioTestCase):
             self.assertEqual(fields["thinking"], {"type": "adaptive"})
             self.assertEqual(fields["output_config"], {"effort": effort})
             self.assertEqual(client.payloads[-1]["inferenceConfig"]["temperature"], 0.2)
-        await model.generate(ModelGenerateInput(messages=_user().messages, reasoning=ReasoningConfig(effort="none")))
-        self.assertEqual(client.payloads[-1]["additionalModelRequestFields"], {"thinking": {"type": "between_tools"}})
         await model.generate(_user())
         self.assertNotIn("additionalModelRequestFields", client.payloads[-1])
 
@@ -231,6 +229,14 @@ class BedrockReasoningModelTests(IsolatedAsyncioTestCase):
         self.assertEqual(client.payloads[-1]["modelId"], arn)
         self.assertEqual(client.payloads[-1]["additionalModelRequestFields"]["output_config"]["effort"], "high")
 
+        for model_id in (
+            "anthropic.claude-sonnet-5-5",
+            "eu.anthropic.claude-sonnet-5-5",
+            "arn:aws:bedrock:us-east-1:123:inference-profile/global.anthropic.claude-sonnet-5-5",
+        ):
+            closed = create_bedrock(client=_RejectingClient()).native.language_model(model_id)
+            with self.assertRaisesRegex(UnsupportedFeatureError, 'reasoning effort "none"'):
+                await closed.generate(ModelGenerateInput(messages=_user().messages, reasoning=ReasoningConfig(effort="none")))
         rejecting = create_bedrock(client=_RejectingClient()).native.language_model("anthropic.claude-sonnet-5-5")
         with self.assertRaisesRegex(UnsupportedFeatureError, "budget_tokens"):
             await rejecting.generate(ModelGenerateInput(messages=_user().messages, reasoning=ReasoningConfig(budget_tokens=2048)))
