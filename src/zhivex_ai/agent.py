@@ -737,6 +737,15 @@ class AgentRuntime:
                 result_attributes["gen_ai.usage.input_tokens"] = result.usage.input_tokens
             if result.usage.output_tokens is not None:
                 result_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
+            if result.usage.cached_input_tokens is not None:
+                result_attributes["gen_ai.usage.cached_input_tokens"] = result.usage.cached_input_tokens
+            if result.usage.cache_write_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_tokens"] = result.usage.cache_write_tokens
+            details = result.usage.cache_write_tokens_details
+            if details is not None and details.ttl_30m_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_ttl_30m_tokens"] = details.ttl_30m_tokens
+            if details is not None and details.ttl_12h_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_ttl_12h_tokens"] = details.ttl_12h_tokens
             if result.usage.total_tokens is not None:
                 result_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
         self._finish_span(root_span, attributes=result_attributes)
@@ -1675,6 +1684,15 @@ class AgentRuntime:
                 model_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
             if result.usage.total_tokens is not None:
                 model_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
+            if result.usage.cached_input_tokens is not None:
+                model_attributes["gen_ai.usage.cached_input_tokens"] = result.usage.cached_input_tokens
+            if result.usage.cache_write_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_tokens"] = result.usage.cache_write_tokens
+            details = result.usage.cache_write_tokens_details
+            if details is not None and details.ttl_30m_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_ttl_30m_tokens"] = details.ttl_30m_tokens
+            if details is not None and details.ttl_12h_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_ttl_12h_tokens"] = details.ttl_12h_tokens
         self._finish_span(span, attributes=model_attributes)
 
         if not emitted_live_tool_events:

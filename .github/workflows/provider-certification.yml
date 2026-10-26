@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: Tier-1 target to certify from the exact 0.23.0 wheel
+        description: Tier-1 target to certify from the wheel built in this checkout
         required: true
         type: choice
         options:
@@ -18,6 +18,18 @@ on:
           - deepseek
           - meta
           - vllm
+      profile:
+        description: full runs the reviewed operation set; cheap runs one generation call
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - cheap
+  schedule:
+    # WEEKLY LIVE SPEND: Mondays 12:00 UTC runs a one-call OpenAI generation smoke.
+    # Remove this schedule before merge unless recurring provider spend is approved.
+    - cron: "0 12 * * 1"
 
 permissions:
   contents: read
@@ -34,8 +46,8 @@ jobs:
       ZHIVEX_SMOKE_PORTABLE_CERTIFICATION: "1"
       ZHIVEX_SMOKE_META_CERTIFICATION: "1"
       ZHIVEX_SMOKE_SANITIZED_DIAGNOSTICS: "1"
-      ZHIVEX_SMOKE_PROVIDERS: ${{ inputs.provider }}
-      ZHIVEX_SMOKE_ARTIFACT_PATH: dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl
+      ZHIVEX_SMOKE_PROVIDERS: ${{ github.event_name == 'schedule' && 'openai' || inputs.provider }}
+      ZHIVEX_SMOKE_PROFILE: ${{ github.event_name == 'schedule' && 'cheap' || inputs.profile }}
       ZHIVEX_SMOKE_OPENAI_MODEL: gpt-5.6-luna
       ZHIVEX_SMOKE_ANTHROPIC_MODEL: claude-fable-5-1
       ZHIVEX_SMOKE_AZURE_OPENAI_MODEL: ${{ vars.ZHIVEX_CERT_AZURE_OPENAI_MODEL }}
@@ -72,46 +84,107 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Select the reviewed target policy
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.4"
+
+      - name: Build the checkout wheel
+        run: uv build
+
+      - name: Install the checkout wheel
+        run: |
+          uv venv /tmp/cert
+          uv pip install --python /tmp/cert/bin/python dist/zhivex_ai_sdk-*-py3-none-any.whl
+
+      - name: Write checkout certification policy
         id: target
         shell: bash
         run: |
-          case "$ZHIVEX_SMOKE_PROVIDERS" in
-            qwen|kimi|deepseek|meta|vllm) cohort="hu8" ;;
-            openai|anthropic|azure-openai|gemini|vertex) cohort="hu7" ;;
-            *) exit 2 ;;
-          esac
-          case "$ZHIVEX_SMOKE_PROVIDERS" in
-            vllm) target_id="vllm-deployment" ;;
-            *) target_id="${ZHIVEX_SMOKE_PROVIDERS}-standard" ;;
-          esac
-          policy="docs/releases/0.23.0-${cohort}-${ZHIVEX_SMOKE_PROVIDERS}-smoke-policy.json"
-          evidence="docs/releases/0.23.0-${cohort}-${ZHIVEX_SMOKE_PROVIDERS}-certification.json"
-          test -f "$policy"
-          rm -f "$evidence"
-          echo "ZHIVEX_RELEASE_SMOKE_POLICY=$policy" >> "$GITHUB_ENV"
-          echo "ZHIVEX_SMOKE_EVIDENCE_PATH=$evidence" >> "$GITHUB_ENV"
-          echo "target_id=$target_id" >> "$GITHUB_OUTPUT"
-          echo "evidence=$evidence" >> "$GITHUB_OUTPUT"
+          /tmp/cert/bin/python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
 
-      - name: Download the exact published wheel
-        run: >-
-          python -m pip download --disable-pip-version-check --no-deps --only-binary=:all:
-          zhivex-ai-sdk==0.23.0 -d dist
+          provider = os.environ["ZHIVEX_SMOKE_PROVIDERS"]
+          profile = os.environ.get("ZHIVEX_SMOKE_PROFILE") or "full"
+          wheels = sorted(Path("dist").glob("zhivex_ai_sdk-*-py3-none-any.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected one wheel, found {wheels}")
+          wheel = wheels[0]
+          version = wheel.name.removeprefix("zhivex_ai_sdk-").removesuffix("-py3-none-any.whl")
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          policy = json.loads(Path("docs/provider-certification-policy.json").read_text("utf-8"))
+          if provider == "vllm":
+              target_id = "vllm-deployment"
+          else:
+              target_id = f"{provider}-standard"
+          targets = {item["id"]: item for item in policy["targets"]}
+          if target_id not in targets:
+              raise SystemExit(f"unknown target {target_id}")
+          target = targets[target_id]
+          if profile == "cheap":
+              target["required_operations"] = ["generation"]
+              target.pop("unsupported_operations", None)
+          policy["expected_artifact"] = {
+              "package_version": version,
+              "source_revision": revision,
+              "sha256": digest,
+          }
+          policy["evidence_files"] = ["dist/checkout-certification.json"]
+          Path("dist").mkdir(exist_ok=True)
+          Path("dist/checkout-certification-policy.json").write_text(
+              json.dumps(policy, indent=2) + "\n", "utf-8"
+          )
+          requirement = {
+              "operations": list(target["required_operations"]),
+          }
+          unsupported = target.get("unsupported_operations") or []
+          if unsupported and profile != "cheap":
+              requirement["unsupported_operations"] = list(unsupported)
+          expected_model = target.get("expected_model")
+          if isinstance(expected_model, str) and expected_model:
+              requirement["model"] = expected_model
+          smoke = {
+              "schema_version": 1,
+              "package_version": version,
+              "artifact_sha256": digest,
+              "require_artifact_sha256": True,
+              "require_installed_package": True,
+              "source_revision": revision,
+              "required_providers": {provider: requirement},
+          }
+          Path("dist/checkout-smoke-policy.json").write_text(
+              json.dumps(smoke, indent=2) + "\n", "utf-8"
+          )
+          env_path = Path(os.environ["GITHUB_ENV"])
+          extra_env = (
+              "ZHIVEX_RELEASE_SMOKE_POLICY=dist/checkout-smoke-policy.json\n"
+              + f"ZHIVEX_SMOKE_ARTIFACT_PATH={wheel.as_posix()}\n"
+              + "ZHIVEX_SMOKE_EVIDENCE_PATH=dist/checkout-certification.json\n"
+          )
+          if profile == "cheap":
+              extra_env += "ZHIVEX_SMOKE_AGENTS=0\nZHIVEX_SMOKE_PORTABLE_CERTIFICATION=0\n"
+          env_path.write_text(env_path.read_text("utf-8") + extra_env, "utf-8")
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          output.write_text(
+              output.read_text("utf-8") + f"target_id={target_id}\n",
+              "utf-8",
+          )
+          PY
 
-      - name: Verify and install the exact wheel
-        run: |
-          python -c 'import hashlib, pathlib; p=pathlib.Path("dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl"); expected="ccf02e9727edbfbd9bb4019efcfe646b21c31e97d384037ed24b723e1662a464"; observed=hashlib.sha256(p.read_bytes()).hexdigest(); assert observed == expected, "wheel SHA256 mismatch"'
-          python -m pip install --disable-pip-version-check dist/zhivex_ai_sdk-0.23.0-py3-none-any.whl
-
-      - name: Run bounded exact-artifact certification
-        run: python scripts/run_live_smoke.py
+      - name: Run bounded checkout certification
+        run: /tmp/cert/bin/python scripts/run_live_smoke.py
 
       - name: Validate successful certification evidence
         if: ${{ always() }}
         run: >-
-          python scripts/verify_provider_certification.py
-          --evidence "${{ steps.target.outputs.evidence }}"
+          /tmp/cert/bin/python scripts/verify_provider_certification.py
+          --policy dist/checkout-certification-policy.json
+          --evidence dist/checkout-certification.json
           --check-schema
           --require-target "${{ steps.target.outputs.target_id }}"
           --report provider-certification-report.json
@@ -120,9 +193,9 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tier1-${{ inputs.provider }}-certification
+          name: tier1-${{ github.event_name == 'schedule' && 'openai' || inputs.provider }}-certification
           path: |
-            ${{ steps.target.outputs.evidence }}
+            dist/checkout-certification.json
             provider-certification-report.json
           if-no-files-found: warn
           retention-days: 30

@@ -602,6 +602,7 @@ _MODULE_EXPORTS = {
         "AnyToolDefinition",
         "AudioFrame",
         "AudioInput",
+        "CacheWriteTokensDetails",
         "CachedContent",
         "CachedContentListResult",
         "CachedContentsClient",

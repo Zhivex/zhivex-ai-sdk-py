@@ -224,9 +224,21 @@ def _usage(usage: TokenUsage | None) -> dict[str, JsonValue]:
         if usage and usage.total_tokens is not None
         else input_tokens + output_tokens
     )
+    cached_tokens = usage.cached_input_tokens if usage and usage.cached_input_tokens is not None else 0
+    input_details: dict[str, JsonValue] = {"cached_tokens": cached_tokens}
+    if usage and usage.cache_write_tokens is not None:
+        input_details["cache_write_tokens"] = usage.cache_write_tokens
+    if usage and usage.cache_write_tokens_details is not None:
+        split: dict[str, JsonValue] = {}
+        if usage.cache_write_tokens_details.ttl_30m_tokens is not None:
+            split["ttl_30m_tokens"] = usage.cache_write_tokens_details.ttl_30m_tokens
+        if usage.cache_write_tokens_details.ttl_12h_tokens is not None:
+            split["ttl_12h_tokens"] = usage.cache_write_tokens_details.ttl_12h_tokens
+        if split:
+            input_details["cache_write_tokens_details"] = split
     return {
         "input_tokens": input_tokens,
-        "input_tokens_details": {"cached_tokens": 0},
+        "input_tokens_details": input_details,
         "output_tokens": output_tokens,
         "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": total_tokens,

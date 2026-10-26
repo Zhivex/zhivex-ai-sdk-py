@@ -523,6 +523,7 @@ from .types import (
     AzureOpenAIProviderData as AzureOpenAIProviderData,
     AzureOpenAIResponseReference as AzureOpenAIResponseReference,
     BatchesClient as BatchesClient,
+    CacheWriteTokensDetails as CacheWriteTokensDetails,
     CachedContent as CachedContent,
     CachedContentListResult as CachedContentListResult,
     CachedContentsClient as CachedContentsClient,

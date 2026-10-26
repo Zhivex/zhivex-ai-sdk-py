@@ -54,7 +54,7 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generate_object`, `stream_object`
 - Grounded text: `generate_grounded_text`
 - Embeddings: `embed`, `embed_many`, `embed_content`, `embed_content_many`
-- Portable foundation contracts: `LanguageModel`, `GroundedLanguageModel`, `EmbeddingModel`, `ModelMessage`, `GenerateTextOutput`, `GenerateObjectOutput`, `GenerateGroundedTextOutput`, `StreamTextResult`, `StreamObjectResult`, `StreamEvent`, `EmbedOutput`, `EmbeddingContent`, `TokenUsage`, `FinishReason`, `JsonValue`
+- Portable foundation contracts: `LanguageModel`, `GroundedLanguageModel`, `EmbeddingModel`, `ModelMessage`, `GenerateTextOutput`, `GenerateObjectOutput`, `GenerateGroundedTextOutput`, `StreamTextResult`, `StreamObjectResult`, `StreamEvent`, `EmbedOutput`, `EmbeddingContent`, `TokenUsage`, `CacheWriteTokensDetails`, `FinishReason`, `JsonValue`
 - Agent runtime: `Agent`, `AgentContext`, `AgentSession`, `AgentRuntime`, `AgentRegistry`, `AgentRunRequest`, `AgentRunResult`, `AgentStreamResult`, `AgentHandoff`, `run_agent`, `stream_agent`, `resume_agent`, `resume_agent_run`, `handoff_to`, `create_agent_session`, `load_agent_session`
 - Agent result contracts: `AgentTrace`, `AgentCheckpoint`, `ToolCall`
 - Agent extension contracts: `AgentHooks`, `AgentMiddleware`, `AgentMiddlewareNext`, `AgentObserver`, `DynamicInstructions`

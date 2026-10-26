@@ -267,10 +267,13 @@ def _fail_resume_claim_state(
 def _usage_from_payload(payload: Any) -> TokenUsage | None:
     if not isinstance(payload, dict):
         return None
+    from .cache_usage import cache_usage_kwargs
+
     return TokenUsage(
         input_tokens=payload.get("input_tokens"),
         output_tokens=payload.get("output_tokens"),
         total_tokens=payload.get("total_tokens"),
+        **cache_usage_kwargs(payload),
     )
 
 

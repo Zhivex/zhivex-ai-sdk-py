@@ -280,15 +280,45 @@ def _map_file_part(part: FilePart) -> dict[str, Any]:
     return payload
 
 
-def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
+def _explicit_prompt_cache_breakpoint(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValidationError("OpenAI prompt cache breakpoint must be an object.")
+    ttl = value.get("ttl")
+    if ttl is not None and ttl not in {"30m", "12h"}:
+        raise ValidationError('OpenAI prompt cache breakpoint ttl must be "30m" or "12h".')
+    payload = {"mode": "explicit"}
+    if ttl in {"30m", "12h"}:
+        payload["ttl"] = ttl
+    return payload
+
+
+def _prompt_cache_breakpoint_fields(part: Any) -> dict[str, Any]:
+    metadata = getattr(part, "provider_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return {}
+    openai_metadata = metadata.get("openai")
+    source = openai_metadata if isinstance(openai_metadata, dict) else metadata
+    breakpoint = source.get("prompt_cache_breakpoint")
+    if not isinstance(breakpoint, dict):
+        return {}
+    return {"prompt_cache_breakpoint": _explicit_prompt_cache_breakpoint(breakpoint)}
+
+
+def _map_message_content(message: ModelMessage, provider_name: str = "") -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     for part in message.parts:
+        block: dict[str, Any] | None = None
         if part.type == "text":
-            content.append({"type": "output_text" if message.role == "assistant" else "input_text", "text": part.text})
+            block = {"type": "output_text" if message.role == "assistant" else "input_text", "text": part.text}
         elif part.type == "image":
-            content.append({"type": "input_image", "image_url": part.image})
+            block = {"type": "input_image", "image_url": part.image}
         elif part.type == "file":
-            content.append(_map_file_part(part))
+            block = _map_file_part(part)
+        if block is None:
+            continue
+        if provider_name == "openai":
+            block.update(_prompt_cache_breakpoint_fields(part))
+        content.append(block)
     return content
 
 
@@ -400,9 +430,9 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
                     or isinstance(part, ToolCallPart) and part.tool_call.provider_metadata.get("openai_multi_agent_item")
                 )
             ]
-            content = _map_message_content(ModelMessage(role=message.role, parts=ordinary_parts))
+            content = _map_message_content(ModelMessage(role=message.role, parts=ordinary_parts), provider_name)
         else:
-            content = _map_message_content(message)
+            content = _map_message_content(message, provider_name)
         if content:
             items.append(
                 {
@@ -765,6 +795,13 @@ def _validate_qwen_responses_tools(
 
 
 def _validate_openai_response_body(body: dict[str, Any]) -> None:
+    cache_options = body.get("prompt_cache_options")
+    if cache_options is not None:
+        if not isinstance(cache_options, dict):
+            raise ValidationError("OpenAI prompt_cache_options must be an object.")
+        ttl = cache_options.get("ttl")
+        if ttl is not None and ttl not in {"30m", "12h"}:
+            raise ValidationError('OpenAI prompt_cache_options.ttl must be "30m" or "12h".')
     model_id = str(body.get("model") or "").strip().lower()
     family = next((name for name in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
                    if model_id == name or model_id.startswith(name + "-")), None)
@@ -3130,17 +3167,12 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
-        usage = payload.get("usage") or {}
         return GroundedGenerateResult(
             text=payload.get("output_text"),
             sources=_extract_sources(payload),
             finish_reason=normalize_finish_reason(payload.get("status")),
             provider_finish_reason=payload.get("status"),
-            usage=TokenUsage(
-                input_tokens=usage.get("input_tokens"),
-                output_tokens=usage.get("output_tokens"),
-                total_tokens=usage.get("total_tokens"),
-            ),
+            usage=_parse_responses_usage(payload),
             raw_response=payload,
         )
 

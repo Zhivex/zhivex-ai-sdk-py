@@ -482,10 +482,13 @@ def create_agent_evaluation_dataset_from_traces(
 def _usage_to_json(usage: TokenUsage | None) -> dict[str, JsonValue] | None:
     if usage is None:
         return None
+    from .cache_usage import serialized_cache_usage
+
     return {
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.total_tokens,
+        **serialized_cache_usage(usage),
     }
 
 

@@ -79,6 +79,7 @@ STABLE_EXPORTS = frozenset(
         "StreamEvent",
         "StreamObjectResult",
         "StreamTextResult",
+        "CacheWriteTokensDetails",
         "TokenUsage",
         "ToolCall",
         "ToolApprovalRequest",

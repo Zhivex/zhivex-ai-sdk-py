@@ -362,8 +362,8 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
-                    'data: {"choices":[{"delta":{"content":"hola"},"finish_reason":null}]}\n\n'
-                    'data: {"choices":[{"delta":{"content":" mundo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n'
+                    'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'
+                    'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n'
                     "data: [DONE]\n\n"
                 ),
             )
@@ -373,8 +373,8 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
         events = [event async for event in stream.event_stream()]
         result = await stream.collect()
 
-        self.assertEqual([event.text_delta for event in events if event.type == "text-delta"], ["hola", " mundo"])
-        self.assertEqual(result.text, "hola mundo")
+        self.assertEqual([event.text_delta for event in events if event.type == "text-delta"], ["hello", " world"])
+        self.assertEqual(result.text, "hello world")
         self.assertEqual(result.finish_reason, "stop")
 
     async def test_kimi_k3_streaming_preserves_complete_reasoning_across_tool_turns(self) -> None:

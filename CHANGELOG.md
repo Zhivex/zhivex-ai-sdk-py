@@ -19,6 +19,23 @@ Related documents:
 
 ## Unreleased
 
+### Added
+
+- Claude Haiku 5.5 catalog entry (tiered pricing + Bedrock ID), adaptive/`effort` gates, computer toolset validation, and docs/tests alongside Opus/Sonnet 5.5.
+- Cache-write pricing on `ModelPricing`, OpenAI prompt-cache TTL `30m` and `12h`, and `TokenUsage` cache-read / cache-write counters with `CacheWriteTokensDetails` (`ttl_30m_tokens`, `ttl_12h_tokens`). Thirty-minute writes use the catalog cache-write rate. Twelve-hour writes use 2.5× the uncached input rate. Cost estimates use those counters. See https://developers.openai.com/api/docs/guides/prompt-caching.
+- Gemini 4 Argon (`gemini-4-argon`) on Gemini and Vertex. Reasoning uses `thinkingLevel` `low`, `medium`, or `high` (provider default is medium when omitted). Introductory Standard pricing is $2 / $10 per 1M input / output tokens and $0.10 cached through 2026-11-30; estimates fail closed after that date. Implicit caching only. See https://ai.google.dev/gemini-api/docs/pricing and https://ai.google.dev/gemini-api/docs/thinking.
+- Opt-in Anthropic Messages API version `2026-10-21` via `create_anthropic(anthropic_version="2026-10-21")`. The default header stays `2023-06-01`. On `2026-10-21` the adapter rejects `temperature`, `top_p`, and `top_k` (including `temperature=1` and `top_p>=0.99`), a document block placed directly in an assistant message, and a non-empty citations array on user text (including inside `search_result`) before the request. Vertex Claude stays on `vertex-2023-10-16`. See https://platform.claude.com/docs/en/api/migration-2026-10-21.
+- Dependabot configuration for the `uv` and `github-actions` ecosystems.
+
+### Changed
+
+- Tier-1 provider certification builds and installs the wheel from the current checkout instead of downloading the published 0.23.0 wheel. A weekly schedule runs a one-call OpenAI generation smoke. **WEEKLY LIVE SPEND:** remove that schedule before merge unless recurring provider spend is approved.
+- English wording in test fixtures that previously used Spanish sample text. Cases whose point is non-ASCII or Latin American data keep that data.
+
+### Fixed
+
+- Realtime certification logs now include the sanitized error type, assertion code, and HTTP status when a probe does not pass. The 2026-09-19 `gemini-3.8-live` failure (run 35444028791) was the first of two `approval-deny-restart` probes; the second passed and the evidence artifact has expired. That run is not a deterministic SDK defect.
+
 ## 0.29.0 — 2026-10-06
 
 Published Experimental application-owned computer execution and independent task

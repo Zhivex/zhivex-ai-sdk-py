@@ -536,6 +536,9 @@ def _map_block_parts(message: ModelMessage) -> list[dict[str, Any]]:
             block: dict[str, Any] = {"type": "text", "text": part.text}
             if part.provider_metadata.get("cache_control") is not None:
                 block["cache_control"] = serialize_json_value(part.provider_metadata.get("cache_control"))
+            citations = part.provider_metadata.get("citations")
+            if isinstance(citations, list):
+                block["citations"] = deepcopy(citations)
             blocks.append(block)
         elif part.type == "image":
             image_block: dict[str, Any]
@@ -1103,19 +1106,133 @@ def _parse_tool_input(raw_input: str) -> tuple[Any, dict[str, Any]]:
         return {"INVALID_JSON": raw_input}, {"invalid_tool_json": True, "raw_tool_json": raw_input}
 
 
+_ANTHROPIC_API_VERSION_2026_10_21 = "2026-10-21"
+_ANTHROPIC_USAGE_COUNTERS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+def _anthropic_count(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _sampling_parameters_removed_by_api_version(
+    temperature: Any,
+    provider_options: dict[str, Any] | None,
+) -> list[str]:
+    """Names removed by Messages API version 2026-10-21, including default values."""
+    options = provider_options or {}
+    names: list[str] = []
+    if temperature is not None:
+        names.append("temperature")
+    if options.get("top_p") is not None:
+        names.append("top_p")
+    if options.get("top_k") is not None:
+        names.append("top_k")
+    return names
+
+
+def _text_block_has_user_citations(block: Any) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if block.get("type") == "text" and isinstance(block.get("citations"), list) and block["citations"]:
+        return True
+    if block.get("type") == "search_result" and isinstance(block.get("content"), list):
+        return any(_text_block_has_user_citations(item) for item in block["content"])
+    return False
+
+
+def _assert_anthropic_api_version_2026_10_21(
+    version: str,
+    *,
+    temperature: Any,
+    provider_options: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+) -> None:
+    """Reject fields Anthropic returns as HTTP 400 on API version 2026-10-21.
+
+    The default header remains ``2023-06-01``. Vertex Claude stays on
+    ``vertex-2023-10-16`` and does not use this header.
+    See https://platform.claude.com/docs/en/api/migration-2026-10-21
+    """
+    if version != _ANTHROPIC_API_VERSION_2026_10_21:
+        return
+    removed = _sampling_parameters_removed_by_api_version(temperature, provider_options)
+    if removed:
+        joined = ", ".join(removed)
+        raise UnsupportedFeatureError(
+            f'Provider "anthropic" API version "2026-10-21" rejects {joined} on every model, '
+            "including default values such as temperature=1 and top_p>=0.99. "
+            'Omit temperature, top_p, and top_k, or keep anthropicVersion at "2023-06-01".'
+        )
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        if message.get("role") == "assistant" and any(
+            isinstance(block, dict) and block.get("type") == "document" for block in content
+        ):
+            raise UnsupportedFeatureError(
+                'Provider "anthropic" API version "2026-10-21" rejects a document block placed directly '
+                "in an assistant message. Send the document in a user message. A document nested inside "
+                "another block, such as a tool result, is still accepted. To keep direct assistant documents, "
+                'stay on anthropicVersion "2023-06-01".'
+            )
+        if message.get("role") == "user" and any(_text_block_has_user_citations(block) for block in content):
+            raise UnsupportedFeatureError(
+                'Provider "anthropic" API version "2026-10-21" rejects a non-empty citations array on a text '
+                "block in a user message, including inside a search_result block. Citations on assistant text "
+                "and citations.enabled on documents or search results are still accepted. Remove the "
+                'user-message citations, or keep anthropicVersion at "2023-06-01".'
+            )
+
+
 def _parse_token_usage(payload: dict[str, Any]) -> TokenUsage | None:
     usage = payload.get("usage") or {}
-    if not usage:
+    if not isinstance(usage, dict) or not usage:
         return None
-    input_tokens = usage.get("input_tokens")
+    # Iterations include compaction billing; top-level counters omit it.
+    iterations = usage.get("iterations")
+    if isinstance(iterations, list) and iterations:
+        totals: dict[str, int] = {}
+        for iteration in iterations:
+            if not isinstance(iteration, dict):
+                continue
+            for key in _ANTHROPIC_USAGE_COUNTERS:
+                count = _anthropic_count(iteration.get(key))
+                if count is not None:
+                    totals[key] = totals.get(key, 0) + count
+        usage = {**usage, **totals}
+    uncached = _anthropic_count(usage.get("input_tokens"))
+    cached = _anthropic_count(usage.get("cache_read_input_tokens"))
+    written = _anthropic_count(usage.get("cache_creation_input_tokens"))
     output_tokens = usage.get("output_tokens")
+    if cached is None and written is None:
+        input_tokens = usage.get("input_tokens")
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
+    input_tokens = (uncached or 0) + (cached or 0) + (written or 0)
+    output_count = _anthropic_count(output_tokens)
     total_tokens = usage.get("total_tokens")
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
+    if total_tokens is None and output_count is not None:
+        total_tokens = input_tokens + output_count
     return TokenUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+        cached_input_tokens=cached,
+        cache_write_tokens=written,
     )
 
 
@@ -1587,6 +1704,12 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         )
         thinking, provider_options = _merge_thinking_config(_map_reasoning(input, self.model_id), provider_options)
         _validate_final_thinking_config(self.model_id, thinking, output_config)
+        _assert_anthropic_api_version_2026_10_21(
+            self.anthropic_version,
+            temperature=input.temperature,
+            provider_options=provider_options,
+            messages=_map_messages(input.messages, self.model_id),
+        )
         manual_extended_thinking = bool(thinking and thinking.get("type") == "enabled")
         body = drop_none(
             {
@@ -1663,6 +1786,12 @@ class AnthropicLanguageModel(_AnthropicBase, LanguageModel):
         )
         thinking, provider_options = _merge_thinking_config(_map_reasoning(input, self.model_id), provider_options)
         _validate_final_thinking_config(self.model_id, thinking, output_config)
+        _assert_anthropic_api_version_2026_10_21(
+            self.anthropic_version,
+            temperature=input.temperature,
+            provider_options=provider_options,
+            messages=_map_messages(input.messages, self.model_id),
+        )
         manual_extended_thinking = bool(thinking and thinking.get("type") == "enabled")
         response = await with_retry(
             lambda: self.fetch(
@@ -1869,6 +1998,12 @@ class AnthropicGroundedLanguageModel(_AnthropicBase, GroundedLanguageModel):
         output_config, remaining_options = _merge_output_config(None, remaining_options, effort=_map_effort(input))
         thinking, remaining_options = _merge_thinking_config(_map_reasoning(input, self.model_id), remaining_options)
         _validate_final_thinking_config(self.model_id, thinking, output_config)
+        _assert_anthropic_api_version_2026_10_21(
+            self.anthropic_version,
+            temperature=input.temperature,
+            provider_options=remaining_options,
+            messages=_map_messages(input.messages, self.model_id),
+        )
         response = await with_retry(
             lambda: self.fetch(
                 f"{self.base_url}/messages",
@@ -1922,6 +2057,16 @@ class _ValidatedAnthropicMessagesClient(AnthropicMessagesClient):
     """Apply known model constraints while preserving native request/response blocks."""
 
     async def create(self, body: dict[str, Any], options: RetryOptions | None = None) -> dict[str, Any]:
+        raw_messages = body.get("messages")
+        messages: list[dict[str, Any]] = (
+            [item for item in raw_messages if isinstance(item, dict)] if isinstance(raw_messages, list) else []
+        )
+        _assert_anthropic_api_version_2026_10_21(
+            str(self.headers.get("anthropic-version") or ""),
+            temperature=body.get("temperature"),
+            provider_options=body,
+            messages=messages,
+        )
         model_id = str(body.get("model") or "")
         if not model_id.strip().lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")):
             return await super().create(body, options)
@@ -1939,6 +2084,8 @@ def create_anthropic(
     api_key: str | None = None,
     base_url: str = "https://api.anthropic.com/v1",
     anthropic_version: str = "2023-06-01",
+    # ``2026-10-21`` opts into the October 2026 Messages API and rejects removed fields locally.
+    # https://platform.claude.com/docs/en/api/migration-2026-10-21
     beta_headers: str | list[str] | tuple[str, ...] | None = None,
     fetch: Fetcher | None = None,
 ) -> ProviderBundle:

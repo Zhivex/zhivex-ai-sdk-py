@@ -620,6 +620,13 @@ class CatalogAndMiddlewareTests(IsolatedAsyncioTestCase):
                 self.assertEqual(entry.support_evidence, "offline-contract")
                 continue
             if (entry.provider, entry.model_id) in {
+                ("gemini", "gemini-4-argon"),
+                ("vertex", "gemini-4-argon"),
+            }:
+                self.assertEqual(entry.verified_at, "2026-10-26")
+                self.assertEqual(entry.support_evidence, "offline-contract")
+                continue
+            if (entry.provider, entry.model_id) in {
                 ("anthropic", "claude-haiku-5-5"),
                 ("bedrock", "anthropic.claude-haiku-5-5"),
             }:

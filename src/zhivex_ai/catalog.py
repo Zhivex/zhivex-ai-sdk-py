@@ -84,6 +84,7 @@ class ModelPricing:
     input_per_1m_tokens: float | None = None
     output_per_1m_tokens: float | None = None
     cached_input_per_1m_tokens: float | None = None
+    cache_write_per_1m_tokens: float | None = None
     effective_from: str | None = None
     effective_until: str | None = None
     long_context_threshold_tokens: int | None = None
@@ -103,6 +104,7 @@ class ModelPricing:
             "input_per_1m_tokens",
             "output_per_1m_tokens",
             "cached_input_per_1m_tokens",
+            "cache_write_per_1m_tokens",
             "long_context_input_per_1m_tokens",
             "long_context_output_per_1m_tokens",
         ):
@@ -149,6 +151,7 @@ class ModelPricing:
             return None
         rates = (
             self.input_per_1m_tokens, self.output_per_1m_tokens,
+            self.cache_write_per_1m_tokens,
             self.long_context_input_per_1m_tokens, self.long_context_output_per_1m_tokens,
         )
         known_rates = [float(rate) for rate in rates if rate is not None]
@@ -800,6 +803,27 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "gemini",
+            "gemini-4-argon",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=(
+                "https://ai.google.dev/gemini-api/docs/pricing",
+                "https://ai.google.dev/gemini-api/docs/thinking",
+            ),
+            verified_at="2026-10-26",
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://ai.google.dev/gemini-api/docs/pricing",
+                input_per_1m_tokens=2,
+                cached_input_per_1m_tokens=0.10,
+                output_per_1m_tokens=10,
+                effective_until="2026-11-30",
+            ),
+        ),
+        _entry(
+            "gemini",
             "gemini-3.8-flash",
             recommended_for=("chat", "reasoning", "tools", "vision"),
             capabilities=_GEMINI_LANGUAGE,
@@ -807,6 +831,28 @@ default_model_catalog = create_model_catalog(
             source_urls=("https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",),
             verified_at="2026-09-05",
             pricing=_usd(0.75, 3.75, "https://ai.google.dev/gemini-api/docs/latest-model", effective_from="2026-09-02", effective_until="2026-12-31"),
+        ),
+        _entry(
+            "vertex",
+            "gemini-4-argon",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=(
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon",
+                "https://ai.google.dev/gemini-api/docs/pricing",
+                "https://ai.google.dev/gemini-api/docs/thinking",
+            ),
+            verified_at="2026-10-26",
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://ai.google.dev/gemini-api/docs/pricing",
+                input_per_1m_tokens=2,
+                cached_input_per_1m_tokens=0.10,
+                output_per_1m_tokens=10,
+                effective_until="2026-11-30",
+            ),
         ),
         _entry(
             "vertex",

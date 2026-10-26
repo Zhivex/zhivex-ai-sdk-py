@@ -552,6 +552,9 @@ def _normalize_usage(
         else input_tokens + output_tokens
     )
     return TokenUsage(
+        cached_input_tokens=usage.cached_input_tokens if usage else None,
+        cache_write_tokens=usage.cache_write_tokens if usage else None,
+        cache_write_tokens_details=usage.cache_write_tokens_details if usage else None,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,

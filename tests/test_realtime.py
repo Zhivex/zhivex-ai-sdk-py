@@ -304,8 +304,8 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
             connection_meta.append({"url": url, "headers": headers, "options": options})
             connection = FakeRealtimeConnection(
                 [
-                    {"type": "conversation.item.input_audio_transcription.completed", "transcript": "hola"},
-                    {"type": "response.text.delta", "delta": "mundo"},
+                    {"type": "conversation.item.input_audio_transcription.completed", "transcript": "hello"},
+                    {"type": "response.text.delta", "delta": "world"},
                     {"type": "response.output_audio.delta", "delta": "AQI="},
                     {"type": "response.output_item.done", "item": {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"q\":\"status\"}"}},
                     {"type": "response.done"},
@@ -340,8 +340,8 @@ class RealtimeProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(connections[0].sent[1]["type"], "input_audio_buffer.append")
         self.assertEqual(connections[0].sent[2]["type"], "input_audio_buffer.commit")
         self.assertEqual(connections[0].sent[3]["type"], "response.create")
-        self.assertTrue(any(isinstance(event, RealtimeTranscriptEvent) and event.text == "hola" for event in events))
-        self.assertTrue(any(isinstance(event, RealtimeTextDeltaEvent) and event.text_delta == "mundo" for event in events))
+        self.assertTrue(any(isinstance(event, RealtimeTranscriptEvent) and event.text == "hello" for event in events))
+        self.assertTrue(any(isinstance(event, RealtimeTextDeltaEvent) and event.text_delta == "world" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeAudioOutputEvent) and event.audio == b"\x01\x02" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeToolCallEvent) and event.tool_call.name == "lookup" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeResponseCompletedEvent) for event in events))
@@ -605,10 +605,10 @@ class FakeLiveSession:
     def event_stream(self):
         async def generator():
             events = self.events if self.events is not None else [
-                RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True),
+                RealtimeTranscriptEvent(text="look up the weather", role="user", is_final=True),
                 RealtimeToolCallEvent(tool_call=ToolCall(id="call_1", name="weather", input={"city": "BA"})),
-                RealtimeTextDeltaEvent(text_delta="Hace sol"),
-                RealtimeTranscriptEvent(text="Hace sol", role="assistant", is_final=True),
+                RealtimeTextDeltaEvent(text_delta="It is sunny"),
+                RealtimeTranscriptEvent(text="It is sunny", role="assistant", is_final=True),
                 RealtimeResponseCompletedEvent(reason="done"),
             ]
             for event in events:
@@ -659,8 +659,8 @@ class FakeLiveModel:
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         self.generate_calls += 1
         return GenerateResult(
-            messages=[create_text_message("assistant", "Aprobación resuelta")],
-            text="Aprobación resuelta",
+            messages=[create_text_message("assistant", "Approval resolved")],
+            text="Approval resolved",
             finish_reason="stop",
         )
 
@@ -872,13 +872,13 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
         events = [event async for event in stream.event_stream()]
         result = await stream.collect()
 
-        self.assertTrue(any(isinstance(event, AgentTextDeltaEvent) and event.text_delta == "Hace sol" for event in events))
+        self.assertTrue(any(isinstance(event, AgentTextDeltaEvent) and event.text_delta == "It is sunny" for event in events))
         self.assertTrue(any(isinstance(event, RealtimeToolResultEvent) for event in events))
         self.assertEqual(live_session.sent_tool_results[0].output, {"forecast": "sunny in BA"})
-        self.assertEqual(result.text, "Hace sol")
+        self.assertEqual(result.text, "It is sunny")
         final_part = result.session.messages[-1].parts[0]
         self.assertIsInstance(final_part, TextPart)
-        self.assertEqual(final_part.text, "Hace sol")  # type: ignore[union-attr]
+        self.assertEqual(final_part.text, "It is sunny")  # type: ignore[union-attr]
 
     async def test_stream_live_agent_merges_agent_tools_into_explicit_realtime_config(self) -> None:
         live_session = FakeLiveSession()
@@ -901,7 +901,7 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
             realtime_config=RealtimeSessionConfig(voice="alloy"),
         ).collect()
 
-        self.assertEqual(result.text, "Hace sol")
+        self.assertEqual(result.text, "It is sunny")
         self.assertIsNotNone(model.last_config)
         self.assertIn("weather", model.last_config.tools or {})
         self.assertEqual(model.last_config.voice, "alloy")
@@ -909,7 +909,7 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
     async def test_stream_live_agent_persists_suspension_and_can_resume(self) -> None:
         live_session = FakeLiveSession(
             [
-                RealtimeTranscriptEvent(text="buscar clima", role="user", is_final=True),
+                RealtimeTranscriptEvent(text="look up the weather", role="user", is_final=True),
                 RealtimeToolCallEvent(tool_call=ToolCall(id="call_approval", name="weather", input={"city": "BA"})),
             ]
         )
@@ -919,7 +919,7 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
 
         class SuspendPolicy:
             async def __call__(self, _request: ToolApprovalRequest) -> ApprovalDecision:
-                return ApprovalDecision.require_human("Confirmar consulta externa.")
+                return ApprovalDecision.require_human("Confirm the external lookup.")
 
         def weather(payload: dict[str, Any]) -> dict[str, Any]:
             executions.append(payload)
@@ -963,7 +963,7 @@ class LiveAgentTests(IsolatedAsyncioTestCase):
 
         resumed = await resume_agent_run(agent=agent, run_id=suspended.run_id)
 
-        self.assertEqual(resumed.text, "Aprobación resuelta")
+        self.assertEqual(resumed.text, "Approval resolved")
         self.assertEqual(executions, [{"city": "BA"}])
         final_state = await run_store.load(suspended.run_id)
         self.assertEqual(final_state.status, "completed")  # type: ignore[union-attr]

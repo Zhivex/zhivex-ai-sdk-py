@@ -220,10 +220,22 @@ def _parse_responses_usage(payload: dict[str, Any]) -> TokenUsage | None:
     usage = payload.get("usage") or {}
     if not usage:
         return None
+    from ..cache_usage import cache_write_tokens_details_from_provider
+
+    input_details = usage.get("input_tokens_details") or {}
+    if not isinstance(input_details, dict):
+        input_details = {}
+    cached = input_details.get("cached_tokens")
+    written = input_details.get("cache_write_tokens")
     return TokenUsage(
         input_tokens=usage.get("input_tokens"),
         output_tokens=usage.get("output_tokens"),
         total_tokens=usage.get("total_tokens"),
+        cached_input_tokens=cached if isinstance(cached, int) and not isinstance(cached, bool) else None,
+        cache_write_tokens=written if isinstance(written, int) and not isinstance(written, bool) else None,
+        cache_write_tokens_details=cache_write_tokens_details_from_provider(
+            input_details.get("cache_write_tokens_details")
+        ),
     )
 
 def _parse_response_finish_reason(payload: dict[str, Any]) -> tuple[FinishReason | None, str | None]:
