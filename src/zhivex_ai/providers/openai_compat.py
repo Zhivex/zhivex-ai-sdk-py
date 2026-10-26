@@ -750,7 +750,23 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
     return {"effort": input.reasoning.effort}
 
 
+# Thinking-only Qwen text models reject a disabled thinking mode.
+# https://docs.qwencloud.com/developer-guides/text-generation/thinking
+_QWEN_THINKING_ONLY_MODELS = frozenset({"qwen3.8-2.4t-a95b"})
+# Third-party text models on the same Responses API without Qwen built-in tools
+# or native structured output.
+# https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models
+_QWEN_NO_BUILTIN_TOOLS = frozenset({
+    "deepseek-v4-pro", "deepseek-v4-flash-0731", "glm-5.2", "MiniMax-M2.5",
+})
+_QWEN_NO_STRUCTURED_OUTPUT = frozenset({"deepseek-v4-flash-0731", "MiniMax-M2.5"})
+
+
 def _qwen_reasoning_options(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
+    if model_id in _QWEN_THINKING_ONLY_MODELS and input.reasoning is not None and input.reasoning.effort == "none":
+        raise UnsupportedFeatureError(
+            'Provider "qwen" model "qwen3.8-2.4t-a95b" always thinks and does not accept reasoning.effort "none".'
+        )
     if input.reasoning is None:
         if model_id.strip().lower() in {"qwen3.8-omni-flash", "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"} and (
             input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
@@ -774,6 +790,10 @@ def _validate_qwen_responses_tools(
     mapped_tools: list[dict[str, Any]],
 ) -> None:
     tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
+    if model_id in _QWEN_NO_BUILTIN_TOOLS and tool_types - {"function"}:
+        raise UnsupportedFeatureError(
+            f'Provider "qwen" model "{model_id}" supports function tools only, not built-in tools.'
+        )
     if is_qwen_omni(model_id) and tool_types - {"function", "web_search"}:
         raise UnsupportedFeatureError("Qwen Omni supports only function and web_search tools.")
     reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
@@ -856,6 +876,18 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
     if provider_name == "qwen":
+        if model_id in _QWEN_THINKING_ONLY_MODELS and provider_options.get("enable_thinking") is False:
+            raise UnsupportedFeatureError(
+                'Provider "qwen" model "qwen3.8-2.4t-a95b" always thinks and does not accept enable_thinking false.'
+            )
+        if (
+            model_id in _QWEN_NO_STRUCTURED_OUTPUT
+            and input.structured_output is not None
+            and input.structured_output.mode == "native"
+        ):
+            raise UnsupportedFeatureError(
+                f'Provider "qwen" model "{model_id}" does not support native structured output.'
+            )
         _validate_qwen_responses_tools(model_id, input, merged_tools)
     if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
         raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')

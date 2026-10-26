@@ -1123,6 +1123,76 @@ default_model_catalog = create_model_catalog(
             aliases=("qwen3.8-max-2026-09-02",),
             regions=("intl",),
         ),
+        *(
+            _entry(
+                "qwen", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                regions=regions,
+                source_urls=(
+                    "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models",
+                    "https://docs.qwencloud.com/developer-guides/text-generation/thinking",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id, recommended, capabilities, regions in (
+                (
+                    "qwen3.7-flash", ("chat", "reasoning", "speed", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl", "us"),
+                ),
+                (
+                    "qwen3.7-flash-2026-07-15", ("chat", "reasoning", "speed", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl", "us"),
+                ),
+                (
+                    "qwen3.8-27b", ("chat", "reasoning", "tools", "vision"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, vision=True, files=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "qwen3.8-2.4t-a95b", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4.1-flash", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-pro-0813", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-pro", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-flash-0731", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "glm-5.2", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "MiniMax-M2.5", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, reasoning=True),
+                    ("cn",),
+                ),
+            )
+        ),
         # OpenAI: aliases are limited to provider-declared moving aliases.
         _entry(
             "openai",
