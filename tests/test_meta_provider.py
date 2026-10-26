@@ -28,6 +28,7 @@ from zhivex_ai import (  # noqa: E402
     ToolChoiceName,
     UnsupportedFeatureError,
     ValidationError,
+    default_model_catalog,
     generate_object,
     generate_text,
     tool,
@@ -186,6 +187,41 @@ class MetaProviderConfigTests(TestCase):
 
 
 class MetaProviderTests(IsolatedAsyncioTestCase):
+    async def test_meta_wonder_and_spark_contributor_use_the_chat_client(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(url: str, **kwargs: Any) -> FakeResponse:
+            requests.append(kwargs)
+            return chat_text("ok")
+
+        provider = create_meta(api_key="test-key", fetch=as_fetcher(fetch))
+        await generate_text(
+            model=provider("muse-wonder-1.0"),
+            prompt="hello",
+            reasoning=ReasoningConfig(effort="high"),
+        )
+        self.assertEqual(requests[-1]["json_body"]["model"], "muse-wonder-1.0")
+        self.assertEqual(requests[-1]["json_body"]["reasoning_effort"], "high")
+        await generate_text(
+            model=provider("muse-spark-1.3-contributor"),
+            prompt="hello",
+            reasoning=ReasoningConfig(effort="low"),
+        )
+        self.assertEqual(requests[-1]["json_body"]["model"], "muse-spark-1.3-contributor")
+        self.assertEqual(requests[-1]["json_body"]["reasoning_effort"], "low")
+        with self.assertRaises(UnsupportedFeatureError):
+            await generate_text(
+                model=provider("muse-spark-1.3-contributor"),
+                prompt="hello",
+                reasoning=ReasoningConfig(effort="max"),
+            )
+        wonder = default_model_catalog.find("meta", "muse-wonder-1.0")
+        contributor = default_model_catalog.find("meta", "muse-spark-1.3-contributor")
+        self.assertEqual(wonder.pricing.input_per_1m_tokens, 4)  # type: ignore[union-attr]
+        self.assertEqual(wonder.pricing.output_per_1m_tokens, 20)  # type: ignore[union-attr]
+        self.assertEqual(contributor.pricing.input_per_1m_tokens, 0.10)  # type: ignore[union-attr]
+        self.assertEqual(contributor.pricing.cached_input_per_1m_tokens, 0.002)  # type: ignore[union-attr]
+
     async def test_meta_defaults_to_chat_completions_for_portable_text(self) -> None:
         requests: list[dict[str, Any]] = []
 
