@@ -2653,6 +2653,44 @@ default_model_catalog = create_model_catalog(
             max_tool_calls_per_turn=1,
             parallel_tool_calls=False,
         ),
+        # Prices are the OpenRouter models API per-token rates, stored per 1M.
+        # cache_write_per_1m_tokens is the 5-minute write when a 1-hour write is
+        # also published. The 1-hour write is not a second catalog field.
+        *(
+            _entry(
+                "openrouter", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=_capabilities(
+                    streaming=True, tools=True, structured_output=True, json_mode=True,
+                    tool_choice=True, parallel_tool_calls=True, vision=True, files=True, reasoning=True,
+                ),
+                source_urls=(
+                    "https://openrouter.ai/api/v1/models",
+                    f"https://openrouter.ai/{model_id}",
+                ),
+                support_evidence="offline-contract",
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://openrouter.ai/api/v1/models",
+                    input_per_1m_tokens=input_rate,
+                    output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=cache_hit,
+                    cache_write_per_1m_tokens=cache_write,
+                    long_context_threshold_tokens=threshold,
+                    long_context_input_per_1m_tokens=long_input,
+                    long_context_output_per_1m_tokens=long_output,
+                ),
+            )
+            for model_id, recommended, input_rate, output_rate, cache_hit, cache_write, threshold, long_input, long_output in (
+                ("openai/gpt-6.1-sol", ("chat", "reasoning", "tools", "vision"), 2, 10, 0.10, 2.5, 272_000, 4, 15),
+                ("anthropic/claude-sonnet-5.5", ("chat", "reasoning", "tools", "vision"), 2, 10, 0.10, 2.5, None, None, None),
+                ("anthropic/claude-haiku-5.5", ("chat", "reasoning", "speed", "tools", "vision"), 0.10, 0.50, 0.01, 0.125, 100_000, 0.50, 2.50),
+                ("x-ai/grok-4.7", ("chat", "reasoning", "tools", "vision"), 2, 6, 0.50, None, 200_000, 4, 12),
+                ("meta/muse-wonder", ("chat", "reasoning", "tools", "vision"), 4, 20, 0.20, None, None, None, None),
+                ("google/gemini-3.8-flash", ("chat", "reasoning", "speed", "tools", "vision"), 0.825, 4.125, 0.0825, None, None, None, None),
+                ("meta/muse-spark-open", ("chat", "reasoning", "tools", "vision"), 1.25, 4.25, 0.15, None, None, None, None),
+            )
+        ),
         _entry(
             "bedrock",
             "anthropic.claude-fable-5",
@@ -2762,6 +2800,36 @@ default_model_catalog = create_model_catalog(
             capabilities=_LOCAL_LANGUAGE,
             max_tool_calls_per_turn=1,
             parallel_tool_calls=False,
+        ),
+        *(
+            _entry(
+                "ollama", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                source_urls=(f"https://ollama.com/library/{library}",),
+                support_evidence="offline-contract",
+            )
+            for model_id, library, recommended, capabilities in (
+                ("qwen3.8", "qwen3.8", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("gemma4", "gemma4", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("qwen3.5", "qwen3.5", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("muse-spark-open", "muse-spark-open", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                (
+                    "qwen3", "qwen3", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                ),
+                (
+                    "gpt-oss", "gpt-oss", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                ),
+            )
+        ),
+        _entry(
+            "ollama", "embeddinggemma", api_surface="embedding",
+            recommended_for=("embedding", "retrieval"),
+            capabilities=_EMBEDDING,
+            source_urls=("https://ollama.com/library/embeddinggemma",),
+            support_evidence="offline-contract",
         ),
         _entry(
             "vllm",
