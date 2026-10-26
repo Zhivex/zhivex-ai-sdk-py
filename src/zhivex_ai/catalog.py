@@ -863,6 +863,82 @@ default_model_catalog = create_model_catalog(
             source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",),
             support_evidence="offline-contract",
         ),
+        # Vertex Claude stays on model_garden().anthropic_messages() (vertex-2023-10-16).
+        # cache_write_per_1m_tokens is the 5-minute write (1.25× input). One-hour writes
+        # are 2× uncached input and are not a second field. The OpenAI 12-hour 2.5×
+        # multiplier does not apply. Haiku's long-context cache write and cache-hit
+        # rates are not separate fields; the long-context output rate dominates routing.
+        *(
+            _entry(
+                "vertex", model_id,
+                availability="stable", regions=regions,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=_capabilities(
+                    streaming=True, tools=True, vision=True, files=True,
+                    reasoning=True, web_search=True,
+                ),
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude",
+                    f"https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/{card}",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/prompt-caching",
+                    "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+                ),
+                support_evidence="offline-contract",
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+                    input_per_1m_tokens=input_rate,
+                    output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=cache_hit,
+                    cache_write_per_1m_tokens=cache_write_5m,
+                    long_context_threshold_tokens=threshold,
+                    long_context_input_per_1m_tokens=long_input,
+                    long_context_output_per_1m_tokens=long_output,
+                ),
+            )
+            for (
+                model_id, card, input_rate, output_rate, cache_hit, cache_write_5m,
+                regions, recommended, threshold, long_input, long_output,
+            ) in (
+                (
+                    "claude-haiku-5-5", "haiku-5-5", 0.10, 0.50, 0.01, 0.125,
+                    ("global", "us", "eu"), ("chat", "reasoning", "speed", "tools", "vision"),
+                    100_000, 0.50, 2.50,
+                ),
+                (
+                    "claude-sonnet-5-5", "sonnet-5-5", 2.0, 10.0, 0.10, 2.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-opus-5", "opus-5", 5.0, 25.0, 0.50, 6.25,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-sonnet-5", "sonnet-5", 2.0, 10.0, 0.20, 2.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-fable-5-1", "fable-5-1", 10.0, 50.0, 0.25, 12.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-opus-4-6", "opus-4-6", 5.0, 25.0, 0.50, 6.25,
+                    ("global", "us-east5", "europe-west1", "asia-southeast1"),
+                    ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-sonnet-4-6", "sonnet-4-6", 3.0, 15.0, 0.30, 3.75,
+                    ("global", "us-east5", "europe-west1", "asia-southeast1"),
+                    ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+            )
+        ),
         _entry(
             "openai", "gpt-live-1", api_surface="live",
             recommended_for=("audio", "realtime"), capabilities=_REALTIME,
