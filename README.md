@@ -2096,13 +2096,19 @@ The [September 30 refresh guide](docs/MODEL_REFRESH_2026_09_30.md) covers GPT-6 
 
 When `generate_text` or `stream_text` receives `egress_policy`, endpoint and region
 constraints are checked against the configured model, including models selected by
-`prepare_step`. The OpenAI-compatible Chat Completions adapter exposes its actual
-base URL for this check. An `egress` declaration or provider option is an assertion,
+`prepare_step`. SDK-owned portable wrappers use the destination of their native
+model. OpenAI Responses, OpenAI-compatible Chat Completions, and Gemini (including
+the Vertex Gemini subclass) additionally authorize the complete request URL built
+by the adapter, for the selected generation or streaming route. Their audit record
+contains that route with query parameters omitted. Other adapters currently
+authorize their exposed destination configuration. An `egress` declaration or provider option is an assertion,
 not a way to supply missing destination metadata. A mismatch (including a declared
 value absent from the model) is denied before the provider call. Custom models and
 wrappers must expose their actual `base_url`/`endpoint` and, when constrained,
 `region`/`egress_region`. Unknown dimensions match only wildcard rules; omitting
-`egress_policy` preserves existing behavior.
+`egress_policy` preserves existing behavior. Semicolons remain part of the path;
+dot segments, encoded traversal, nested percent escapes, and control characters
+are rejected rather than interpreted differently by URL parsers.
 
 This experimental check authorizes adapter configuration, not arbitrary network
 activity performed by custom models, fetchers, tools, or downstream gateways.

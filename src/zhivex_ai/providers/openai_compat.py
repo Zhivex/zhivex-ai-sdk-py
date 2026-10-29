@@ -2824,12 +2824,15 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
+    def _egress_request_url(self, *, stream: bool) -> str:
+        return f"{self.base_url}/responses"
+
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         body = _responses_body(self.model_id, self.provider, input, stream=False)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/responses",
+                self._egress_request_url(stream=False),
                 headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
@@ -2862,7 +2865,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         body = _responses_body(self.model_id, self.provider, input, stream=True)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/responses",
+                self._egress_request_url(stream=True),
                 headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,

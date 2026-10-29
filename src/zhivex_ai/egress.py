@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlsplit
+
+from httpx import URL, InvalidURL
 
 from .errors import ValidationError, ZhivexAIError
 
@@ -86,7 +88,7 @@ def _read_string(value: object) -> str | None:
 def _try_normalize(value: str) -> tuple[_Endpoint | None, str | None]:
     try:
         return _normalize_endpoint(value)
-    except ValueError:
+    except (ValueError, InvalidURL):
         return None, "endpoint is not a valid URL"
 
 
@@ -95,25 +97,27 @@ def _normalize_endpoint(value: str) -> tuple[_Endpoint | None, str | None]:
         return _Endpoint(kind="any", canonical=EGRESS_WILDCARD), None
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return None, "endpoint must not include control characters"
-    parsed = urlparse(value)
+    parsed = urlsplit(value)
     if parsed.scheme:
         if parsed.username or parsed.password:
             return None, "endpoint must not include credentials"
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             return None, "endpoint must use http or https"
         decoded_path = unquote(parsed.path)
-        if "\\" in decoded_path or any(segment in {".", ".."} for segment in decoded_path.split("/")):
+        if "%" in decoded_path or "\\" in decoded_path or any(segment in {".", ".."} for segment in decoded_path.split("/")):
             return None, "endpoint must not include ambiguous path segments"
+        if any(ord(character) < 32 or ord(character) == 127 for character in decoded_path):
+            return None, "endpoint must not include control characters"
+        # Use the transport's canonical spelling (IDNA, escaped paths, default
+        # ports, IPv6 brackets) after rejecting ambiguous raw path segments.
+        parsed = urlsplit(str(URL(value)))
         path = parsed.path.rstrip("/")
         port = parsed.port
-        canonical = f"{parsed.scheme}://{parsed.hostname.lower()}"
-        if port is not None:
-            canonical = f"{canonical}:{port}"
-        canonical = f"{canonical}{path}"
+        canonical = f"{parsed.scheme}://{parsed.netloc}{path}"
         return _Endpoint(
             kind="url",
             canonical=canonical,
-            host=parsed.hostname.lower(),
+            host=parsed.hostname,
             protocol=f"{parsed.scheme}:",
             port="" if port is None else str(port),
             path=path,
@@ -285,6 +289,16 @@ def _canonical(value: str | None) -> str | None:
     return endpoint.canonical if endpoint is not None else value
 
 
+def _destination_model(model: object) -> object:
+    # Unwrap only the SDK-owned portable adapter, never an arbitrary similarly
+    # named attribute on a third-party model.
+    from .providers.base import PortableLanguageModel
+
+    while isinstance(model, PortableLanguageModel):
+        model = model.native_model
+    return model
+
+
 def resolve_egress_target(
     model: object,
     declaration: EgressDeclaration | Mapping[str, object] | None = None,
@@ -292,6 +306,7 @@ def resolve_egress_target(
     *,
     authoritative_destination: bool = False,
 ) -> tuple[EgressCallTarget, str | None]:
+    model = _destination_model(model)
     declared_region = _read_attr(declaration, ("region",))
     option_region = _read_attr(provider_options, ("region", "location"))
     model_region = _read_attr(model, ("region", "egress_region"))
@@ -347,6 +362,36 @@ async def enforce_egress_policy(
         provider_options,
         authoritative_destination=authoritative_destination,
     )
+    return await _enforce_target(policy, model, target, conflict)
+
+
+async def _enforce_generation_egress(
+    policy: EgressPolicy,
+    model: object,
+    declaration: EgressDeclaration | Mapping[str, object] | None,
+    provider_options: Mapping[str, object] | None,
+    *,
+    stream: bool,
+) -> EgressAuditRecord:
+    target, conflict = resolve_egress_target(
+        model, declaration, provider_options, authoritative_destination=True,
+    )
+    if conflict is None:
+        request_url = getattr(_destination_model(model), "_egress_request_url", None)
+        if callable(request_url):
+            # The adapter uses this same URL builder for the actual request.
+            # Resolve declarations against configuration first, but authorize
+            # the complete route, including model IDs interpolated into paths.
+            target = replace(target, endpoint=request_url(stream=stream))
+    return await _enforce_target(policy, model, target, conflict)
+
+
+async def _enforce_target(
+    policy: EgressPolicy,
+    model: object,
+    target: EgressCallTarget,
+    conflict: str | None,
+) -> EgressAuditRecord:
     if conflict:
         normalized, _reason = _try_normalize(target.endpoint) if target.endpoint else (None, None)
         record = EgressAuditRecord(

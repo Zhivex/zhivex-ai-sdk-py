@@ -191,6 +191,9 @@ class _ChatLanguageModel:
         """Configured destination used by both authorization and requests."""
         return self._base_url
 
+    def _egress_request_url(self, *, stream: bool) -> str:
+        return f"{self._base_url}/chat/completions"
+
     def _body(self, model_input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
         if model_input.tools and not self.capabilities.tools:
             raise UnsupportedFeatureError(f'Model "{self.provider}/{self.model_id}" does not support tools.')
@@ -225,7 +228,7 @@ class _ChatLanguageModel:
     async def _post(self, body: dict[str, Any], model_input: ModelGenerateInput, *, stream: bool) -> Any:
         response = await with_retry(
             lambda: self._fetch(
-                f"{self._base_url}/chat/completions",
+                self._egress_request_url(stream=stream),
                 headers=self._headers,
                 json_body=body,
                 timeout_ms=model_input.timeout_ms,

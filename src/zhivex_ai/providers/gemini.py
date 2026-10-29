@@ -2092,13 +2092,16 @@ class GeminiLanguageModel(LanguageModel):
         separator = "&" if "?" in action else "?"
         return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
 
+    def _egress_request_url(self, *, stream: bool) -> str:
+        return self._url("streamGenerateContent?alt=sse" if stream else "generateContent")
+
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         _validate_latest_gemini_request(self.provider, self.model_id, input)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
-                self._url("generateContent"),
+                self._egress_request_url(stream=False),
                 headers={"content-type": "application/json"},
                 json_body=drop_none({
                     "contents": _map_messages(input.messages),
@@ -2134,7 +2137,7 @@ class GeminiLanguageModel(LanguageModel):
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
-                self._url("streamGenerateContent?alt=sse"),
+                self._egress_request_url(stream=True),
                 headers={"content-type": "application/json"},
                 json_body=drop_none({
                     "contents": _map_messages(input.messages),

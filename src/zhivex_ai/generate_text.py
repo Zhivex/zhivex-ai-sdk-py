@@ -8,7 +8,7 @@ from copy import deepcopy
 from functools import lru_cache
 from typing import Any, cast
 
-from .egress import EgressDeclaration, EgressPolicy, enforce_egress_policy
+from .egress import EgressDeclaration, EgressPolicy, _enforce_generation_egress
 from .loop_controls import (
     PrepareStepContext,
     StopCondition,
@@ -565,6 +565,7 @@ async def _plan_step(
     retry: RetryOptions,
     egress_policy: EgressPolicy | None,
     egress: EgressDeclaration | None,
+    stream: bool = False,
 ) -> tuple[LanguageModel, ModelGenerateInput, ToolSet | None]:
     step_model = model
     step_tools = tools
@@ -614,9 +615,9 @@ async def _plan_step(
     _validate_tool_choice(step_model, visible_tools, step_choice)
     _validate_hosted_tools(step_model, visible_tools, step_choice)
     if egress_policy is not None:
-        await enforce_egress_policy(
+        await _enforce_generation_egress(
             egress_policy, step_model, egress, provider_options,
-            authoritative_destination=True,
+            stream=stream,
         )
     request = _to_request(
         messages=request_messages,
@@ -856,6 +857,7 @@ def stream_text(
                         retry=retry,
                         egress_policy=egress_policy,
                         egress=egress,
+                        stream=True,
                     )
                     before_model()
                     stream = await step_model.stream(request)
