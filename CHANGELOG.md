@@ -21,6 +21,8 @@ Related documents:
 
 ### Fixed
 
+- Experimental egress URL checks reject ambiguous dot-segment paths (including encoded forms) and audit malformed URLs as denials instead of leaking parser exceptions.
+
 - Experimental generation egress checks now authorize the configured model destination, including the OpenAI-compatible Chat Completions base URL. Caller declarations and provider options cannot supply an unknown destination or override it. Streaming and `prepare_step` model replacements use the same check. Calls without an egress policy retain their behavior.
 
 ### Added

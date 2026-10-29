@@ -99,3 +99,17 @@ async def test_no_policy_preserves_existing_behavior():
 
     model = openai_compatible(name="acme", base_url="https://other.example/v1", api_key="test", fetch=fetch).language_model("chat")
     assert (await generate_text(model=model, prompt="hello")).text == "ok"
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://allowed.example/v1/../outside",
+    "https://allowed.example/v1/%2e%2e/outside",
+    "https://allowed.example/v1/a%2f..%2f..%2foutside",
+    "https://allowed.example:invalid/v1",
+    "https://[invalid/v1",
+])
+async def test_ambiguous_or_invalid_endpoint_is_audited_as_denied(endpoint):
+    guard = policy()
+    with pytest.raises(EgressDeniedError):
+        await guard.assert_call({"provider": "acme", "model": "chat", "endpoint": endpoint})
+    assert guard.records[-1].decision == "denied"

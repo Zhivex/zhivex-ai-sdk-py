@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .errors import ValidationError, ZhivexAIError
 
@@ -84,14 +84,26 @@ def _read_string(value: object) -> str | None:
 
 
 def _try_normalize(value: str) -> tuple[_Endpoint | None, str | None]:
+    try:
+        return _normalize_endpoint(value)
+    except ValueError:
+        return None, "endpoint is not a valid URL"
+
+
+def _normalize_endpoint(value: str) -> tuple[_Endpoint | None, str | None]:
     if value == EGRESS_WILDCARD:
         return _Endpoint(kind="any", canonical=EGRESS_WILDCARD), None
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return None, "endpoint must not include control characters"
     parsed = urlparse(value)
     if parsed.scheme:
         if parsed.username or parsed.password:
             return None, "endpoint must not include credentials"
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             return None, "endpoint must use http or https"
+        decoded_path = unquote(parsed.path)
+        if "\\" in decoded_path or any(segment in {".", ".."} for segment in decoded_path.split("/")):
+            return None, "endpoint must not include ambiguous path segments"
         path = parsed.path.rstrip("/")
         port = parsed.port
         canonical = f"{parsed.scheme}://{parsed.hostname.lower()}"
