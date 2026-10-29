@@ -19,6 +19,10 @@ Related documents:
 
 ## Unreleased
 
+### Fixed
+
+- Experimental generation egress checks now authorize the configured model destination, including the OpenAI-compatible Chat Completions base URL. Caller declarations and provider options cannot supply an unknown destination or override it. Streaming and `prepare_step` model replacements use the same check. Calls without an egress policy retain their behavior.
+
 ### Added
 
 - Bedrock Converse reasoning, prompt-cache checkpoints, and catalog prices for `anthropic.claude-sonnet-5-5`, `us.anthropic.claude-haiku-4-5-20251001-v1:0`, and `amazon.nova-2-lite-v1:0`, including the same model ids with a `us.`, `eu.`, `au.`, `apac.`, `jp.`, `in.`, or `global.` prefix and foundation-model or inference-profile ARNs. Other Bedrock models still reject `reasoning`. Sonnet 5.5 maps `reasoning.effort` `low`, `medium`, `high`, `xhigh`, and `max` to adaptive thinking and rejects `none` and accepts `tool_choice` `auto` or `none` only. Haiku 4.5 uses `reasoning.budget_tokens` (minimum 1024), sends `anthropic_beta` `interleaved-thinking-2025-05-14` while thinking is on, and requires streaming when `max_tokens` is greater than 21333. Nova 2 Lite uses `reasoningConfig.maxReasoningEffort` `low`, `medium`, or `high`; `high` rejects temperature, top-p, top-k, and max tokens. `cache_control` becomes a sibling `cachePoint`. Catalog `cache_write_per_1m_tokens` is the 5-minute write. Global Sonnet 5.5 is $2 / $0.10 cached / $2.50 5-minute cache write / $10 output per 1M tokens. The US Haiku 4.5 geo profile is $1.10 / $0.11 cached / $1.375 5-minute cache write / $5.50 output. Global Nova 2 Lite standard text, image, and video is $0.30 / $2.50; no Nova 2 Lite cache rate is published on its price row. See https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html, https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html, https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html, and https://aws.amazon.com/bedrock/pricing/.

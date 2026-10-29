@@ -186,6 +186,11 @@ class _ChatLanguageModel:
         self._fetch = fetch
         self._headers = {"authorization": f"Bearer {api_key}", "content-type": "application/json", **headers}
 
+    @property
+    def base_url(self) -> str:
+        """Configured destination used by both authorization and requests."""
+        return self._base_url
+
     def _body(self, model_input: ModelGenerateInput, *, stream: bool) -> dict[str, Any]:
         if model_input.tools and not self.capabilities.tools:
             raise UnsupportedFeatureError(f'Model "{self.provider}/{self.model_id}" does not support tools.')

@@ -2091,3 +2091,19 @@ Beta `vertex.native.rag()` exposes native RAG corpus/file management and retriev
 ## September 2026 model refresh
 
 The [September 30 refresh guide](docs/MODEL_REFRESH_2026_09_30.md) covers GPT-6 Sol/Luna and GPT-6.1 Sol, Claude Opus/Sonnet 5.5, Gemini 3.8 TTS/Voices, and Qwen 3.7 text reranking. OpenAI hosted multi-agent uses `provider.native.language_model(...)` with native provider options. Gemini Voices and Qwen rerank are Beta native clients; their contracts do not expand portable support. Azure and Bedrock support are unchanged.
+
+### Experimental egress destination checks
+
+When `generate_text` or `stream_text` receives `egress_policy`, endpoint and region
+constraints are checked against the configured model, including models selected by
+`prepare_step`. The OpenAI-compatible Chat Completions adapter exposes its actual
+base URL for this check. An `egress` declaration or provider option is an assertion,
+not a way to supply missing destination metadata. A mismatch (including a declared
+value absent from the model) is denied before the provider call. Custom models and
+wrappers must expose their actual `base_url`/`endpoint` and, when constrained,
+`region`/`egress_region`. Unknown dimensions match only wildcard rules; omitting
+`egress_policy` preserves existing behavior.
+
+This experimental check authorizes adapter configuration, not arbitrary network
+activity performed by custom models, fetchers, tools, or downstream gateways.
+Those components remain trusted and must enforce their own destination controls.

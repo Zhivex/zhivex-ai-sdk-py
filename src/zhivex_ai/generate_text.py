@@ -614,7 +614,10 @@ async def _plan_step(
     _validate_tool_choice(step_model, visible_tools, step_choice)
     _validate_hosted_tools(step_model, visible_tools, step_choice)
     if egress_policy is not None:
-        await enforce_egress_policy(egress_policy, step_model, egress, provider_options)
+        await enforce_egress_policy(
+            egress_policy, step_model, egress, provider_options,
+            authoritative_destination=True,
+        )
     request = _to_request(
         messages=request_messages,
         tools=visible_tools,
