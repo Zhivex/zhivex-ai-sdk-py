@@ -183,6 +183,18 @@ from .catalog import (
     default_model_catalog as default_model_catalog,
 )
 
+from .decisions import (
+    create_gateway_decide as create_gateway_decide,
+    create_openai_decision_model as create_openai_decision_model,
+)
+
+from .egress import (
+    EgressDeniedError as EgressDeniedError,
+    create_egress_policy as create_egress_policy,
+    enforce_egress_policy as enforce_egress_policy,
+    resolve_egress_target as resolve_egress_target,
+)
+
 from .embed import (
     embed as embed,
     embed_content as embed_content,
@@ -232,6 +244,15 @@ from .grounded_text import (
     generate_grounded_text as generate_grounded_text,
 )
 
+from .latam_redaction import (
+    create_latam_sensitive_data_policy as create_latam_sensitive_data_policy,
+)
+
+from .loop_controls import (
+    has_tool_call as has_tool_call,
+    step_count_is as step_count_is,
+)
+
 from .messages import (
     assistant as assistant,
     create_text_message as create_text_message,
@@ -262,6 +283,14 @@ from .middleware import (
     create_in_memory_generate_cache as create_in_memory_generate_cache,
     create_telemetry_middleware as create_telemetry_middleware,
     wrap_language_model as wrap_language_model,
+)
+
+from .model_resolver import (
+    ModelResolutionError as ModelResolutionError,
+    clear_registered_model_providers as clear_registered_model_providers,
+    create_model_resolver as create_model_resolver,
+    register_model_provider as register_model_provider,
+    resolve_language_model as resolve_language_model,
 )
 
 from .observability import (
@@ -412,6 +441,12 @@ from .providers.openai import (
     parse_openai_provider_data_part as parse_openai_provider_data_part,
 )
 
+from .providers.openai_compatible import (
+    create_groq_compatible as create_groq_compatible,
+    create_mistral_compatible as create_mistral_compatible,
+    openai_compatible as openai_compatible,
+)
+
 from .providers.openrouter import (
     create_openrouter as create_openrouter,
 )
@@ -441,6 +476,18 @@ from .providers.vertex import (
 
 from .providers.vllm import (
     create_vllm as create_vllm,
+)
+
+from .providers.xai import (
+    create_xai as create_xai,
+    xai_code_execution_tool as xai_code_execution_tool,
+    xai_file_search_tool as xai_file_search_tool,
+    xai_web_search_tool as xai_web_search_tool,
+    xai_x_search_tool as xai_x_search_tool,
+)
+
+from .providers.zai import (
+    create_zai as create_zai,
 )
 
 from .realtime import (
@@ -523,6 +570,7 @@ from .types import (
     AzureOpenAIProviderData as AzureOpenAIProviderData,
     AzureOpenAIResponseReference as AzureOpenAIResponseReference,
     BatchesClient as BatchesClient,
+    CacheWriteTokensDetails as CacheWriteTokensDetails,
     CachedContent as CachedContent,
     CachedContentListResult as CachedContentListResult,
     CachedContentsClient as CachedContentsClient,

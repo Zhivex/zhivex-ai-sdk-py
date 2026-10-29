@@ -220,6 +220,10 @@ def _validate_generation_input(model: LanguageModel, input: ModelGenerateInput) 
             raise UnsupportedFeatureError('Provider "meta" does not support reasoning token budgets.')
         if input.reasoning.effort == "none":
             raise UnsupportedFeatureError('Provider "meta" does not support reasoning effort "none".')
+        if model.model_id == "muse-spark-1.3-contributor" and input.reasoning.effort == "max":
+            raise UnsupportedFeatureError(
+                'Provider "meta" model "muse-spark-1.3-contributor" does not support reasoning effort "max".'
+            )
     for message in input.messages:
         for part in message.parts:
             if not isinstance(part, FilePart):

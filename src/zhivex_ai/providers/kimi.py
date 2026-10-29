@@ -93,9 +93,13 @@ def _headers(api_key: str, *, json_content: bool = True) -> dict[str, str]:
     return headers
 
 
+def _is_kimi_k27_code(model_id: str) -> bool:
+    return model_id.strip().lower() in {"kimi-k2.7-code", "kimi-k2.7-code-highspeed"}
+
+
 def _is_kimi_multimodal_model(model_id: str) -> bool:
     normalized = model_id.strip().lower()
-    return normalized in {"kimi-k3", "kimi-k2.6", "kimi-k2.5"}
+    return normalized in {"kimi-k3", "kimi-k2.6", "kimi-k2.5"} or _is_kimi_k27_code(normalized)
 
 
 def _is_kimi_k3_model(model_id: str) -> bool:
@@ -261,6 +265,8 @@ def _thinking_from_options(provider_options: dict[str, Any]) -> dict[str, Any] |
 
 
 def _thinking_enabled(input: ModelGenerateInput, model_id: str, provider_options: dict[str, Any]) -> bool:
+    if _is_kimi_k27_code(model_id):
+        return True
     if not _is_kimi_multimodal_model(model_id):
         return False
     explicit = _thinking_from_options(provider_options)
@@ -276,6 +282,13 @@ def _kimi_reasoning_options(model_id: str, input: ModelGenerateInput, provider_o
         return {}
     if input.reasoning.budget_tokens is not None:
         raise UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".')
+    if _is_kimi_k27_code(model_id):
+        if input.reasoning.effort == "none":
+            raise UnsupportedFeatureError(
+                'Kimi K2.7 Code always thinks and does not accept reasoning.effort "none".'
+            )
+        # The model accepts only an omitted thinking field or enabled thinking with keep="all".
+        return {}
     if _is_kimi_k3_model(model_id):
         if "reasoning_effort" in provider_options:
             raise ValidationError('Pass either reasoning=... or provider_options={"reasoning_effort": ...}, not both.')
@@ -334,6 +347,18 @@ def _validate_kimi_request(model_id: str, input: ModelGenerateInput, provider_op
         _validate_kimi_k3_vision(input)
         return
 
+    if _is_kimi_k27_code(model_id):
+        if input.reasoning is not None and input.reasoning.effort == "none":
+            raise UnsupportedFeatureError(
+                'Kimi K2.7 Code always thinks and does not accept reasoning.effort "none".'
+            )
+        thinking = provider_options.get("thinking")
+        if thinking is not None and thinking != {"type": "enabled", "keep": "all"}:
+            raise UnsupportedFeatureError(
+                'Kimi K2.7 Code only accepts an omitted thinking field or {"type": "enabled", "keep": "all"}.'
+            )
+        if "reasoning_effort" in provider_options:
+            raise UnsupportedFeatureError('Kimi K2.7 Code does not support "reasoning_effort".')
     if _is_kimi_multimodal_model(model_id):
         if input.temperature is not None:
             raise UnsupportedFeatureError(f'Provider "kimi" does not allow overriding "temperature" for model "{model_id}".')

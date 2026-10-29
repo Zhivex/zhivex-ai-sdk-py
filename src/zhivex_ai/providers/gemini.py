@@ -607,6 +607,95 @@ _GEMINI_FIXED_SAMPLING_MODELS = frozenset({"gemini-3.8-flash", "gemini-3.6-flash
 _GEMINI_DEPRECATED_SAMPLING_KEYS = frozenset(
     {"temperature", "top_p", "topP", "top_k", "topK", "candidate_count", "candidateCount"}
 )
+# Gemini 3 and 4 select reasoning with thinkingLevel. Profiles are serving policies,
+# not a model inventory. Unknown IDs keep the previous request behavior.
+# https://ai.google.dev/gemini-api/docs/thinking
+_GEMINI_THINKING_LEVELS: dict[str, frozenset[str]] = {
+    "gemini-4-argon": frozenset({"low", "medium", "high"}),
+    "gemini-3.8-flash": frozenset({"low", "medium", "high"}),
+    "gemini-3.7-flash": frozenset({"low", "medium", "high"}),
+    "gemini-3.6-flash": frozenset({"minimal", "low", "medium", "high"}),
+    "gemini-3.5-flash-lite": frozenset({"minimal", "low", "medium", "high"}),
+}
+_GEMINI_4_SAMPLING_KEYS = (
+    "temperature",
+    "topP",
+    "top_p",
+    "topK",
+    "top_k",
+    "candidateCount",
+    "candidate_count",
+    "frequencyPenalty",
+    "frequency_penalty",
+    "presencePenalty",
+    "presence_penalty",
+)
+
+
+def _first_gemini_sampling_control(*sources: Any) -> str | None:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in _GEMINI_4_SAMPLING_KEYS:
+            if source.get(key) is not None:
+                return key
+    return None
+
+
+def _validate_gemini_4_text_profile(
+    provider: str,
+    model_id: str,
+    input: ModelGenerateInput | GroundedModelGenerateInput,
+) -> None:
+    """Reject sampling and thinking budgets for profiled Gemini 4 text models.
+
+    The provider default thinking level is medium when ``thinkingLevel`` is omitted.
+    See https://ai.google.dev/gemini-api/docs/thinking
+    """
+    allowed = _GEMINI_THINKING_LEVELS[model_id]
+    if input.reasoning is not None and input.reasoning.effort is not None and input.reasoning.effort not in allowed:
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" does not support reasoning effort "{input.reasoning.effort}" for model "{model_id}".'
+        )
+    provider_options = dict(input.provider_options or {})
+    raw_config = provider_options.get("generationConfig") or provider_options.get("generation_config") or {}
+    generation_config = raw_config if isinstance(raw_config, dict) else {}
+    raw_thinking = (
+        generation_config.get("thinkingConfig")
+        or generation_config.get("thinking_config")
+        or provider_options.get("thinkingConfig")
+        or provider_options.get("thinking_config")
+        or {}
+    )
+    if isinstance(raw_thinking, dict):
+        level = raw_thinking.get("thinkingLevel", raw_thinking.get("thinking_level"))
+        if level is not None and str(level).lower() not in allowed:
+            raise UnsupportedFeatureError(
+                f'Provider "{provider}" does not support thinking level "{level}" for model "{model_id}".'
+            )
+        if "thinkingBudget" in raw_thinking or "thinking_budget" in raw_thinking:
+            raise UnsupportedFeatureError(
+                f'Provider "{provider}" requires thinking levels instead of budgets for model "{model_id}".'
+            )
+    unsupported = _first_gemini_sampling_control(
+        {"temperature": input.temperature} if input.temperature is not None else None,
+        provider_options,
+        generation_config,
+    )
+    if unsupported is not None:
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" does not support generation control "{unsupported}" for model "{model_id}". '
+            "Remove temperature, topP/top_p, topK/top_k, candidateCount/candidate_count, and frequency/presence penalties; "
+            "these models use provider-managed sampling."
+        )
+    last_turn = next(
+        (message for message in reversed(input.messages) if message.role != "system" and message.parts),
+        None,
+    )
+    if last_turn is not None and last_turn.role == "assistant":
+        raise UnsupportedFeatureError(
+            f'Provider "{provider}" does not support assistant prefill for model "{model_id}".'
+        )
 
 
 def _validate_latest_gemini_request(
@@ -614,6 +703,9 @@ def _validate_latest_gemini_request(
     model_id: str,
     input: ModelGenerateInput | GroundedModelGenerateInput,
 ) -> None:
+    if model_id.startswith("gemini-4") and model_id in _GEMINI_THINKING_LEVELS:
+        _validate_gemini_4_text_profile(provider, model_id, input)
+        return
     if model_id not in _GEMINI_FIXED_SAMPLING_MODELS:
         return
     if input.temperature is not None:
@@ -649,6 +741,25 @@ def _validate_latest_gemini_request(
 def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] | None:
     if input.reasoning is None:
         return None
+    if model_id.startswith("gemini-4"):
+        if input.reasoning.budget_tokens is not None:
+            raise UnsupportedFeatureError(
+                'Provider "gemini" uses "reasoning.effort" for Gemini 4 models and does not support "reasoning.budgetTokens".'
+            )
+        if input.reasoning.effort == "none":
+            raise UnsupportedFeatureError(
+                'Provider "gemini" does not support "reasoning.effort=none" for Gemini 4 models.'
+            )
+        if input.reasoning.effort == "xhigh":
+            raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".')
+        if input.reasoning.effort == "max":
+            raise UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=max".')
+        allowed = _GEMINI_THINKING_LEVELS.get(model_id)
+        if allowed is not None and input.reasoning.effort is not None and input.reasoning.effort not in allowed:
+            raise UnsupportedFeatureError(
+                f'Provider "gemini" does not support "reasoning.effort={input.reasoning.effort}" for model "{model_id}".'
+            )
+        return {"thinkingLevel": input.reasoning.effort} if input.reasoning.effort is not None else None
     if _is_gemini_3_model(model_id):
         if input.reasoning.budget_tokens is not None:
             raise UnsupportedFeatureError(
@@ -670,6 +781,25 @@ def _map_reasoning(model_id: str, input: ModelGenerateInput) -> dict[str, Any] |
             'Provider "gemini" does not support "reasoning.effort" for models earlier than Gemini 3.'
         )
     return {"thinkingBudget": input.reasoning.budget_tokens} if input.reasoning.budget_tokens is not None else None
+
+
+def _gemini_token_usage(usage: dict[str, Any]) -> TokenUsage | None:
+    """Map Gemini usageMetadata. ``promptTokenCount`` already includes cached tokens."""
+    if not usage:
+        return None
+    cached = usage.get("cachedContentTokenCount")
+    cached_input = cached if isinstance(cached, int) and not isinstance(cached, bool) else None
+    prompt = usage.get("promptTokenCount")
+    candidates = usage.get("candidatesTokenCount")
+    total = usage.get("totalTokenCount")
+    if not total and (prompt is not None or candidates is not None):
+        total = (prompt or 0) + (candidates or 0)
+    return TokenUsage(
+        input_tokens=prompt,
+        output_tokens=candidates,
+        total_tokens=total,
+        cached_input_tokens=cached_input,
+    )
 
 
 def _generation_config(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
@@ -1962,13 +2092,16 @@ class GeminiLanguageModel(LanguageModel):
         separator = "&" if "?" in action else "?"
         return f"{self.base_url}/models/{self.model_id}:{action}{separator}key={self.api_key}"
 
+    def _egress_request_url(self, *, stream: bool) -> str:
+        return self._url("streamGenerateContent?alt=sse" if stream else "generateContent")
+
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         _validate_latest_gemini_request(self.provider, self.model_id, input)
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
-                self._url("generateContent"),
+                self._egress_request_url(stream=False),
                 headers={"content-type": "application/json"},
                 json_body=drop_none({
                     "contents": _map_messages(input.messages),
@@ -1994,14 +2127,7 @@ class GeminiLanguageModel(LanguageModel):
             text="".join(part.text for part in assistant_message.parts if part.type == "text"),
             finish_reason=normalize_finish_reason(candidate.get("finishReason") if candidate else None),
             provider_finish_reason=candidate.get("finishReason") if candidate else None,
-            usage=TokenUsage(
-                input_tokens=usage.get("promptTokenCount"),
-                output_tokens=usage.get("candidatesTokenCount"),
-                total_tokens=usage.get("totalTokenCount")
-                or ((usage.get("promptTokenCount") or 0) + (usage.get("candidatesTokenCount") or 0)),
-            )
-            if usage
-            else None,
+            usage=_gemini_token_usage(usage) if isinstance(usage, dict) else None,
             raw_response=payload,
         )
 
@@ -2011,7 +2137,7 @@ class GeminiLanguageModel(LanguageModel):
         generation_config = _generation_config(self.model_id, input) or None
         response = await with_retry(
             lambda: self.fetch(
-                self._url("streamGenerateContent?alt=sse"),
+                self._egress_request_url(stream=True),
                 headers={"content-type": "application/json"},
                 json_body=drop_none({
                     "contents": _map_messages(input.messages),
@@ -2232,14 +2358,7 @@ class GeminiGroundedLanguageModel(GroundedLanguageModel):
             text="".join(part.text for part in assistant_message.parts if part.type == "text"),
             finish_reason=normalize_finish_reason(candidate.get("finishReason") if candidate else None),
             provider_finish_reason=candidate.get("finishReason") if candidate else None,
-            usage=TokenUsage(
-                input_tokens=usage.get("promptTokenCount"),
-                output_tokens=usage.get("candidatesTokenCount"),
-                total_tokens=usage.get("totalTokenCount")
-                or ((usage.get("promptTokenCount") or 0) + (usage.get("candidatesTokenCount") or 0)),
-            )
-            if usage
-            else None,
+            usage=_gemini_token_usage(usage) if isinstance(usage, dict) else None,
             raw_response=payload,
             sources=_extract_grounding_sources(payload),
             queries=_extract_grounding_queries(payload),
@@ -2258,6 +2377,11 @@ class GeminiEmbeddingModel(EmbeddingModel):
     capabilities: ModelCapabilities = field(default_factory=lambda: GEMINI_CAPABILITIES)
 
     async def embed(self, values: list[EmbeddingContent], options: Any = None) -> EmbedResult:
+        if self.model_id != "gemini-embedding-2" and any(not isinstance(value, str) for value in values):
+            raise UnsupportedFeatureError(
+                f'Model "gemini/{self.model_id}" does not support multimodal embedding values. '
+                'Use "gemini-embedding-2" for Gemini multimodal embeddings.'
+            )
         config = _embedding_request_options(options)
         task_type = config.get("task_type")
         title = config.get("title")

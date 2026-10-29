@@ -77,8 +77,8 @@ Stable workflow orchestration, evaluation pipelines, protocol hosting, packaged 
 ## Documentation
 
 Read the [Python getting-started guide](https://sdk.zhivex.ai/doc/python/getting-started)
-and [versioned Python reference](https://sdk.zhivex.ai/doc/python/0.28.3/reference/index)
-on the SDK portal. The portal currently documents Python 0.28.3 and is built from
+and [versioned Python reference](https://sdk.zhivex.ai/doc/python/0.29.0/reference/index)
+on the SDK portal. The portal currently documents published Python 0.29.0 and is built from
 the separate sdk-page repository. Documentation maintenance and release ownership
 are described in the [portal maintenance guide](docs/DOCUMENTATION_SITE.md).
 
@@ -353,7 +353,7 @@ Tool support now follows the same rule everywhere:
 - vLLM is tier-1 for the SDK primitives backed by its OpenAI-compatible server. Embeddings, transcription, and realtime ASR depend on serving compatible model tasks in vLLM; vLLM custom endpoints such as tokenize, rerank, classify, and score are not SDK APIs yet.
 - OpenAI catalog guidance tracks the GA GPT-5.6 family: `gpt-5.6-sol` (alias `gpt-5.6`) for flagship work, `gpt-5.6-terra` for balanced workloads, and `gpt-5.6-luna` for high-volume paths. Responses is the recommended route for reasoning and tools; `ReasoningConfig` supports efforts through `max`.
 - Azure OpenAI hosted-tool helpers map OpenAI-style tool payloads for native model calls, and the Azure provider bundle mirrors the beta native lifecycle clients for vector-store/file-search administration, Responses, and Conversations through `/openai/v1`. The catalog tracks the GPT-5.6 family, `gpt-chat-latest`, and `gpt-realtime-2.1`; actual deployments remain region/quota dependent.
-- Gemini and Vertex are portable for the core contract. `gemini-3.8-flash` is the latest text catalog reference; `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence and reject unsupported custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks GA Interactions-only `gemini-omni-1.1-flash`, Transcribe, and `gemini-3.1-flash-lite-image`; Vertex separately supports Preview `gemini-omni-1.1-flash-preview` through native Interactions; see the [Vertex guide](docs/providers/vertex.md). Gemini built-in tools remain native-only entrypoints.
+- Gemini and Vertex are portable for the core contract. `gemini-4-argon` is the newest catalog text model (offline contract, `thinkingLevel` low/medium/high). Live certification remains `gemini-3.8-flash`. `gemini-3.6-flash` and `gemini-3.5-flash-lite` retain exact offline-contract evidence and reject unsupported custom sampling and prefilled assistant turns before dispatch. Gemini Developer API guidance also tracks GA Interactions-only `gemini-omni-1.1-flash`, Transcribe, and `gemini-3.1-flash-lite-image`; Vertex separately supports Preview `gemini-omni-1.1-flash-preview` through native Interactions; see the [Vertex guide](docs/providers/vertex.md). Gemini built-in tools remain native-only entrypoints.
 - Gemini function-calling preserves Google `functionCall.id` / `functionResponse.id` for Gemini 3 tool loops, while continuing to preserve `thoughtSignature` for reasoning-aware tool handoffs.
 - Gateway routing emits exactly one terminal `on_attempt` payload for each executed retry or skipped target. Terminal events carry deterministic `attemptId`, `phase="finished"`, `terminal=True`, typed `errorType`, measured `latencyMs`, retry/target indexes, and a machine-readable `reason` for policy skips or refusals; observer failures do not change provider outcomes. A configured `model_catalog` actively ranks fallbacks from typed recommendations and supplies capability, availability, and cost evidence through `result.route_decision.target_evidence`; cataloged models never use `pro`/`flash`/`lite` name heuristics. Cost ceilings and required capabilities fail closed when their catalog evidence is missing. Uncataloged routes retain the legacy scoring path, and unknown-price targets remain eligible when no ceiling is configured. Use `GatewayConfig(fail_on_missing_adapter=True)` for production routes where a missing provider adapter should fail fast instead of falling through to a fallback. See [docs/GATEWAY.md](./docs/GATEWAY.md) for behavior and migration guidance.
 - Bedrock, OpenRouter, and Ollama remain available, but only through `provider.native` until they satisfy the portable contract end to end.
@@ -1299,6 +1299,11 @@ Native-only or compatibility providers are explicit Experimental imports:
 - `from zhivex_ai.experimental import create_bedrock`
 - `from zhivex_ai.experimental import create_openrouter`
 - `from zhivex_ai.experimental import create_ollama`
+- `from zhivex_ai.experimental import create_xai`
+- `from zhivex_ai.experimental import create_zai`
+- `from zhivex_ai.experimental import openai_compatible`
+- `from zhivex_ai.experimental import create_model_resolver`
+- `from zhivex_ai.experimental import create_gateway_decide`
 
 Every factory now returns a `ProviderBundle`.
 
@@ -2086,3 +2091,25 @@ Beta `vertex.native.rag()` exposes native RAG corpus/file management and retriev
 ## September 2026 model refresh
 
 The [September 30 refresh guide](docs/MODEL_REFRESH_2026_09_30.md) covers GPT-6 Sol/Luna and GPT-6.1 Sol, Claude Opus/Sonnet 5.5, Gemini 3.8 TTS/Voices, and Qwen 3.7 text reranking. OpenAI hosted multi-agent uses `provider.native.language_model(...)` with native provider options. Gemini Voices and Qwen rerank are Beta native clients; their contracts do not expand portable support. Azure and Bedrock support are unchanged.
+
+### Experimental egress destination checks
+
+When `generate_text` or `stream_text` receives `egress_policy`, endpoint and region
+constraints are checked against the configured model, including models selected by
+`prepare_step`. SDK-owned portable wrappers use the destination of their native
+model. OpenAI Responses, OpenAI-compatible Chat Completions, and Gemini (including
+the Vertex Gemini subclass) additionally authorize the complete request URL built
+by the adapter, for the selected generation or streaming route. Their audit record
+contains that route with query parameters omitted. Other adapters currently
+authorize their exposed destination configuration. An `egress` declaration or provider option is an assertion,
+not a way to supply missing destination metadata. A mismatch (including a declared
+value absent from the model) is denied before the provider call. Custom models and
+wrappers must expose their actual `base_url`/`endpoint` and, when constrained,
+`region`/`egress_region`. Unknown dimensions match only wildcard rules; omitting
+`egress_policy` preserves existing behavior. Semicolons remain part of the path;
+dot segments, encoded traversal, nested percent escapes, and control characters
+are rejected rather than interpreted differently by URL parsers.
+
+This experimental check authorizes adapter configuration, not arbitrary network
+activity performed by custom models, fetchers, tools, or downstream gateways.
+Those components remain trusted and must enforce their own destination controls.

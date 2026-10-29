@@ -25,6 +25,7 @@ from zhivex_ai import (
     UnsupportedFeatureError,
     ValidationError,
     create_kimi,
+    default_model_catalog,
     generate_text,
     kimi_formula_toolset,
     stream_text,
@@ -114,6 +115,58 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(requests[0]["headers"]["authorization"], "Bearer test")
         self.assertEqual(requests[0]["json"]["max_completion_tokens"], 32)
         self.assertEqual(requests[0]["json"]["thinking"], {"type": "disabled"})
+
+    async def test_kimi_k27_code_always_thinks_and_keeps_the_highspeed_alias(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append(json_body)
+            return FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"role": "assistant", "content": "ok", "reasoning_content": "plan"}, "finish_reason": "stop"}]},
+            )
+
+        provider = create_kimi(api_key="test", fetch=fetch)
+        for model_id in ("kimi-k2.7-code", "kimi-k2.7-code-highspeed"):
+            with self.subTest(model_id=model_id):
+                result = await generate_text(
+                    model=provider.native.language_model(model_id),
+                    prompt="fix this",
+                    reasoning=ReasoningConfig(effort="high"),
+                )
+                self.assertEqual(result.text, "ok")
+                self.assertNotIn("thinking", requests[-1])
+                self.assertNotIn("reasoning_effort", requests[-1])
+                self.assertEqual(requests[-1]["model"], model_id)
+                with self.assertRaises(UnsupportedFeatureError):
+                    await generate_text(
+                        model=provider.native.language_model(model_id),
+                        prompt="fix this",
+                        reasoning=ReasoningConfig(effort="none"),
+                    )
+                with self.assertRaises(UnsupportedFeatureError):
+                    await generate_text(
+                        model=provider.native.language_model(model_id),
+                        prompt="fix this",
+                        provider_options={"thinking": {"type": "disabled"}},
+                    )
+                with self.assertRaises(UnsupportedFeatureError):
+                    await generate_text(model=provider.native.language_model(model_id), prompt="fix this", temperature=0.2)
+        entry = default_model_catalog.find("kimi", "kimi-k2.7-code-highspeed")
+        self.assertEqual(entry.model_id, "kimi-k2.7-code")  # type: ignore[union-attr]
+        pricing = entry.pricing  # type: ignore[union-attr]
+        self.assertEqual(pricing.input_per_1m_tokens, 0.95)  # type: ignore[union-attr]
+        self.assertEqual(pricing.cached_input_per_1m_tokens, 0.19)  # type: ignore[union-attr]
+        self.assertEqual(pricing.output_per_1m_tokens, 4)  # type: ignore[union-attr]
 
     async def test_kimi_rejects_k26_sampling_overrides_and_forced_tools_in_thinking_mode(self) -> None:
         provider = create_kimi(api_key="test")
@@ -362,8 +415,8 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
-                    'data: {"choices":[{"delta":{"content":"hola"},"finish_reason":null}]}\n\n'
-                    'data: {"choices":[{"delta":{"content":" mundo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n'
+                    'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'
+                    'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n'
                     "data: [DONE]\n\n"
                 ),
             )
@@ -373,8 +426,8 @@ class KimiProviderTests(IsolatedAsyncioTestCase):
         events = [event async for event in stream.event_stream()]
         result = await stream.collect()
 
-        self.assertEqual([event.text_delta for event in events if event.type == "text-delta"], ["hola", " mundo"])
-        self.assertEqual(result.text, "hola mundo")
+        self.assertEqual([event.text_delta for event in events if event.type == "text-delta"], ["hello", " world"])
+        self.assertEqual(result.text, "hello world")
         self.assertEqual(result.finish_reason, "stop")
 
     async def test_kimi_k3_streaming_preserves_complete_reasoning_across_tool_turns(self) -> None:

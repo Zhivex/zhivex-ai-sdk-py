@@ -620,7 +620,7 @@ class AgentRuntime:
         skills: SkillSet | SkillRegistry | None = None,
         tool_choice: str | ToolChoiceName | None = None,
         tool_execution: ToolExecutionOptions | None = None,
-        max_steps: int | None = None,
+        max_steps: int | str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning: ReasoningConfig | None = None,
@@ -630,6 +630,12 @@ class AgentRuntime:
         retry_jitter: float | None = None,
         max_retries: int | None = None,
         retry_backoff_ms: int | None = None,
+        stop_when: Any = None,
+        prepare_step: Any = None,
+        active_tools: Any = None,
+        model_resolver: Any = None,
+        egress_policy: Any = None,
+        egress: Any = None,
         stop_on_handoff: bool = False,
         emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
         resumed_from_checkpoint: AgentCheckpoint | None = None,
@@ -667,6 +673,12 @@ class AgentRuntime:
                     tool_choice=tool_choice,
                     tool_execution=tool_execution,
                     max_steps=max_steps,
+                    stop_when=stop_when,
+                    prepare_step=prepare_step,
+                    active_tools=active_tools,
+                    model_resolver=model_resolver,
+                    egress_policy=egress_policy,
+                    egress=egress,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     reasoning=reasoning,
@@ -737,6 +749,15 @@ class AgentRuntime:
                 result_attributes["gen_ai.usage.input_tokens"] = result.usage.input_tokens
             if result.usage.output_tokens is not None:
                 result_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
+            if result.usage.cached_input_tokens is not None:
+                result_attributes["gen_ai.usage.cached_input_tokens"] = result.usage.cached_input_tokens
+            if result.usage.cache_write_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_tokens"] = result.usage.cache_write_tokens
+            details = result.usage.cache_write_tokens_details
+            if details is not None and details.ttl_30m_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_ttl_30m_tokens"] = details.ttl_30m_tokens
+            if details is not None and details.ttl_12h_tokens is not None:
+                result_attributes["gen_ai.usage.cache_write_ttl_12h_tokens"] = details.ttl_12h_tokens
             if result.usage.total_tokens is not None:
                 result_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
         self._finish_span(root_span, attributes=result_attributes)
@@ -754,7 +775,7 @@ class AgentRuntime:
         skills: SkillSet | SkillRegistry | None = None,
         tool_choice: str | ToolChoiceName | None = None,
         tool_execution: ToolExecutionOptions | None = None,
-        max_steps: int | None = None,
+        max_steps: int | str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning: ReasoningConfig | None = None,
@@ -764,6 +785,12 @@ class AgentRuntime:
         retry_jitter: float | None = None,
         max_retries: int | None = None,
         retry_backoff_ms: int | None = None,
+        stop_when: Any = None,
+        prepare_step: Any = None,
+        active_tools: Any = None,
+        model_resolver: Any = None,
+        egress_policy: Any = None,
+        egress: Any = None,
         stop_on_handoff: bool = False,
         emit: Callable[[AgentEvent], Awaitable[None]] | None = None,
         resumed_from_checkpoint: AgentCheckpoint | None = None,
@@ -773,6 +800,10 @@ class AgentRuntime:
         cancellation_token: AgentCancellationToken | None = None,
         hooks: Iterable[AgentHooks] | None = None,
     ) -> AgentRunResult[Any]:
+        if isinstance(agent.model, str):
+            from .model_resolver import resolve_language_model
+
+            agent = replace(agent, model=resolve_language_model(agent.model, model_resolver))
         resolved_session = session or create_agent_session()
         if agent.memory is not None and not resolved_session.messages and resolved_session.summary is None:
             state = await agent.memory.load(resolved_session.id)
@@ -879,6 +910,12 @@ class AgentRuntime:
                         tool_choice=tool_choice,
                         tool_execution=tool_execution,
                         max_steps=max_steps,
+                        stop_when=stop_when,
+                        prepare_step=prepare_step,
+                        active_tools=active_tools,
+                        model_resolver=model_resolver,
+                        egress_policy=egress_policy,
+                        egress=egress,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         reasoning=reasoning,
@@ -1373,7 +1410,13 @@ class AgentRuntime:
         skills: SkillSet | SkillRegistry | None,
         tool_choice: str | ToolChoiceName | None,
         tool_execution: ToolExecutionOptions | None,
-        max_steps: int | None,
+        max_steps: int | str | None,
+        stop_when: Any = None,
+        prepare_step: Any = None,
+        active_tools: Any = None,
+        model_resolver: Any = None,
+        egress_policy: Any = None,
+        egress: Any = None,
         temperature: float | None,
         max_tokens: int | None,
         reasoning: ReasoningConfig | None,
@@ -1553,7 +1596,7 @@ class AgentRuntime:
             emitted_live_text = False
             emitted_live_tool_events = False
             while True:
-                if remaining_steps is not None and remaining_steps <= 0:
+                if isinstance(remaining_steps, int) and remaining_steps <= 0:
                     raise RuntimeError("Agent run exceeded max steps while handling provider-managed approvals.")
                 pending_provider_responses: list[ModelMessage] = []
                 handled_provider_approvals: set[str] = set()
@@ -1597,6 +1640,12 @@ class AgentRuntime:
                         tool_choice=cast(Any, tool_choice),
                         tool_execution=resolved_tool_execution,
                         max_steps=remaining_steps,
+                        stop_when=stop_when,
+                        prepare_step=prepare_step,
+                        active_tools=active_tools,
+                        model_resolver=model_resolver,
+                        egress_policy=egress_policy,
+                        egress=egress,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         reasoning=reasoning,
@@ -1617,6 +1666,12 @@ class AgentRuntime:
                         tool_choice=cast(Any, tool_choice),
                         tool_execution=resolved_tool_execution,
                         max_steps=remaining_steps,
+                        stop_when=stop_when,
+                        prepare_step=prepare_step,
+                        active_tools=active_tools,
+                        model_resolver=model_resolver,
+                        egress_policy=egress_policy,
+                        egress=egress,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         reasoning=reasoning,
@@ -1629,7 +1684,7 @@ class AgentRuntime:
 
                 accumulated_steps.extend(result.steps)
                 accumulated_tool_results.extend(result.tool_results)
-                if remaining_steps is not None:
+                if isinstance(remaining_steps, int):
                     remaining_steps -= max(1, len(result.steps))
 
                 new_response_messages: list[ModelMessage] = []
@@ -1675,6 +1730,15 @@ class AgentRuntime:
                 model_attributes["gen_ai.usage.output_tokens"] = result.usage.output_tokens
             if result.usage.total_tokens is not None:
                 model_attributes["gen_ai.usage.total_tokens"] = result.usage.total_tokens
+            if result.usage.cached_input_tokens is not None:
+                model_attributes["gen_ai.usage.cached_input_tokens"] = result.usage.cached_input_tokens
+            if result.usage.cache_write_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_tokens"] = result.usage.cache_write_tokens
+            details = result.usage.cache_write_tokens_details
+            if details is not None and details.ttl_30m_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_ttl_30m_tokens"] = details.ttl_30m_tokens
+            if details is not None and details.ttl_12h_tokens is not None:
+                model_attributes["gen_ai.usage.cache_write_ttl_12h_tokens"] = details.ttl_12h_tokens
         self._finish_span(span, attributes=model_attributes)
 
         if not emitted_live_tool_events:
@@ -2369,7 +2433,7 @@ def run_agent(
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -2379,6 +2443,12 @@ def run_agent(
     retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stop_when: Any = None,
+    prepare_step: Any = None,
+    active_tools: Any = None,
+    model_resolver: Any = None,
+    egress_policy: Any = None,
+    egress: Any = None,
     stop_on_handoff: bool = False,
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
@@ -2401,6 +2471,12 @@ def run_agent(
         tool_choice=tool_choice,
         tool_execution=tool_execution,
         max_steps=max_steps,
+        stop_when=stop_when,
+        prepare_step=prepare_step,
+        active_tools=active_tools,
+        model_resolver=model_resolver,
+        egress_policy=egress_policy,
+        egress=egress,
         temperature=temperature,
         max_tokens=max_tokens,
         reasoning=reasoning,
@@ -2430,7 +2506,7 @@ def resume_agent(
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -2440,6 +2516,12 @@ def resume_agent(
     retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stop_when: Any = None,
+    prepare_step: Any = None,
+    active_tools: Any = None,
+    model_resolver: Any = None,
+    egress_policy: Any = None,
+    egress: Any = None,
     stop_on_handoff: bool = False,
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
@@ -2475,6 +2557,12 @@ def resume_agent(
             tool_choice=tool_choice,
             tool_execution=tool_execution,
             max_steps=max_steps,
+            stop_when=stop_when,
+            prepare_step=prepare_step,
+            active_tools=active_tools,
+            model_resolver=model_resolver,
+            egress_policy=egress_policy,
+            egress=egress,
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning=reasoning,
@@ -2538,7 +2626,7 @@ def resume_agent_run(
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -2548,6 +2636,12 @@ def resume_agent_run(
     retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stop_when: Any = None,
+    prepare_step: Any = None,
+    active_tools: Any = None,
+    model_resolver: Any = None,
+    egress_policy: Any = None,
+    egress: Any = None,
     stop_on_handoff: bool = False,
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
@@ -2687,6 +2781,12 @@ def resume_agent_run(
                 tool_choice=tool_choice,
                 tool_execution=tool_execution,
                 max_steps=max_steps,
+                stop_when=stop_when,
+                prepare_step=prepare_step,
+                active_tools=active_tools,
+                model_resolver=model_resolver,
+                egress_policy=egress_policy,
+                egress=egress,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 reasoning=reasoning,
@@ -2771,7 +2871,7 @@ def stream_agent(
     skills: SkillSet | SkillRegistry | None = None,
     tool_choice: str | ToolChoiceName | None = None,
     tool_execution: ToolExecutionOptions | None = None,
-    max_steps: int | None = None,
+    max_steps: int | str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning: ReasoningConfig | None = None,
@@ -2781,6 +2881,12 @@ def stream_agent(
     retry_jitter: float | None = None,
     max_retries: int | None = None,
     retry_backoff_ms: int | None = None,
+    stop_when: Any = None,
+    prepare_step: Any = None,
+    active_tools: Any = None,
+    model_resolver: Any = None,
+    egress_policy: Any = None,
+    egress: Any = None,
     stop_on_handoff: bool = False,
     runtime: AgentRuntime | None = None,
     registry: AgentRegistry | None = None,
@@ -2810,6 +2916,12 @@ def stream_agent(
                 tool_choice=tool_choice,
                 tool_execution=tool_execution,
                 max_steps=max_steps,
+                stop_when=stop_when,
+                prepare_step=prepare_step,
+                active_tools=active_tools,
+                model_resolver=model_resolver,
+                egress_policy=egress_policy,
+                egress=egress,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 reasoning=reasoning,

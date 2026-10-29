@@ -125,10 +125,13 @@ def _part_from_dict(
 def _usage_from_dict(value: dict[str, Any] | None) -> TokenUsage | None:
     if value is None:
         return None
+    from .cache_usage import cache_usage_kwargs
+
     return TokenUsage(
         input_tokens=value.get("input_tokens"),
         output_tokens=value.get("output_tokens"),
         total_tokens=value.get("total_tokens"),
+        **cache_usage_kwargs(value),
     )
 
 

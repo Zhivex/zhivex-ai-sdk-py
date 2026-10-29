@@ -147,4 +147,10 @@ remain Beta and do not promote partner models to the Stable Google contract.
 
 ## September 2026 model compatibility
 
+`CacheWriteTokensDetails` is an additive Stable root export next to `TokenUsage`. Existing `TokenUsage(input_tokens, output_tokens, total_tokens)` calls stay valid. Cache counters default to `None` and are omitted from serialization when unset. `ModelPricing.cache_write_per_1m_tokens` and the optional cost-estimate fields default to `None`, so current catalog conservative rates are unchanged.
+
+`create_xai`, `create_zai`, and the xAI hosted-tool helpers are additive Experimental root exports. They do not change existing provider factories, portable calls, or tier-1 certification targets.
+
+`openai_compatible`, model-string resolution, loop controls, egress policies, Latin American sensitive-data detectors, and `gateway.decide` are additive Experimental exports. Existing `generate_text` / `run_agent` calls that omit the new arguments keep their previous step ceiling. `max_steps` still accepts `None` and positive integers. Non-positive integers and unrecognized strings now raise `ValidationError` before a provider call.
+
 The latest-model refresh adds catalog entries, optional native support flags, optional stream metadata and long-context pricing fields without renaming root exports. Provider requests remain subject to each model's upstream contract. GPT-6 Sol/Luna reject `minimal` effort; Astra/GPT-6.1 Sol reject `none` and `minimal`. Sampling requires a model supporting effort `none`. Replace GPT-6 `prompt_cache_retention` with native `prompt_cache_options.ttl`. Claude 5.5 rejects manual thinking budgets and forced tool selection; Sonnet 5.5 maps normalized effort `none` to upstream `between_tools`. Invalid combinations now fail before HTTP dispatch. These checks do not change Azure or Bedrock adapter contracts.

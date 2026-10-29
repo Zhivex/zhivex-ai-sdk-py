@@ -15,7 +15,16 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zhivex_ai import UnsupportedFeatureError, create_ollama, embed, generate_object, generate_text, stream_text, tool
+from zhivex_ai import (
+    UnsupportedFeatureError,
+    create_ollama,
+    default_model_catalog,
+    embed,
+    generate_object,
+    generate_text,
+    stream_text,
+    tool,
+)
 from zhivex_ai.types import StreamFinishEvent, StreamTextDeltaEvent
 
 
@@ -79,6 +88,46 @@ class OllamaProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(language_model.api_key, "ollama")
         self.assertEqual(embedding_model.base_url, "http://localhost:11434/v1")
         self.assertEqual(embedding_model.api_key, "ollama")
+
+    async def test_ollama_library_ids_use_the_local_compat_client(self) -> None:
+        requests: list[dict[str, Any]] = []
+
+        async def fetch(
+            url: str,
+            *,
+            method: str = "POST",
+            headers: dict[str, str],
+            json_body: dict[str, Any] | None = None,
+            body: Any = None,
+            timeout_ms: int | None = None,
+            stream: bool = False,
+        ):
+            requests.append({"url": url, "json": json_body})
+            if url.endswith("/embeddings"):
+                return FakeResponse(
+                    status_code=200,
+                    payload={"data": [{"embedding": [0.1, 0.2]}], "usage": {"prompt_tokens": 1, "total_tokens": 1}},
+                )
+            return FakeResponse(
+                status_code=200,
+                payload={"status": "completed", "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "local"}]}]},
+            )
+
+        provider = create_ollama(fetch=fetch)
+        for model_id in ("qwen3.8", "gemma4", "qwen3.5", "qwen3", "gpt-oss", "muse-spark-open"):
+            with self.subTest(model_id=model_id):
+                result = await generate_text(model=provider.native.language_model(model_id), prompt="hello")
+                self.assertEqual(result.text, "local")
+                self.assertEqual(requests[-1]["url"], "http://localhost:11434/v1/responses")
+                self.assertEqual(requests[-1]["json"]["model"], model_id)
+                entry = default_model_catalog.find("ollama", model_id)
+                self.assertIsNotNone(entry)
+                assert entry is not None
+                self.assertIsNone(entry.pricing)
+        embedded = await embed(model=provider.native.embedding_model("embeddinggemma"), value="hello")
+        self.assertEqual(embedded.embeddings, [[0.1, 0.2]])
+        self.assertTrue(requests[-1]["url"].endswith("/embeddings"))
+        self.assertEqual(requests[-1]["json"]["model"], "embeddinggemma")
 
     def test_ollama_portable_model_construction_is_rejected(self) -> None:
         provider = create_ollama()
@@ -146,23 +195,23 @@ class OllamaProviderTests(IsolatedAsyncioTestCase):
             return FakeResponse(
                 status_code=200,
                 body_text=(
-                    'data: {"type":"response.output_text.delta","delta":"hola"}\n\n'
-                    'data: {"type":"response.output_text.delta","delta":" mundo"}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":" world"}\n\n'
                     'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}\n\n'
                     "data: [DONE]\n\n"
                 ),
             )
 
         provider = create_ollama(fetch=fetch)
-        result = stream_text(model=provider.native.language_model("llama3.2"), prompt="hola")
+        result = stream_text(model=provider.native.language_model("llama3.2"), prompt="hello")
         events = [event async for event in result.event_stream()]
         final = await result.collect()
 
         self.assertTrue(requests[0]["stream"])
-        self.assertEqual(final.text, "hola mundo")
+        self.assertEqual(final.text, "hello world")
         self.assertEqual(
             [event.text_delta for event in events if isinstance(event, StreamTextDeltaEvent)],
-            ["hola", " mundo"],
+            ["hello", " world"],
         )
         finish_event = next(event for event in events if isinstance(event, StreamFinishEvent))
         self.assertEqual(finish_event.finish_reason, "stop")

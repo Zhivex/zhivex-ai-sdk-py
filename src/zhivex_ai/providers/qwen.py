@@ -687,6 +687,25 @@ def _qwen_38_requires_chat(input: ModelGenerateInput) -> bool:
 
 
 @dataclass(slots=True)
+class QwenStreamingLanguageModel(LanguageModel):
+    """Language model that must be called through the streaming Responses API."""
+
+    provider: str
+    model_id: str
+    capabilities: ModelCapabilities
+    inner: LanguageModel
+    base_url: str
+
+    async def generate(self, input: ModelGenerateInput) -> GenerateResult:
+        raise UnsupportedFeatureError(
+            'Provider "qwen" model "qwen3.8-2.4t-a95b" requires streaming. Use stream_text().'
+        )
+
+    async def stream(self, input: ModelGenerateInput) -> AsyncIterable[StreamEvent]:
+        return await self.inner.stream(input)
+
+
+@dataclass(slots=True)
 class Qwen38LanguageModel(LanguageModel):
     provider: str
     model_id: str
@@ -1030,6 +1049,16 @@ def create_qwen(
                     provider="qwen", model_id=model_id, api_key=resolved_key,
                     base_url=resolved_base_url, fetch=requester, capabilities=omni_capabilities,
                 ),
+            )
+        if model_id == "qwen3.8-2.4t-a95b":
+            # Open-source Qwen3.8 2.4T is thinking-only and rejects non-streaming calls.
+            # https://docs.qwencloud.com/developer-guides/text-generation/thinking
+            return QwenStreamingLanguageModel(
+                provider="qwen",
+                model_id=model_id,
+                capabilities=shared_capabilities,
+                inner=responses_model,
+                base_url=resolved_responses_base_url,
             )
         if not _is_qwen_38_max(model_id):
             return responses_model

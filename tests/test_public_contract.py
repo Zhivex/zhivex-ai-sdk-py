@@ -108,6 +108,7 @@ DOCUMENTED_STABLE_EXPORTS = {
     "StreamEvent",
     "StreamObjectResult",
     "StreamTextResult",
+    "CacheWriteTokensDetails",
     "TokenUsage",
     "ToolCall",
     "create_openai",
@@ -237,7 +238,7 @@ WORKFLOW_STABLE_EXPORTS = {
 }
 DOCUMENTED_STABLE_EXPORTS |= WORKFLOW_STABLE_EXPORTS | {"JsonValue"}
 
-COMPATIBILITY_ROOT_EXPORTS_SHA256 = "4821040f56026b228b1c6424ad9dc95a571525fd6a783a6af646d3aa1587cb5e"
+COMPATIBILITY_ROOT_EXPORTS_SHA256 = "10011b9f3d49e17568666efe9780b3e5a6c222829cfd77ba288c2f39e712dd71"
 
 
 class PublicContractTests(TestCase):

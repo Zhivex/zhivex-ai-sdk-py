@@ -4,7 +4,7 @@ import math
 from copy import deepcopy
 from dataclasses import replace, dataclass
 from datetime import date
-from typing import Iterable, Literal, Sequence
+from typing import Iterable, Literal, Sequence, cast
 
 from .errors import ValidationError
 from .types import ModelCapabilities
@@ -84,6 +84,7 @@ class ModelPricing:
     input_per_1m_tokens: float | None = None
     output_per_1m_tokens: float | None = None
     cached_input_per_1m_tokens: float | None = None
+    cache_write_per_1m_tokens: float | None = None
     effective_from: str | None = None
     effective_until: str | None = None
     long_context_threshold_tokens: int | None = None
@@ -103,6 +104,7 @@ class ModelPricing:
             "input_per_1m_tokens",
             "output_per_1m_tokens",
             "cached_input_per_1m_tokens",
+            "cache_write_per_1m_tokens",
             "long_context_input_per_1m_tokens",
             "long_context_output_per_1m_tokens",
         ):
@@ -149,6 +151,7 @@ class ModelPricing:
             return None
         rates = (
             self.input_per_1m_tokens, self.output_per_1m_tokens,
+            self.cache_write_per_1m_tokens,
             self.long_context_input_per_1m_tokens, self.long_context_output_per_1m_tokens,
         )
         known_rates = [float(rate) for rate in rates if rate is not None]
@@ -314,6 +317,13 @@ _META_MODELS = ("https://dev.meta.ai/docs/models",)
 _BEDROCK_MODELS = (
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards-anthropic.html",
 )
+_BEDROCK_PRICING = "https://aws.amazon.com/bedrock/pricing/"
+_BEDROCK_SONNET_55 = "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html"
+_BEDROCK_ADAPTIVE = "https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html"
+_BEDROCK_EXTENDED = "https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-extended-thinking.html"
+_BEDROCK_CACHE = "https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html"
+_NOVA_THINKING = "https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html"
+_NOVA_CONVERSE = "https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-converse-api.html"
 
 
 def _capabilities(
@@ -454,6 +464,13 @@ _REALTIME = _capabilities(
     realtime_tools=True,
 )
 _VIDEO = _capabilities(vision=True)
+_BEDROCK_CONVERSE = _capabilities(
+    streaming=True,
+    tools=True,
+    tool_choice=True,
+    vision=True,
+    reasoning=True,
+)
 
 
 def _entry(
@@ -702,6 +719,240 @@ default_model_catalog = create_model_catalog(
             source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/google/gemma-4-26b-a4b-it",),
             support_evidence="offline-contract", verified_at="2026-09-19",
         ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="retired", regions=("global",),
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                replacement_model_id=replacement,
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/capabilities/thinking",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id, recommended, capabilities, replacement in (
+                (
+                    "meta/llama-3.3-70b-instruct-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "meta/llama-4-maverick-17b-128e-instruct-maas",
+                ),
+                (
+                    "qwen/qwen3-235b-a22b-instruct-2507-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "qwen/qwen3-coder-480b-a35b-instruct-maas", ("chat", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "deepseek-ai/deepseek-r1-0528-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "deepseek-ai/deepseek-v4.1-flash-maas",
+                ),
+                (
+                    "qwen/qwen3-next-80b-a3b-thinking-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "qwen/qwen3-next-80b-a3b-instruct-maas",
+                ),
+                (
+                    "openai/gpt-oss-20b-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "openai/gpt-oss-120b-maas",
+                ),
+                (
+                    "deepseek-ai/deepseek-v3.1-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "deepseek-ai/deepseek-v4.1-flash-maas",
+                ),
+                (
+                    "zai-org/glm-4.7-maas", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, reasoning=True),
+                    "zai-org/glm-5.2-maas",
+                ),
+            )
+        ),
+        _entry(
+            "vertex", "xai/grok-4.1-fast-non-reasoning", aliases=("grok-4.1-fast-non-reasoning",),
+            availability="retired", regions=("global",),
+            recommended_for=("chat", "vision", "tools"),
+            capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True),
+            replacement_model_id="xai/grok-4.6",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok/grok-4-1-fast",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "xai/grok-4.1-fast-reasoning", aliases=("grok-4.1-fast-reasoning",),
+            availability="retired", regions=("global",),
+            recommended_for=("chat", "reasoning", "vision", "tools"),
+            capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True, reasoning=True),
+            replacement_model_id="xai/grok-4.6",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok/grok-4-1-fast",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "deepseek-ai/deepseek-ocr-maas", aliases=("deepseek-ocr-maas",),
+            availability="retired", regions=("global",),
+            recommended_for=("vision",),
+            capabilities=_capabilities(streaming=True, vision=True),
+            replacement_model_id="deepseek-ai/deepseek-v4.1-flash-maas",
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "deepseek-ai/deepseek-v4.1-flash-maas", aliases=("deepseek-v4.1-flash-maas",),
+            availability="preview", regions=("global",),
+            recommended_for=("chat",),
+            capabilities=_capabilities(streaming=True),
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash",),
+            support_evidence="offline-contract",
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="preview", regions=("global",),
+                recommended_for=("chat", "vision", "tools"),
+                capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True),
+                source_urls=(source,),
+                support_evidence="offline-contract",
+            )
+            for model_id, source in (
+                ("meta/llama-4-maverick-17b-128e-instruct-maas", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/llama/llama4-maverick"),
+                ("meta/llama-4-scout-17b-16e-instruct-maas", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/llama/llama4-scout"),
+                ("xai/grok-4.20-non-reasoning", "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok"),
+            )
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                availability="preview", regions=("global",),
+                recommended_for=("chat", "reasoning", "vision", "tools"),
+                capabilities=_capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, parallel_tool_calls=True, vision=True, reasoning=True),
+                source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/grok",),
+                support_evidence="offline-contract",
+            )
+            for model_id in ("xai/grok-4.6", "xai/grok-4.3", "xai/grok-4.20-reasoning")
+        ),
+        *(
+            _entry(
+                "vertex", model_id, aliases=(model_id.split("/", 1)[1],),
+                api_surface="embedding", availability="retired", regions=("global",),
+                recommended_for=("embedding", "retrieval"), capabilities=_EMBEDDING,
+                replacement_model_id="gemini-embedding-2",
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/open-models",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/use-open-models",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id in (
+                "intfloat/multilingual-e5-small-maas",
+                "intfloat/multilingual-e5-large-instruct-maas",
+            )
+        ),
+        _entry(
+            "vertex", "multimodalembedding@001", api_surface="embedding",
+            availability="stable", regions=("us-central1",),
+            recommended_for=("embedding", "vision"), capabilities=_EMBEDDING,
+            source_urls=(
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/multimodal-embeddings-api",
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",
+            ),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "lyria-002", api_surface="media",
+            availability="stable", regions=("us-central1",),
+            recommended_for=("audio",), capabilities=_capabilities(audio_output=True),
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "vertex", "gemini-nano-banana-2.1", api_surface="image",
+            availability="stable", regions=("global",),
+            recommended_for=("vision",), capabilities=_IMAGE,
+            source_urls=("https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",),
+            support_evidence="offline-contract",
+        ),
+        # Vertex Claude stays on model_garden().anthropic_messages() (vertex-2023-10-16).
+        # cache_write_per_1m_tokens is the 5-minute write (1.25× input). One-hour writes
+        # are 2× uncached input and are not a second field. The OpenAI 12-hour 2.5×
+        # multiplier does not apply. Haiku's long-context cache write and cache-hit
+        # rates are not separate fields; the long-context output rate dominates routing.
+        *(
+            _entry(
+                "vertex", model_id,
+                availability="stable", regions=regions,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=_capabilities(
+                    streaming=True, tools=True, vision=True, files=True,
+                    reasoning=True, web_search=True,
+                ),
+                source_urls=(
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude",
+                    f"https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/{card}",
+                    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/prompt-caching",
+                    "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+                ),
+                support_evidence="offline-contract",
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+                    input_per_1m_tokens=input_rate,
+                    output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=cache_hit,
+                    cache_write_per_1m_tokens=cache_write_5m,
+                    long_context_threshold_tokens=threshold,
+                    long_context_input_per_1m_tokens=long_input,
+                    long_context_output_per_1m_tokens=long_output,
+                ),
+            )
+            for (
+                model_id, card, input_rate, output_rate, cache_hit, cache_write_5m,
+                regions, recommended, threshold, long_input, long_output,
+            ) in (
+                (
+                    "claude-haiku-5-5", "haiku-5-5", 0.10, 0.50, 0.01, 0.125,
+                    ("global", "us", "eu"), ("chat", "reasoning", "speed", "tools", "vision"),
+                    100_000, 0.50, 2.50,
+                ),
+                (
+                    "claude-sonnet-5-5", "sonnet-5-5", 2.0, 10.0, 0.10, 2.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-opus-5", "opus-5", 5.0, 25.0, 0.50, 6.25,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-sonnet-5", "sonnet-5", 2.0, 10.0, 0.20, 2.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-fable-5-1", "fable-5-1", 10.0, 50.0, 0.25, 12.50,
+                    ("global", "us", "eu"), ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-opus-4-6", "opus-4-6", 5.0, 25.0, 0.50, 6.25,
+                    ("global", "us-east5", "europe-west1", "asia-southeast1"),
+                    ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+                (
+                    "claude-sonnet-4-6", "sonnet-4-6", 3.0, 15.0, 0.30, 3.75,
+                    ("global", "us-east5", "europe-west1", "asia-southeast1"),
+                    ("chat", "reasoning", "tools", "vision"),
+                    None, None, None,
+                ),
+            )
+        ),
         _entry(
             "openai", "gpt-live-1", api_surface="live",
             recommended_for=("audio", "realtime"), capabilities=_REALTIME,
@@ -800,6 +1051,27 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "gemini",
+            "gemini-4-argon",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=(
+                "https://ai.google.dev/gemini-api/docs/pricing",
+                "https://ai.google.dev/gemini-api/docs/thinking",
+            ),
+            verified_at="2026-10-26",
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://ai.google.dev/gemini-api/docs/pricing",
+                input_per_1m_tokens=2,
+                cached_input_per_1m_tokens=0.10,
+                output_per_1m_tokens=10,
+                effective_until="2026-11-30",
+            ),
+        ),
+        _entry(
+            "gemini",
             "gemini-3.8-flash",
             recommended_for=("chat", "reasoning", "tools", "vision"),
             capabilities=_GEMINI_LANGUAGE,
@@ -807,6 +1079,28 @@ default_model_catalog = create_model_catalog(
             source_urls=("https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",),
             verified_at="2026-09-05",
             pricing=_usd(0.75, 3.75, "https://ai.google.dev/gemini-api/docs/latest-model", effective_from="2026-09-02", effective_until="2026-12-31"),
+        ),
+        _entry(
+            "vertex",
+            "gemini-4-argon",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            capabilities=_GEMINI_LANGUAGE,
+            availability="stable",
+            source_urls=(
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon",
+                "https://ai.google.dev/gemini-api/docs/pricing",
+                "https://ai.google.dev/gemini-api/docs/thinking",
+            ),
+            verified_at="2026-10-26",
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://ai.google.dev/gemini-api/docs/pricing",
+                input_per_1m_tokens=2,
+                cached_input_per_1m_tokens=0.10,
+                output_per_1m_tokens=10,
+                effective_until="2026-11-30",
+            ),
         ),
         _entry(
             "vertex",
@@ -842,6 +1136,76 @@ default_model_catalog = create_model_catalog(
             verified_at="2026-09-05",
             aliases=("qwen3.8-max-2026-09-02",),
             regions=("intl",),
+        ),
+        *(
+            _entry(
+                "qwen", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                regions=regions,
+                source_urls=(
+                    "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models",
+                    "https://docs.qwencloud.com/developer-guides/text-generation/thinking",
+                ),
+                support_evidence="offline-contract",
+            )
+            for model_id, recommended, capabilities, regions in (
+                (
+                    "qwen3.7-flash", ("chat", "reasoning", "speed", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl", "us"),
+                ),
+                (
+                    "qwen3.7-flash-2026-07-15", ("chat", "reasoning", "speed", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl", "us"),
+                ),
+                (
+                    "qwen3.8-27b", ("chat", "reasoning", "tools", "vision"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, vision=True, files=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "qwen3.8-2.4t-a95b", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4.1-flash", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-pro-0813", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True,
+                                  tool_choice=True, reasoning=True, web_search=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-pro", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "deepseek-v4-flash-0731", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "glm-5.2", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                    ("cn", "intl"),
+                ),
+                (
+                    "MiniMax-M2.5", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, tool_choice=True, reasoning=True),
+                    ("cn",),
+                ),
+            )
         ),
         # OpenAI: aliases are limited to provider-declared moving aliases.
         _entry(
@@ -1103,6 +1467,85 @@ default_model_catalog = create_model_catalog(
             api_surface="embedding",
             source_urls=_AZURE_MODELS,
             capabilities=_EMBEDDING,
+        ),
+        # Azure Foundry sells the same GPT-6 Responses families as OpenAI. The
+        # adapter applies the OpenAI family gates for these deployment names.
+        # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
+        _entry(
+            "azure-openai",
+            "gpt-6.1-sol",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-6-sol",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-6-luna",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5.4-pro",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5-mini",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-5-nano",
+            recommended_for=("chat", "reasoning", "speed", "tools", "vision"),
+            source_urls=_AZURE_MODELS,
+            capabilities=_OPENAI_LANGUAGE,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini-tts",
+            recommended_for=("audio",),
+            api_surface="speech",
+            source_urls=_AZURE_MODELS,
+            capabilities=_SPEECH,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini-transcribe",
+            recommended_for=("audio",),
+            api_surface="transcription",
+            source_urls=_AZURE_MODELS,
+            capabilities=_TRANSCRIPTION,
+        ),
+        _entry(
+            "azure-openai",
+            "gpt-4o-mini",
+            recommended_for=("chat", "tools", "speed"),
+            availability="deprecated",
+            source_urls=(
+                "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule",
+            ),
+            capabilities=_OPENAI_LANGUAGE,
+            replacement_model_id="gpt-5.4-mini",
         ),
         # Anthropic versions remain distinct models; prices retain input/output semantics.
         _entry(
@@ -1374,6 +1817,17 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "gemini",
+            "veo-3.1-lite-generate-preview",
+            recommended_for=("speed", "vision"),
+            api_surface="video",
+            availability="retired",
+            source_urls=_GEMINI_LIFECYCLE,
+            capabilities=_VIDEO,
+            replacement_model_id="veo-3.1-generate-preview",
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
             "lyria-3-pro-preview",
             recommended_for=("audio",),
             api_surface="media",
@@ -1403,6 +1857,61 @@ default_model_catalog = create_model_catalog(
             recommended_for=("reasoning", "tools", "vision"),
             source_urls=_GEMINI_MODELS,
             capabilities=_GEMINI_LANGUAGE,
+        ),
+        _entry(
+            "gemini",
+            "gemini-3-flash-preview",
+            recommended_for=("chat", "speed", "vision", "tools"),
+            availability="preview",
+            source_urls=("https://ai.google.dev/gemini-api/docs/thinking", "https://ai.google.dev/gemini-api/docs/models"),
+            capabilities=_GEMINI_LANGUAGE,
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
+            "gemini-3.1-pro-preview-customtools",
+            recommended_for=("chat", "reasoning", "tools"),
+            availability="preview",
+            source_urls=("https://ai.google.dev/gemini-api/docs/thinking", "https://ai.google.dev/gemini-api/docs/models"),
+            capabilities=_GEMINI_LANGUAGE,
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
+            "gemini-2.5-flash-image",
+            recommended_for=("vision",),
+            api_surface="image",
+            source_urls=("https://ai.google.dev/gemini-api/docs/deprecations", "https://ai.google.dev/gemini-api/docs/models"),
+            capabilities=_IMAGE,
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
+            "gemini-nano-banana-2.1",
+            recommended_for=("vision", "speed"),
+            api_surface="image",
+            source_urls=("https://ai.google.dev/gemini-api/docs/models",),
+            capabilities=_IMAGE,
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
+            "gemini-embedding-2",
+            recommended_for=("embedding", "vision"),
+            api_surface="embedding",
+            source_urls=("https://ai.google.dev/gemini-api/docs/embeddings",),
+            capabilities=_capabilities(embeddings=True, vision=True, files=True),
+            support_evidence="offline-contract",
+        ),
+        _entry(
+            "gemini",
+            "gemini-robotics-er-1.6-preview",
+            recommended_for=("reasoning", "vision"),
+            availability="retired",
+            source_urls=("https://ai.google.dev/gemini-api/docs/deprecations",),
+            capabilities=_GEMINI_LANGUAGE,
+            replacement_model_id="gemini-robotics-er-2-preview",
+            support_evidence="offline-contract",
         ),
         # Vertex entries use host-specific IDs and evidence, independently of Gemini.
         _entry(
@@ -1951,6 +2460,26 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "kimi",
+            "kimi-k2.7-code",
+            aliases=("kimi-k2.7-code-highspeed",),
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=(
+                "https://platform.kimi.ai/docs/guide/use-thinking-models",
+                "https://platform.kimi.ai/docs/api/models-overview",
+                "https://www.kimi.ai/resources/kimi-k2-7-code",
+            ),
+            capabilities=_KIMI_LANGUAGE,
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://www.kimi.ai/resources/kimi-k2-7-code",
+                input_per_1m_tokens=0.95,
+                cached_input_per_1m_tokens=0.19,
+                output_per_1m_tokens=4,
+            ),
+        ),
+        _entry(
+            "kimi",
             "kimi-k2.5",
             recommended_for=("reasoning", "tools", "vision"),
             source_urls=_KIMI_MODELS,
@@ -2053,6 +2582,46 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "meta",
+            "muse-wonder-1.0",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=(
+                "https://dev.meta.ai/docs/models",
+                "https://dev.meta.ai/docs/pricing-rate-limits",
+            ),
+            capabilities=_META_LANGUAGE,
+            parallel_tool_calls=True,
+            structured_output=True,
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://dev.meta.ai/docs/pricing-rate-limits",
+                input_per_1m_tokens=4,
+                cached_input_per_1m_tokens=0.20,
+                output_per_1m_tokens=20,
+            ),
+        ),
+        _entry(
+            "meta",
+            "muse-spark-1.3-contributor",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            source_urls=(
+                "https://dev.meta.ai/docs/models",
+                "https://dev.meta.ai/docs/pricing-rate-limits",
+            ),
+            capabilities=_META_LANGUAGE,
+            parallel_tool_calls=True,
+            structured_output=True,
+            support_evidence="offline-contract",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://dev.meta.ai/docs/pricing-rate-limits",
+                input_per_1m_tokens=0.10,
+                cached_input_per_1m_tokens=0.002,
+                output_per_1m_tokens=0.20,
+            ),
+        ),
+        _entry(
+            "meta",
             "muse-spark-1.1",
             recommended_for=("chat", "reasoning", "tools", "vision"),
             availability="preview",
@@ -2097,6 +2666,44 @@ default_model_catalog = create_model_catalog(
             capabilities=_LOCAL_LANGUAGE,
             max_tool_calls_per_turn=1,
             parallel_tool_calls=False,
+        ),
+        # Prices are the OpenRouter models API per-token rates, stored per 1M.
+        # cache_write_per_1m_tokens is the 5-minute write when a 1-hour write is
+        # also published. The 1-hour write is not a second catalog field.
+        *(
+            _entry(
+                "openrouter", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=_capabilities(
+                    streaming=True, tools=True, structured_output=True, json_mode=True,
+                    tool_choice=True, parallel_tool_calls=True, vision=True, files=True, reasoning=True,
+                ),
+                source_urls=(
+                    "https://openrouter.ai/api/v1/models",
+                    f"https://openrouter.ai/{model_id}",
+                ),
+                support_evidence="offline-contract",
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://openrouter.ai/api/v1/models",
+                    input_per_1m_tokens=input_rate,
+                    output_per_1m_tokens=output_rate,
+                    cached_input_per_1m_tokens=cache_hit,
+                    cache_write_per_1m_tokens=cache_write,
+                    long_context_threshold_tokens=threshold,
+                    long_context_input_per_1m_tokens=long_input,
+                    long_context_output_per_1m_tokens=long_output,
+                ),
+            )
+            for model_id, recommended, input_rate, output_rate, cache_hit, cache_write, threshold, long_input, long_output in (
+                ("openai/gpt-6.1-sol", ("chat", "reasoning", "tools", "vision"), 2, 10, 0.10, 2.5, 272_000, 4, 15),
+                ("anthropic/claude-sonnet-5.5", ("chat", "reasoning", "tools", "vision"), 2, 10, 0.10, 2.5, None, None, None),
+                ("anthropic/claude-haiku-5.5", ("chat", "reasoning", "speed", "tools", "vision"), 0.10, 0.50, 0.01, 0.125, 100_000, 0.50, 2.50),
+                ("x-ai/grok-4.7", ("chat", "reasoning", "tools", "vision"), 2, 6, 0.50, None, 200_000, 4, 12),
+                ("meta/muse-wonder", ("chat", "reasoning", "tools", "vision"), 4, 20, 0.20, None, None, None, None),
+                ("google/gemini-3.8-flash", ("chat", "reasoning", "speed", "tools", "vision"), 0.825, 4.125, 0.0825, None, None, None, None),
+                ("meta/muse-spark-open", ("chat", "reasoning", "tools", "vision"), 1.25, 4.25, 0.15, None, None, None, None),
+            )
         ),
         _entry(
             "bedrock",
@@ -2166,6 +2773,58 @@ default_model_catalog = create_model_catalog(
         ),
         _entry(
             "bedrock",
+            "anthropic.claude-sonnet-5-5",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            regions=("global",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _BEDROCK_SONNET_55, _BEDROCK_ADAPTIVE, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=2.0,
+                output_per_1m_tokens=10.0,
+                cached_input_per_1m_tokens=0.1,
+                cache_write_per_1m_tokens=2.5,
+            ),
+        ),
+        _entry(
+            "bedrock",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            recommended_for=("speed", "reasoning", "tools", "vision"),
+            regions=("us",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _BEDROCK_EXTENDED, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=1.10,
+                output_per_1m_tokens=5.50,
+                cached_input_per_1m_tokens=0.11,
+                cache_write_per_1m_tokens=1.375,
+            ),
+        ),
+        _entry(
+            "bedrock",
+            "amazon.nova-2-lite-v1:0",
+            recommended_for=("chat", "reasoning", "tools", "vision"),
+            regions=("global",),
+            support_evidence="offline-contract",
+            source_urls=(_BEDROCK_PRICING, _NOVA_THINKING, _NOVA_CONVERSE, _BEDROCK_CACHE),
+            capabilities=_BEDROCK_CONVERSE,
+            verified_at="2026-10-26",
+            pricing=ModelPricing(
+                currency="USD",
+                source_url=_BEDROCK_PRICING,
+                input_per_1m_tokens=0.30,
+                output_per_1m_tokens=2.50,
+            ),
+        ),
+        _entry(
+            "bedrock",
             "amazon.nova-premier-v1:0",
             recommended_for=("reasoning", "tools", "vision"),
             source_urls=(
@@ -2208,6 +2867,36 @@ default_model_catalog = create_model_catalog(
             max_tool_calls_per_turn=1,
             parallel_tool_calls=False,
         ),
+        *(
+            _entry(
+                "ollama", model_id,
+                recommended_for=cast(tuple[RecommendedUse, ...], recommended),
+                capabilities=capabilities,
+                source_urls=(f"https://ollama.com/library/{library}",),
+                support_evidence="offline-contract",
+            )
+            for model_id, library, recommended, capabilities in (
+                ("qwen3.8", "qwen3.8", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("gemma4", "gemma4", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("qwen3.5", "qwen3.5", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                ("muse-spark-open", "muse-spark-open", ("chat", "reasoning", "tools", "vision"), _LOCAL_LANGUAGE),
+                (
+                    "qwen3", "qwen3", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                ),
+                (
+                    "gpt-oss", "gpt-oss", ("chat", "reasoning", "tools"),
+                    _capabilities(streaming=True, tools=True, structured_output=True, json_mode=True, tool_choice=True, reasoning=True),
+                ),
+            )
+        ),
+        _entry(
+            "ollama", "embeddinggemma", api_surface="embedding",
+            recommended_for=("embedding", "retrieval"),
+            capabilities=_EMBEDDING,
+            source_urls=("https://ollama.com/library/embeddinggemma",),
+            support_evidence="offline-contract",
+        ),
         _entry(
             "vllm",
             "meta-models/Muse-Glimmer-30B",
@@ -2237,6 +2926,113 @@ default_model_catalog = create_model_catalog(
                 "https://github.com/meta-llama/llama-models/blob/main/models/llama4/MODEL_CARD.md",
             ),
             capabilities=_LOCAL_LANGUAGE,
+        ),
+        # xAI text rates are USD per 1M. Long-context billing starts at 200k
+        # prompt tokens and doubles input, cached input, and output.
+        # https://docs.x.ai/docs/models
+        *(
+            _entry(
+                "xai",
+                model_id,
+                recommended_for=("chat", "reasoning", "tools", "vision"),
+                source_urls=("https://docs.x.ai/docs/models", "https://docs.x.ai/developers/model-capabilities/text/reasoning"),
+                capabilities=_OPENAI_LANGUAGE,
+                pricing=ModelPricing(
+                    currency="USD",
+                    source_url="https://docs.x.ai/docs/models",
+                    input_per_1m_tokens=rates[0],
+                    cached_input_per_1m_tokens=rates[1],
+                    output_per_1m_tokens=rates[2],
+                    long_context_threshold_tokens=200_000,
+                    long_context_input_per_1m_tokens=rates[0] * 2,
+                    long_context_output_per_1m_tokens=rates[2] * 2,
+                ),
+            )
+            for model_id, rates in (
+                ("grok-4.7", (2, 0.5, 6)),
+                ("grok-4.6", (2, 0.5, 6)),
+                ("grok-4.5", (2, 0.3, 6)),
+                ("grok-4.3", (1.25, 0.2, 2.5)),
+                ("grok-4.20-0309-reasoning", (1.25, 0.2, 2.5)),
+                ("grok-build-0.1", (1, 0.2, 2)),
+                ("grok-4.20-multi-agent-0309", (1.25, 0.2, 2.5)),
+            )
+        ),
+        _entry(
+            "xai",
+            "grok-4.20-0309-non-reasoning",
+            recommended_for=("chat", "tools", "vision"),
+            source_urls=("https://docs.x.ai/docs/models",),
+            capabilities=replace(_OPENAI_LANGUAGE, reasoning=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.x.ai/docs/models",
+                input_per_1m_tokens=1.25,
+                cached_input_per_1m_tokens=0.2,
+                output_per_1m_tokens=2.5,
+                long_context_threshold_tokens=200_000,
+                long_context_input_per_1m_tokens=2.5,
+                long_context_output_per_1m_tokens=5,
+            ),
+        ),
+        _entry(
+            "xai",
+            "grok-imagine-image-2.0",
+            recommended_for=("vision",),
+            api_surface="image",
+            source_urls=(
+                "https://docs.x.ai/developers/model-capabilities/images/generation",
+                "https://docs.x.ai/docs/models",
+            ),
+            capabilities=_IMAGE,
+        ),
+        _entry(
+            "xai",
+            "grok-imagine-image-quality",
+            recommended_for=("vision",),
+            api_surface="image",
+            availability="deprecated",
+            source_urls=("https://docs.x.ai/developers/migration/imagine-image-quality-nov-2",),
+            capabilities=_IMAGE,
+            replacement_model_id="grok-imagine-image-2.0",
+        ),
+        _entry(
+            "zai",
+            "glm-5.3-flash",
+            recommended_for=("chat", "tools", "reasoning", "vision", "speed"),
+            source_urls=(
+                "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+                "https://docs.z.ai/guides/overview/pricing",
+            ),
+            capabilities=replace(_OPENAI_LANGUAGE, files=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.z.ai/guides/overview/pricing",
+                input_per_1m_tokens=0.15,
+                cached_input_per_1m_tokens=0.03,
+                output_per_1m_tokens=0.5,
+            ),
+        ),
+        _entry(
+            "zai",
+            "glm-5.3",
+            recommended_for=("chat", "tools", "reasoning"),
+            source_urls=("https://docs.z.ai/guides/llm/glm-5.3",),
+            capabilities=replace(_OPENAI_LANGUAGE, vision=False, files=False),
+        ),
+        _entry(
+            "zai",
+            "glm-5.2",
+            recommended_for=("chat", "tools", "reasoning"),
+            source_urls=("https://docs.z.ai/guides/overview/pricing",),
+            capabilities=replace(_OPENAI_LANGUAGE, vision=False, files=False),
+            pricing=ModelPricing(
+                currency="USD",
+                source_url="https://docs.z.ai/guides/overview/pricing",
+                input_per_1m_tokens=1.4,
+                cached_input_per_1m_tokens=0.26,
+                output_per_1m_tokens=4.4,
+            ),
         ),
     ]
 )

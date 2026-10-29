@@ -280,15 +280,45 @@ def _map_file_part(part: FilePart) -> dict[str, Any]:
     return payload
 
 
-def _map_message_content(message: ModelMessage) -> list[dict[str, Any]]:
+def _explicit_prompt_cache_breakpoint(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValidationError("OpenAI prompt cache breakpoint must be an object.")
+    ttl = value.get("ttl")
+    if ttl is not None and ttl not in {"30m", "12h"}:
+        raise ValidationError('OpenAI prompt cache breakpoint ttl must be "30m" or "12h".')
+    payload = {"mode": "explicit"}
+    if ttl in {"30m", "12h"}:
+        payload["ttl"] = ttl
+    return payload
+
+
+def _prompt_cache_breakpoint_fields(part: Any) -> dict[str, Any]:
+    metadata = getattr(part, "provider_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return {}
+    openai_metadata = metadata.get("openai")
+    source = openai_metadata if isinstance(openai_metadata, dict) else metadata
+    breakpoint = source.get("prompt_cache_breakpoint")
+    if not isinstance(breakpoint, dict):
+        return {}
+    return {"prompt_cache_breakpoint": _explicit_prompt_cache_breakpoint(breakpoint)}
+
+
+def _map_message_content(message: ModelMessage, provider_name: str = "") -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     for part in message.parts:
+        block: dict[str, Any] | None = None
         if part.type == "text":
-            content.append({"type": "output_text" if message.role == "assistant" else "input_text", "text": part.text})
+            block = {"type": "output_text" if message.role == "assistant" else "input_text", "text": part.text}
         elif part.type == "image":
-            content.append({"type": "input_image", "image_url": part.image})
+            block = {"type": "input_image", "image_url": part.image}
         elif part.type == "file":
-            content.append(_map_file_part(part))
+            block = _map_file_part(part)
+        if block is None:
+            continue
+        if provider_name == "openai":
+            block.update(_prompt_cache_breakpoint_fields(part))
+        content.append(block)
     return content
 
 
@@ -400,9 +430,9 @@ def _to_responses_input(messages: list[ModelMessage], provider_name: str) -> lis
                     or isinstance(part, ToolCallPart) and part.tool_call.provider_metadata.get("openai_multi_agent_item")
                 )
             ]
-            content = _map_message_content(ModelMessage(role=message.role, parts=ordinary_parts))
+            content = _map_message_content(ModelMessage(role=message.role, parts=ordinary_parts), provider_name)
         else:
-            content = _map_message_content(message)
+            content = _map_message_content(message, provider_name)
         if content:
             items.append(
                 {
@@ -720,7 +750,23 @@ def _map_reasoning(input: ModelGenerateInput, provider_name: str) -> dict[str, A
     return {"effort": input.reasoning.effort}
 
 
+# Thinking-only Qwen text models reject a disabled thinking mode.
+# https://docs.qwencloud.com/developer-guides/text-generation/thinking
+_QWEN_THINKING_ONLY_MODELS = frozenset({"qwen3.8-2.4t-a95b"})
+# Third-party text models on the same Responses API without Qwen built-in tools
+# or native structured output.
+# https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models
+_QWEN_NO_BUILTIN_TOOLS = frozenset({
+    "deepseek-v4-pro", "deepseek-v4-flash-0731", "glm-5.2", "MiniMax-M2.5",
+})
+_QWEN_NO_STRUCTURED_OUTPUT = frozenset({"deepseek-v4-flash-0731", "MiniMax-M2.5"})
+
+
 def _qwen_reasoning_options(model_id: str, input: ModelGenerateInput) -> dict[str, Any]:
+    if model_id in _QWEN_THINKING_ONLY_MODELS and input.reasoning is not None and input.reasoning.effort == "none":
+        raise UnsupportedFeatureError(
+            'Provider "qwen" model "qwen3.8-2.4t-a95b" always thinks and does not accept reasoning.effort "none".'
+        )
     if input.reasoning is None:
         if model_id.strip().lower() in {"qwen3.8-omni-flash", "qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-max-2026-09-02"} and (
             input.tool_choice == "required" or isinstance(input.tool_choice, ToolChoiceName)
@@ -744,6 +790,10 @@ def _validate_qwen_responses_tools(
     mapped_tools: list[dict[str, Any]],
 ) -> None:
     tool_types = {str(tool.get("type") or "") for tool in mapped_tools}
+    if model_id in _QWEN_NO_BUILTIN_TOOLS and tool_types - {"function"}:
+        raise UnsupportedFeatureError(
+            f'Provider "qwen" model "{model_id}" supports function tools only, not built-in tools.'
+        )
     if is_qwen_omni(model_id) and tool_types - {"function", "web_search"}:
         raise UnsupportedFeatureError("Qwen Omni supports only function and web_search tools.")
     reasoning_effort = input.reasoning.effort if input.reasoning is not None else None
@@ -765,6 +815,13 @@ def _validate_qwen_responses_tools(
 
 
 def _validate_openai_response_body(body: dict[str, Any]) -> None:
+    cache_options = body.get("prompt_cache_options")
+    if cache_options is not None:
+        if not isinstance(cache_options, dict):
+            raise ValidationError("OpenAI prompt_cache_options must be an object.")
+        ttl = cache_options.get("ttl")
+        if ttl is not None and ttl not in {"30m", "12h"}:
+            raise ValidationError('OpenAI prompt_cache_options.ttl must be "30m" or "12h".')
     model_id = str(body.get("model") or "").strip().lower()
     family = next((name for name in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
                    if model_id == name or model_id.startswith(name + "-")), None)
@@ -819,6 +876,18 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
     if provider_tools:
         merged_tools.extend(deepcopy(provider_tools))
     if provider_name == "qwen":
+        if model_id in _QWEN_THINKING_ONLY_MODELS and provider_options.get("enable_thinking") is False:
+            raise UnsupportedFeatureError(
+                'Provider "qwen" model "qwen3.8-2.4t-a95b" always thinks and does not accept enable_thinking false.'
+            )
+        if (
+            model_id in _QWEN_NO_STRUCTURED_OUTPUT
+            and input.structured_output is not None
+            and input.structured_output.mode == "native"
+        ):
+            raise UnsupportedFeatureError(
+                f'Provider "qwen" model "{model_id}" does not support native structured output.'
+            )
         _validate_qwen_responses_tools(model_id, input, merged_tools)
     if provider_name == "qwen" and input.tool_choice == "required" and len(merged_tools) != 1:
         raise UnsupportedFeatureError('Provider "qwen" only supports `tool_choice="required"` when exactly one tool is available.')
@@ -837,7 +906,15 @@ def _responses_body(model_id: str, provider_name: str, input: ModelGenerateInput
         **(_qwen_reasoning_options(model_id, input) if provider_name == "qwen" else {}),
         "stream": True if stream else None,
     }
-    if provider_name == "openai":
+    if provider_name == "openai" or (
+        provider_name == "azure-openai"
+        and any(
+            model_id == name or model_id.startswith(name + "-")
+            for name in ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
+        )
+    ):
+        # Azure Foundry serves the same GPT-6 Responses families as OpenAI.
+        # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
         _validate_openai_response_body(body)
     if provider_name == "azure-openai" and model_id.startswith("gpt-6-astra"):
         unsupported = {key for key in ("temperature", "top_p", "top_logprobs", "prompt_cache_retention") if body.get(key) is not None}
@@ -2747,12 +2824,15 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
 
     capabilities: ModelCapabilities = field(default_factory=lambda: OPENAI_COMPAT_CAPABILITIES)
 
+    def _egress_request_url(self, *, stream: bool) -> str:
+        return f"{self.base_url}/responses"
+
     async def generate(self, input: ModelGenerateInput) -> GenerateResult:
         validate_message_parts(self, input.messages)
         body = _responses_body(self.model_id, self.provider, input, stream=False)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/responses",
+                self._egress_request_url(stream=False),
                 headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
@@ -2785,7 +2865,7 @@ class OpenAICompatibleLanguageModel(_BaseOpenAICompatible, LanguageModel):
         body = _responses_body(self.model_id, self.provider, input, stream=True)
         response = await with_retry(
             lambda: self.fetch(
-                f"{self.base_url}/responses",
+                self._egress_request_url(stream=True),
                 headers=self._responses_headers(body),
                 json_body=body,
                 timeout_ms=input.timeout_ms,
@@ -3130,17 +3210,12 @@ class OpenAICompatibleGroundedLanguageModel(_BaseOpenAICompatible, GroundedLangu
         if response.status_code >= 400:
             raise _parse_json_error(self.provider, response.status_code, await response.text())
         payload = await response.json()
-        usage = payload.get("usage") or {}
         return GroundedGenerateResult(
             text=payload.get("output_text"),
             sources=_extract_sources(payload),
             finish_reason=normalize_finish_reason(payload.get("status")),
             provider_finish_reason=payload.get("status"),
-            usage=TokenUsage(
-                input_tokens=usage.get("input_tokens"),
-                output_tokens=usage.get("output_tokens"),
-                total_tokens=usage.get("total_tokens"),
-            ),
+            usage=_parse_responses_usage(payload),
             raw_response=payload,
         )
 

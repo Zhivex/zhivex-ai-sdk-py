@@ -298,7 +298,18 @@ async def main():
             report["results"].append({"operation": operation, "sample": sample, **result})
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2)+"\n")
-            print(args.provider, operation, result["status"], flush=True)
+            line = f"{args.provider} {operation} {result['status']}"
+            if result.get("status") != "passed":
+                extras = []
+                if result.get("error_type"):
+                    extras.append(f"error_type={result['error_type']}")
+                if result.get("assertion"):
+                    extras.append(f"assertion={result['assertion']}")
+                if result.get("http_status") is not None:
+                    extras.append(f"http_status={result['http_status']}")
+                if extras:
+                    line = f"{line} {' '.join(extras)}"
+            print(line, flush=True)
     report["all_requested_passed"] = all(item["status"] == "passed" for item in report["results"])
     args.output.write_text(json.dumps(report, indent=2)+"\n")
     return 0 if report["all_requested_passed"] else 1

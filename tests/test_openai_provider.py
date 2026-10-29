@@ -1307,8 +1307,8 @@ class OpenAIProviderTests(IsolatedAsyncioTestCase):
                             "type": "code_interpreter_call",
                             "id": "ci_1",
                             "container_id": "cont_1",
-                            "code": "print('hola')",
-                            "outputs": [{"type": "logs", "logs": "hola\n"}],
+                            "code": "print('hello')",
+                            "outputs": [{"type": "logs", "logs": "hello\n"}],
                             "status": "completed",
                         },
                         {

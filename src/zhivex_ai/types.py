@@ -20,10 +20,26 @@ HostedToolClass = Literal["web-search", "file-search", "remote-mcp", "computer-u
 
 
 @dataclass(slots=True)
+class CacheWriteTokensDetails:
+    """Non-overlapping cache-write counts by minimum lifetime.
+
+    OpenAI Responses reports these as ``input_tokens_details.cache_write_tokens_details``.
+    When both counters are present they sum to ``cache_write_tokens``.
+    See https://developers.openai.com/api/docs/guides/prompt-caching
+    """
+
+    ttl_30m_tokens: int | None = None
+    ttl_12h_tokens: int | None = None
+
+
+@dataclass(slots=True)
 class TokenUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cache_write_tokens_details: CacheWriteTokensDetails | None = None
 
 
 @dataclass(slots=True)

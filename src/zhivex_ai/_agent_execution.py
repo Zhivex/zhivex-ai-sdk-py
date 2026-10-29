@@ -240,7 +240,12 @@ async def _call_error_hooks_preserving(
         error.add_note(f"Agent on_error hook also failed: {hook_error}")
 
 
-def _effective_max_steps(limits: RunLimits, requested: int | None) -> int | None:
+def _effective_max_steps(limits: RunLimits, requested: int | str | None) -> int | str | None:
+    if requested is not None and requested != "unlimited":
+        if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+            raise ValidationError('"max_steps" must be a positive integer or "unlimited".')
+    if requested == "unlimited":
+        return "unlimited" if limits.max_steps is None else limits.max_steps
     if limits.max_steps is None:
         return requested
     if requested is None:
@@ -343,29 +348,9 @@ def _resolve_tool_registry(
 
 
 def _merge_usage(usages: list[TokenUsage | None]) -> TokenUsage | None:
-    present = [usage for usage in usages if usage is not None]
-    if not present:
-        return None
-    input_tokens = (
-        sum(usage.input_tokens for usage in present if usage.input_tokens is not None)
-        if all(usage.input_tokens is not None for usage in present)
-        else None
-    )
-    output_tokens = (
-        sum(usage.output_tokens for usage in present if usage.output_tokens is not None)
-        if all(usage.output_tokens is not None for usage in present)
-        else None
-    )
-    total_tokens = (
-        sum(usage.total_tokens for usage in present if usage.total_tokens is not None)
-        if all(usage.total_tokens is not None for usage in present)
-        else None
-    )
-    return TokenUsage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-    )
+    from .cache_usage import merge_token_usage
+
+    return merge_token_usage(usages)
 
 
 def _response_messages(step: GenerateTextStep) -> list[ModelMessage]:

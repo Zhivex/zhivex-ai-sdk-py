@@ -99,20 +99,26 @@ def _redact_sensitive_json(value: Any, *, key: str | None = None) -> Any:
 def serialize_token_usage(usage: TokenUsage | None) -> dict[str, Any] | None:
     if usage is None:
         return None
+    from .cache_usage import serialized_cache_usage
+
     return {
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.total_tokens,
+        **serialized_cache_usage(usage),
     }
 
 
 def deserialize_token_usage(payload: dict[str, Any] | None) -> TokenUsage | None:
     if payload is None:
         return None
+    from .cache_usage import cache_usage_kwargs
+
     return TokenUsage(
         input_tokens=payload.get("input_tokens"),
         output_tokens=payload.get("output_tokens"),
         total_tokens=payload.get("total_tokens"),
+        **cache_usage_kwargs(payload),
     )
 
 
